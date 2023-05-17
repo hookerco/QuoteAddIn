@@ -36,7 +36,7 @@
         {
             this.tab1 = this.Factory.CreateRibbonTab();
             this.QB = this.Factory.CreateRibbonGroup();
-            this.button1 = this.Factory.CreateRibbonButton();
+            this.QBUtility = this.Factory.CreateRibbonButton();
             this.tab1.SuspendLayout();
             this.QB.SuspendLayout();
             this.SuspendLayout();
@@ -50,15 +50,15 @@
             // 
             // QB
             // 
-            this.QB.Items.Add(this.button1);
+            this.QB.Items.Add(this.QBUtility);
             this.QB.Label = "QB";
             this.QB.Name = "QB";
             // 
-            // button1
+            // QBUtility
             // 
-            this.button1.Label = "button1";
-            this.button1.Name = "button1";
-            this.button1.Click += new Microsoft.Office.Tools.Ribbon.RibbonControlEventHandler(this.button1_Click);
+            this.QBUtility.Label = "QBUtility";
+            this.QBUtility.Name = "QBUtility";
+            this.QBUtility.Click += new Microsoft.Office.Tools.Ribbon.RibbonControlEventHandler(this.button1_Click);
             // 
             // QBRibbon
             // 
@@ -78,7 +78,7 @@
 
         internal Microsoft.Office.Tools.Ribbon.RibbonTab tab1;
         internal Microsoft.Office.Tools.Ribbon.RibbonGroup QB;
-        internal Microsoft.Office.Tools.Ribbon.RibbonButton button1;
+        internal Microsoft.Office.Tools.Ribbon.RibbonButton QBUtility;
     }
 
     partial class ThisRibbonCollection

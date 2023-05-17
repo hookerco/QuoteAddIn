@@ -1,0 +1,189 @@
+﻿Sub QtheBook()
+
+'Dim sessionManager As QBFC14Lib.QBSessionManager
+Dim sessionManager
+Set sessionManager = New QBFC14Lib.QBSessionManager
+'Set sessionManager = QBFC14Lib.QBSessionManager
+Call sessionManager.OpenConnection("", "Quote Module Connection")
+
+Call sessionManager.BeginSession("", ENOpenMode.omDontCare)
+
+Dim requestMsgSet As IMsgSetRequest
+
+Dim customerQueryRq As ICustomerQuery
+
+Set requestMsgSet = sessionManager.CreateMsgSetRequest("US", 14, 0)
+
+Set customerQueryRq = requestMsgSet.AppendCustomerQueryRq
+
+''''''Get the customer Name
+Call customerQueryRq.ORCustomerListQuery.CustomerListFilter.ORNameFilter.NameFilter.MatchCriterion.SetValue(ENMatchCriterion.mcEndsWith)
+
+requestMsgSet.Attributes.OnError = ENRqOnError.roeContinue
+
+Dim ReEx As New RegExp
+
+ReEx.Pattern = "\d{5}$"
+Dim Matches As MatchCollection
+
+'Set Matches = ReEx.Execute(CStr(Application.ActiveCell.Value))
+Set Matches = ReEx.Execute(Application.Workbooks("Standard Tooling Quote 2022 - Copy (2).xlsm").Worksheets("Standard Quote").Range("B11"))
+MsgBox ("Company Num: " & Matches.Item(0))
+
+Call customerQueryRq.ORCustomerListQuery.CustomerListFilter.ORNameFilter.NameFilter.Name.SetValue(Matches.Item(0))
+
+Dim responseMsgSet As IMsgSetResponse
+Set responseMsgSet = sessionManager.DoRequests(requestMsgSet)
+Dim response As IResponse
+Set response = responseMsgSet.ResponseList.GetAt(0)
+Dim customerRetList As ICustomerRetList
+
+Dim custRetList
+Set custRetList = response.detail
+Dim customerRet As ICustomerRet
+Set customerRet = custRetList.GetAt(0)
+MsgBox ("Customer Name: " & customerRet.Name.GetValue())
+
+Set requestMsgSet = Nothing
+Set requestMsgSet = sessionManager.CreateMsgSetRequest("US", 14, 0)
+Dim EstimateAddRq As IEstimateAdd
+Set EstimateAddRq = requestMsgSet.AppendEstimateAddRq
+
+EstimateAddRq.CustomerRef.FullName.SetValue (customerRet.Name.GetValue())
+'addEstimateRequest.CustomerRef.FullName.SetValue (customerRet.Name.GetValue())
+
+'Set Matches = Nothing
+
+ReEx.Pattern = "BTI\sp/n\s.*$"
+
+Dim Interator As Integer
+
+Interator = 22
+
+
+
+Do While Application.Workbooks("Standard Tooling Quote 2022 - Copy (2).xlsm").Worksheets("Standard Quote").Range("A" & Interator) <> "" Or Application.Workbooks("Standard Tooling Quote 2022 - Copy (2).xlsm").Worksheets("Standard Quote").Range("B" & Interator) <> ""
+' going thru all the lines, can only add one item per line, so we only need to declare once!
+
+
+      
+        Dim OREstimateLineAddListElement9589 As IOREstimateLineAdd
+        Set OREstimateLineAddListElement9589 = EstimateAddRq.OREstimateLineAddList.Append()
+        Dim IsToolSet As Boolean
+        IsToolSet = False
+
+        Set Matches = Nothing
+        
+        
+        
+        
+        If Application.Workbooks("Standard Tooling Quote 2022 - Copy (2).xlsm").Worksheets("Standard Quote").Range("A" & Interator) <> "" Then
+        
+                    Set Matches = ReEx.Execute(Application.Workbooks("Standard Tooling Quote 2022 - Copy (2).xlsm").Worksheets("Standard Quote").Range("B" & Interator))
+                    
+                    If Matches.Count > 0 Then ' check if tool set and then append line item if yes, else chech if existing item id, if no, add non inventory item, and then add a line item
+                    
+                                ' query for item id
+                                Dim ItemString As String
+                                ItemString = Matches.Item(0)
+                                ItemString = Right(ItemString, Len(ItemString) - 8)
+                                
+                                
+                                
+                        
+                                'Dim addItemQry As IItemNonInventoryQuery
+                                'Set addItemQry = requestMsgSet.AppendItemNonInventoryQueryRq
+                                
+                                
+                                
+                                
+                                
+                                
+                                ' if "^BB/ matches item ID = 1-4501
+                                ReEx.Pattern = "^BB/"
+                                Set Matches = Nothing
+                                If ReEx.Test(ItemString) = True Then
+                                    MsgBox ("Item BB: " & ItemString)
+                                    
+                                    
+                                    
+                                    'Set estimateLineAdd = EstimateAddRq.OREstimateLineAddList.Append()
+                                    Call OREstimateLineAddListElement9589.estimateLineAdd.ItemRef.FullName.SetValue("1-4501")
+                                    Call OREstimateLineAddListElement9589.estimateLineAdd.Desc.SetValue(Application.Workbooks("Standard Tooling Quote 2022 - Copy (2).xlsm").Worksheets("Standard Quote").Range("B" & Interator))
+                                    IsToolSet = True
+                                End If
+                                
+                                
+                                ' if "^CI/ matches item ID = 1-4502
+                                ReEx.Pattern = "^CI/"
+                                Set Matches = Nothing
+                                If ReEx.Test(ItemString) = True Then
+                                    MsgBox ("Item CI: " & ItemString)
+                                    
+                                    'Set estimateLineAdd = EstimateAddRq.OREstimateLineAddList.Append()
+                                    Call OREstimateLineAddListElement9589.estimateLineAdd.ItemRef.FullName.SetValue("1-4502")
+                                    Call OREstimateLineAddListElement9589.estimateLineAdd.Desc.SetValue(Application.Workbooks("Standard Tooling Quote 2022 - Copy (2).xlsm").Worksheets("Standard Quote").Range("B" & Interator))
+                                    IsToolSet = True
+                                End If
+                                
+                                ' if "^CD/ matches item ID = 1-4503
+                                ReEx.Pattern = "^CD/"
+                                Set Matches = Nothing
+                                If ReEx.Test(ItemString) = True Then
+                                    MsgBox ("Item CD: " & ItemString)
+                                    
+                                    'Set estimateLineAdd = EstimateAddRq.OREstimateLineAddList.Append()
+                                    Call OREstimateLineAddListElement9589.estimateLineAdd.ItemRef.FullName.SetValue("1-4503")
+                                    Call OREstimateLineAddListElement9589.estimateLineAdd.Desc.SetValue(Application.Workbooks("Standard Tooling Quote 2022 - Copy (2).xlsm").Worksheets("Standard Quote").Range("B" & Interator))
+                                    IsToolSet = True
+                                End If
+                                
+                                
+                                ' if "^PD/ matches item ID = 1-4504
+                                ReEx.Pattern = "^PD/"
+                                Set Matches = Nothing
+                                If ReEx.Test(ItemString) = True Then
+                                    MsgBox ("Item PD: " & ItemString)
+                                    
+                                    
+                                    'Set estimateLineAdd = EstimateAddRq.OREstimateLineAddList.Append()
+                                    Call OREstimateLineAddListElement9589.estimateLineAdd.ItemRef.FullName.SetValue("1-4504")
+                                    Call OREstimateLineAddListElement9589.estimateLineAdd.Desc.SetValue(Application.Workbooks("Standard Tooling Quote 2022 - Copy (2).xlsm").Worksheets("Standard Quote").Range("B" & Interator))
+                                    IsToolSet = True
+                                End If
+                                
+                                
+                                ' else qry for item id
+                                ' if no item id, query for next item id, add item id
+                                ' add item id to estimate
+                                ' add Estimate Request.append line item
+                                If IsToolSet = False Then
+                                    MsgBox ("Item is not tool: " & ItemString)
+                                End If
+                                
+                                
+                    
+                    End If
+                    
+                    
+        End If
+        
+    Interator = Interator + 1
+    ReEx.Pattern = "BTI\sp/n\s.*$"
+    
+    Call OREstimateLineAddListElement9589.estimateLineAdd.Quantity.SetValue(1)
+
+Loop
+
+Set responseMsgSet = Nothing
+' Set responseMsgSet = sessionManager.DoRequests(requestMsgSet)
+
+
+Call sessionManager.EndSession
+Call sessionManager.CloseConnection
+
+
+End Sub
+
+
+

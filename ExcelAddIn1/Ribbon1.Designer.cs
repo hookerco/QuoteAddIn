@@ -34,51 +34,54 @@
         /// </summary>
         private void InitializeComponent()
         {
-            this.tab1 = this.Factory.CreateRibbonTab();
-            this.QB = this.Factory.CreateRibbonGroup();
-            this.QBUtility = this.Factory.CreateRibbonButton();
-            this.tab1.SuspendLayout();
-            this.QB.SuspendLayout();
+            System.ComponentModel.ComponentResourceManager resources = new System.ComponentModel.ComponentResourceManager(typeof(QBRibbon));
+            this.QBTab = this.Factory.CreateRibbonTab();
+            this.QBGroup = this.Factory.CreateRibbonGroup();
+            this.SendButton = this.Factory.CreateRibbonButton();
+            this.QBTab.SuspendLayout();
+            this.QBGroup.SuspendLayout();
             this.SuspendLayout();
             // 
-            // tab1
+            // QBTab
             // 
-            this.tab1.ControlId.ControlIdType = Microsoft.Office.Tools.Ribbon.RibbonControlIdType.Office;
-            this.tab1.Groups.Add(this.QB);
-            this.tab1.Label = "TabAddIns";
-            this.tab1.Name = "tab1";
+            this.QBTab.ControlId.ControlIdType = Microsoft.Office.Tools.Ribbon.RibbonControlIdType.Office;
+            this.QBTab.Groups.Add(this.QBGroup);
+            this.QBTab.Label = "Send to QuickBooks";
+            this.QBTab.Name = "QBTab";
             // 
-            // QB
+            // QBGroup
             // 
-            this.QB.Items.Add(this.QBUtility);
-            this.QB.Label = "QB";
-            this.QB.Name = "QB";
+            this.QBGroup.Items.Add(this.SendButton);
+            this.QBGroup.Name = "QBGroup";
             // 
-            // QBUtility
+            // SendButton
             // 
-            this.QBUtility.Label = "QBUtility";
-            this.QBUtility.Name = "QBUtility";
-            this.QBUtility.Click += new Microsoft.Office.Tools.Ribbon.RibbonControlEventHandler(this.button1_Click);
+            this.SendButton.ControlSize = Microsoft.Office.Core.RibbonControlSize.RibbonControlSizeLarge;
+            this.SendButton.Image = ((System.Drawing.Image)(resources.GetObject("SendButton.Image")));
+            this.SendButton.Label = "Send";
+            this.SendButton.Name = "SendButton";
+            this.SendButton.ShowImage = true;
+            this.SendButton.Click += new Microsoft.Office.Tools.Ribbon.RibbonControlEventHandler(this.button1_Click);
             // 
             // QBRibbon
             // 
             this.Name = "QBRibbon";
             this.RibbonType = "Microsoft.Excel.Workbook";
-            this.Tabs.Add(this.tab1);
+            this.Tabs.Add(this.QBTab);
             this.Load += new Microsoft.Office.Tools.Ribbon.RibbonUIEventHandler(this.Ribbon1_Load);
-            this.tab1.ResumeLayout(false);
-            this.tab1.PerformLayout();
-            this.QB.ResumeLayout(false);
-            this.QB.PerformLayout();
+            this.QBTab.ResumeLayout(false);
+            this.QBTab.PerformLayout();
+            this.QBGroup.ResumeLayout(false);
+            this.QBGroup.PerformLayout();
             this.ResumeLayout(false);
 
         }
 
         #endregion
 
-        internal Microsoft.Office.Tools.Ribbon.RibbonTab tab1;
-        internal Microsoft.Office.Tools.Ribbon.RibbonGroup QB;
-        internal Microsoft.Office.Tools.Ribbon.RibbonButton QBUtility;
+        internal Microsoft.Office.Tools.Ribbon.RibbonTab QBTab;
+        internal Microsoft.Office.Tools.Ribbon.RibbonGroup QBGroup;
+        internal Microsoft.Office.Tools.Ribbon.RibbonButton SendButton;
     }
 
     partial class ThisRibbonCollection

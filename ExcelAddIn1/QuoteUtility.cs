@@ -19,12 +19,13 @@ namespace ExcelAddIn1
         public AllItemList allItemList { get; set; }
         private string customerName = "";
 
-        private Worksheet worksheet = Globals.Factory.GetVstoObject(
+        private Worksheet worksheet = null;
+
+        public void RunQuoteUtility()
+        {
+            worksheet = Globals.Factory.GetVstoObject(
 Globals.ThisAddIn.Application.ActiveWorkbook.Worksheets["Standard Quote"]);
 
-        public void quoteUtility()
-        {
-            
             bool sessionBegun = false;
             bool connectionOpen = false;
             QBSessionManager sessionManager = null;
@@ -46,7 +47,7 @@ Globals.ThisAddIn.Application.ActiveWorkbook.Worksheets["Standard Quote"]);
 
                 //******* Add request functions here *******
                 //query_customer(requestMsgSet, sessionManager);
-
+                WalkItems();
                 //******************************************
 
                 //End the session and close the connection to QuickBooks
@@ -69,8 +70,13 @@ Globals.ThisAddIn.Application.ActiveWorkbook.Worksheets["Standard Quote"]);
             }
         }
 
+        public void AddList(ref AllItemList newList)
+        {
+            allItemList = newList;
+        }
+
         // query_customer
-        private void query_customer(IMsgSetRequest requestMsgSet, QBSessionManager sessionManager)
+        private void QueryCustomer(IMsgSetRequest requestMsgSet, QBSessionManager sessionManager)
         {
             BuildCustomerQueryRq(requestMsgSet);
 
@@ -181,7 +187,7 @@ Globals.ThisAddIn.Application.ActiveWorkbook.Worksheets["Standard Quote"]);
 
 
         // query_items
-        public void query_items()
+        public bool query_items()
         {
             bool sessionBegun = false;
             bool connectionOpen = false;
@@ -214,10 +220,11 @@ Globals.ThisAddIn.Application.ActiveWorkbook.Worksheets["Standard Quote"]);
                 connectionOpen = false;
 
                 WalkItemQueryRs(responseMsgSet);
+                return true;
             }
             catch (Exception e)
             {
-                Console.WriteLine(e.Message);
+                Debug.WriteLine(e.Message);
                 if (sessionBegun)
                 {
                     sessionManager.EndSession();
@@ -226,6 +233,7 @@ Globals.ThisAddIn.Application.ActiveWorkbook.Worksheets["Standard Quote"]);
                 {
                     sessionManager.CloseConnection();
                 }
+                return false;
             }
         }
         // query_items::Ensure response is okay?
@@ -268,21 +276,30 @@ Globals.ThisAddIn.Application.ActiveWorkbook.Worksheets["Standard Quote"]);
             {
                 ItemRet = ItemRetList.GetAt(i);
 
-                //Just ignores return items that don't have ORSalesPurchase or Desc
+                // Some items are SalesOrPurchase, some are SalesAndPurchase? Try catch wouldn't fix it
                 // Adds non-inventory items' names and descriptions to memory (this.items)
-                try
+                string[] itemN = new string[2];
+                itemN[0] = ItemRet.Name.GetValue();
+                itemN[1] = "";
+
+                if (ItemRet.ORSalesPurchase.SalesOrPurchase != null)
                 {
-                    string[] itemN = new string[2];
-                    itemN[0] = ItemRet.Name.GetValue();
-                    string desc = ItemRet.ORSalesPurchase.SalesOrPurchase.Desc.GetValue();
-                    itemN[1] = desc;
-                    //Debug.WriteLine(itemN[0]);
-                    this.items.Add(itemN);
+                    if (ItemRet.ORSalesPurchase.SalesOrPurchase.Desc != null)
+                    {
+                        itemN[1] = ItemRet.ORSalesPurchase.SalesOrPurchase.Desc.GetValue();
+                    }
+
                 }
-                catch (Exception e)
+                else if (ItemRet.ORSalesPurchase.SalesAndPurchase != null)
                 {
-                    //Debug.WriteLine("Item '" + ItemRet.Name.GetValue() + "' did not return a valid object");
+                    if (ItemRet.ORSalesPurchase.SalesAndPurchase.SalesDesc != null)
+                    {
+                        itemN[1] = ItemRet.ORSalesPurchase.SalesAndPurchase.SalesDesc.GetValue();
+                    }
                 }
+
+                //Console.WriteLine(itemN[1]);
+                this.items.Add(itemN);
 
             }
         }
@@ -306,6 +323,11 @@ Globals.ThisAddIn.Application.ActiveWorkbook.Worksheets["Standard Quote"]);
                 if (found == true) break;
             }
             return foundPart;
+        }
+
+        public void Clear_List()
+        {
+            items.Clear();
         }
     }
 }

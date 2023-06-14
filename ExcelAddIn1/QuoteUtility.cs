@@ -11,16 +11,44 @@ using Excel = Microsoft.Office.Interop.Excel;
 using Microsoft.Office.Tools.Excel;
 using Microsoft.Office.Tools.Excel.Extensions;
 using System.Diagnostics;
+using System.CodeDom;
 
 namespace ExcelAddIn1
 {
+    /** 
+     * <summary>
+     * Class <c>QuoteUtility</c> drives the quote utility
+     * </summary>
+     */
     internal class QuoteUtility
     {
-        public AllItemList allItemList { get; set; }
+        /** 
+         * <summary>
+         * Property <c>AllItemList</c> contains all queried items
+         * </summary>
+         */
+        public AllItemList AllItemList { get; set; }
+
+        /**
+         * <summary>
+         * Field <c>customerName</c> is the current quote's customer
+         * </summary>
+         */
         private string customerName = "";
 
+        /**
+         * <summary>
+         * Field <c>worksheet</c> is the Standard Quote worksheet
+         * </summary>
+         */
         private Worksheet worksheet = null;
 
+        /**
+         * <summary>
+         * This method opens the connection to quickbooks, begins the session,
+         * and drives the other quote functions
+         * </summary>
+         */ 
         public void RunQuoteUtility()
         {
             worksheet = Globals.Factory.GetVstoObject(
@@ -32,32 +60,29 @@ Globals.ThisAddIn.Application.ActiveWorkbook.Worksheets["Standard Quote"]);
 
             try
             {
-                //Create the session Manager object
                 sessionManager = new QBSessionManager();
 
                 //Create the message set request object to hold our request
                 IMsgSetRequest requestMsgSet = sessionManager.CreateMsgSetRequest("US", 14, 0);
                 requestMsgSet.Attributes.OnError = ENRqOnError.roeContinue;
 
-                //Connect to QuickBooks and begin a session
                 sessionManager.OpenConnection("", "Sample Code from OSR");
                 connectionOpen = true;
                 sessionManager.BeginSession("", ENOpenMode.omDontCare);
                 sessionBegun = true;
 
                 //******* Add request functions here *******
-                //query_customer(requestMsgSet, sessionManager);
+                QueryCustomer(requestMsgSet, sessionManager);
                 WalkItems();
                 //******************************************
 
-                //End the session and close the connection to QuickBooks
                 sessionManager.EndSession();
                 sessionBegun = false;
                 sessionManager.CloseConnection();
                 connectionOpen = false;
             }
             catch (Exception e)
-            {
+            { // Cleanly close session and connection 
                 MessageBox.Show(e.Message);
                 if (sessionBegun)
                 {
@@ -70,22 +95,37 @@ Globals.ThisAddIn.Application.ActiveWorkbook.Worksheets["Standard Quote"]);
             }
         }
 
+        /**
+         * <summary>
+         * This method adds a previously formed list of queried objects to the class
+         * </summary>
+         */
         public void AddList(ref AllItemList newList)
         {
-            allItemList = newList;
+            AllItemList = newList;
         }
 
-        // query_customer
+        /**
+         * <summary>
+         * This method finds customer number from worksheet and sets <see cref="customerName"/> field
+         * </summary>
+         * <remarks>Modifies customerName, requestMsgSet</remarks>
+         */
         private void QueryCustomer(IMsgSetRequest requestMsgSet, QBSessionManager sessionManager)
         {
             BuildCustomerQueryRq(requestMsgSet);
 
-            //Send the request and get the response from QuickBooks
             IMsgSetResponse responseMsgSet = sessionManager.DoRequests(requestMsgSet);
 
             WalkCustomerAddRs(responseMsgSet);
         }
-        // query_customer::build the query
+
+        /**
+         * <summary>
+         * ReGex customer ID from worksheet and add it to customer query
+         * </summary>
+         * <remarks>Modifies requestMsgSet</remarks>
+         */
         private void BuildCustomerQueryRq(IMsgSetRequest requestMsgSet)
         {
             ICustomerQuery CustomerQueryRq = requestMsgSet.AppendCustomerQueryRq();
@@ -105,21 +145,25 @@ Globals.ThisAddIn.Application.ActiveWorkbook.Worksheets["Standard Quote"]);
             CustomerQueryRq.ORCustomerListQuery.CustomerListFilter.ORNameFilter.NameFilter.Name.SetValue(name);
             CustomerQueryRq.IncludeRetElementList.Add("Name");
         }
-        // query_customer::check response
+        
+        /**
+         * <summary>
+         * Changes <see cref="customerName"/> field to response from query
+         * </summary>
+         * <remarks>Modifies <see cref="customerName"/></remarks>
+         */
         private void WalkCustomerAddRs(IMsgSetResponse responseMsgSet)
         {
 
             if (responseMsgSet == null) return;
             IResponseList responseList = responseMsgSet.ResponseList;
             if (responseList == null) return;
-            //if we sent only one request, there is only one response, we'll walk the list for this sample
+            
             for (int i = 0; i < responseList.Count; i++)
             {
                 IResponse response = responseList.GetAt(i);
-                //check the status code of the response, 0=ok, >0 is warning
                 if (response.StatusCode >= 0)
                 {
-                    //the request-specific response is in the details, make sure we have some
                     if (response.Detail != null)
                     {
                         //make sure the response is the type we're expecting
@@ -139,7 +183,13 @@ Globals.ThisAddIn.Application.ActiveWorkbook.Worksheets["Standard Quote"]);
             }
         }
 
-        // WalkItems -> walk through each item in quote (not in mounting set, right?)
+        /**
+         * <summary>
+         * In worksheet, sees if parts in "Standard Quote" are located in any item descriptions from <see cref="AllItemList"/>
+         * </summary>
+         * <remarks>Takes much longer in WinForms projects than in Excel VSTO Add-In. 
+         * Runs <see cref="String.Contains(string)"/> on thousands of items for multiple parts.</remarks>
+         */
         public void WalkItems()
         {
             Regex regex = new Regex(@"BTI\sp/n\s.*$");
@@ -147,11 +197,12 @@ Globals.ThisAddIn.Application.ActiveWorkbook.Worksheets["Standard Quote"]);
             int iterator = 22;
 
             // strings of the cells' values
-            string colA = worksheet.Range["A" +  iterator].Text;
+            string colA = worksheet.Range["A" + iterator].Text;
             string colB = worksheet.Range["B" + iterator].Text;
 
             // while the cells aren't empty (may have to change this depending on format)
-            while (colA != "" || colB != "") {
+            while (colA != "" || colB != "")
+            {
                 Match match = regex.Match(colB);
 
                 if (match.Success && match.Value.Length > 15)
@@ -160,7 +211,7 @@ Globals.ThisAddIn.Application.ActiveWorkbook.Worksheets["Standard Quote"]);
                     string partNum = match.Value.Substring(8);
 
                     // use AllListItem query method
-                    string[] foundPart = allItemList.FindPart(partNum);
+                    string[] foundPart = AllItemList.FindPart(partNum);
 
                     if (foundPart[0] != "")
                     {
@@ -179,15 +230,25 @@ Globals.ThisAddIn.Application.ActiveWorkbook.Worksheets["Standard Quote"]);
             }
         }
     }
-
+    
+    /**
+     * <summary>
+     * Class <c>AllItemList</c> queries and holds queried items
+     * </summary>
+     */
     internal class AllItemList
     {
-        private List<string[]> items
+        /**
+         * <summary>Field <c>items</c> is the list of the queried items</summary>
+         */
+        private List<string[]> Items
         { get; } = new List<string[]>();
 
 
-        // query_items
-        public bool query_items()
+        /**
+         * This method queries QuickBooks for the items list
+         */
+        public bool QueryItems()
         {
             bool sessionBegun = false;
             bool connectionOpen = false;
@@ -236,7 +297,10 @@ Globals.ThisAddIn.Application.ActiveWorkbook.Worksheets["Standard Quote"]);
                 return false;
             }
         }
-        // query_items::Ensure response is okay?
+        
+        /**
+         * <summary>This method ensures the response is valid.</summary>
+         */
         private void WalkItemQueryRs(IMsgSetResponse responseMsgSet)
         {
 
@@ -265,7 +329,11 @@ Globals.ThisAddIn.Application.ActiveWorkbook.Worksheets["Standard Quote"]);
                 }
             }
         }
-        //query_items:: add each valid item to all items list
+        
+        /**
+         * <summary>This method adds each item and description to <see cref="Items"/></summary>
+         * <remarks>Modifies <see cref="Items"/></remarks>
+         */
         private void WalkItemRet(IItemNonInventoryRetList ItemRetList)
         {
             if (ItemRetList == null) return;
@@ -281,6 +349,8 @@ Globals.ThisAddIn.Application.ActiveWorkbook.Worksheets["Standard Quote"]);
                 string[] itemN = new string[2];
                 itemN[0] = ItemRet.Name.GetValue();
                 itemN[1] = "";
+
+
 
                 if (ItemRet.ORSalesPurchase.SalesOrPurchase != null)
                 {
@@ -298,12 +368,17 @@ Globals.ThisAddIn.Application.ActiveWorkbook.Worksheets["Standard Quote"]);
                     }
                 }
 
-                //Console.WriteLine(itemN[1]);
-                this.items.Add(itemN);
+                this.Items.Add(itemN);
 
             }
         }
 
+        /**
+         * <summary>This method searches through every item in <see cref="Items"/> to find 
+         * the part string</summary>
+         * <param name="part">part number to be searched</param>
+         * <returns>First instance of the string in format of [name, description]</returns>
+         */
         public string[] FindPart(string part)
         {
             string[] foundPart = new string[2];
@@ -311,23 +386,26 @@ Globals.ThisAddIn.Application.ActiveWorkbook.Worksheets["Standard Quote"]);
             foundPart[1] = "";
             bool found = false;
 
-            for (int i = 0; i < items.Count; ++i)
+            for (int i = 0; i < Items.Count; ++i)
             {
-                if (items[i][1].Contains(part))
+                if (Items[i][1].Contains(part))
                 {
-                    
+
                     found = true;
-                    foundPart[0] = items[i][0];
-                    foundPart[1] = items[i][1];
+                    foundPart[0] = Items[i][0];
+                    foundPart[1] = Items[i][1];
                 }
                 if (found == true) break;
             }
             return foundPart;
         }
 
-        public void Clear_List()
+        /**
+         * <summary>Empties <see cref="Items"/></summary>
+         */
+        public void Clear()
         {
-            items.Clear();
+            Items.Clear();
         }
     }
 }

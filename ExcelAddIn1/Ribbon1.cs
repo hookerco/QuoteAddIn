@@ -13,7 +13,7 @@ namespace ExcelAddIn1
         {
 
             // Pre-loads item list
-            isLoaded = allItemList.query_items();
+            isLoaded = allItemList.QueryItems();
         }
 
         private void button1_Click(object sender, RibbonControlEventArgs e)
@@ -21,12 +21,13 @@ namespace ExcelAddIn1
             if (!isLoaded)
             {
                 MessageBox.Show("Items not loaded, Now trying to load items. Open QuickBooks if not yet open");
-                isLoaded = allItemList.query_items();
+                isLoaded = allItemList.QueryItems();
             }
             else
             {
 
                 QuoteUtility quoteUtility = new QuoteUtility();
+                //Literally just adds the list of items
                 quoteUtility.AddList(ref allItemList);
                 quoteUtility.RunQuoteUtility();
             }

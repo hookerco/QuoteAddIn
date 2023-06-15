@@ -1,17 +1,10 @@
 ﻿using Interop.QBFC14;
+using Microsoft.Office.Tools.Excel;
 using System;
 using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Text.RegularExpressions;
-using System.Threading.Tasks;
-using System.Windows.Forms;
-using System.Security;
-using Excel = Microsoft.Office.Interop.Excel;
-using Microsoft.Office.Tools.Excel;
-using Microsoft.Office.Tools.Excel.Extensions;
 using System.Diagnostics;
-using System.CodeDom;
+using System.Text.RegularExpressions;
+using System.Windows.Forms;
 
 namespace ExcelAddIn1
 {
@@ -48,7 +41,7 @@ namespace ExcelAddIn1
          * This method opens the connection to quickbooks, begins the session,
          * and drives the other quote functions
          * </summary>
-         */ 
+         */
         public void RunQuoteUtility()
         {
             worksheet = Globals.Factory.GetVstoObject(
@@ -66,14 +59,20 @@ Globals.ThisAddIn.Application.ActiveWorkbook.Worksheets["Standard Quote"]);
                 IMsgSetRequest requestMsgSet = sessionManager.CreateMsgSetRequest("US", 14, 0);
                 requestMsgSet.Attributes.OnError = ENRqOnError.roeContinue;
 
+                string qbFile = "";
+                if (!Properties.Settings.Default.UseActiveQuickbook)
+                {
+                    qbFile = Properties.Settings.Default.QuickbooksPath;
+                }
+
                 sessionManager.OpenConnection("", "Sample Code from OSR");
                 connectionOpen = true;
-                sessionManager.BeginSession("", ENOpenMode.omDontCare);
+                sessionManager.BeginSession(qbFile, ENOpenMode.omDontCare);
                 sessionBegun = true;
 
                 //******* Add request functions here *******
                 QueryCustomer(requestMsgSet, sessionManager);
-                WalkItems();
+                FindPartsWalk();
                 //******************************************
 
                 sessionManager.EndSession();
@@ -130,12 +129,11 @@ Globals.ThisAddIn.Application.ActiveWorkbook.Worksheets["Standard Quote"]);
         {
             ICustomerQuery CustomerQueryRq = requestMsgSet.AppendCustomerQueryRq();
 
-            //Set field value for Name
             CustomerQueryRq.ORCustomerListQuery.CustomerListFilter.ORNameFilter.NameFilter.MatchCriterion.SetValue(ENMatchCriterion.mcEndsWith);
 
-            // five digit customer id
             Regex regex = new Regex(@"\d{5}$");
 
+            // Customer ID location --- Change if Module Changes
             string name = worksheet.Range["B11"].Value.ToString();
             Match match = regex.Match(name);
             name = match.Value;
@@ -145,7 +143,7 @@ Globals.ThisAddIn.Application.ActiveWorkbook.Worksheets["Standard Quote"]);
             CustomerQueryRq.ORCustomerListQuery.CustomerListFilter.ORNameFilter.NameFilter.Name.SetValue(name);
             CustomerQueryRq.IncludeRetElementList.Add("Name");
         }
-        
+
         /**
          * <summary>
          * Changes <see cref="customerName"/> field to response from query
@@ -158,7 +156,7 @@ Globals.ThisAddIn.Application.ActiveWorkbook.Worksheets["Standard Quote"]);
             if (responseMsgSet == null) return;
             IResponseList responseList = responseMsgSet.ResponseList;
             if (responseList == null) return;
-            
+
             for (int i = 0; i < responseList.Count; i++)
             {
                 IResponse response = responseList.GetAt(i);
@@ -190,10 +188,11 @@ Globals.ThisAddIn.Application.ActiveWorkbook.Worksheets["Standard Quote"]);
          * <remarks>Takes much longer in WinForms projects than in Excel VSTO Add-In. 
          * Runs <see cref="String.Contains(string)"/> on thousands of items for multiple parts.</remarks>
          */
-        public void WalkItems()
+        private void FindPartsWalk()
         {
             Regex regex = new Regex(@"BTI\sp/n\s.*$");
-            // start of items
+
+            // start of items --- Change if module changes
             int iterator = 22;
 
             // strings of the cells' values
@@ -230,7 +229,7 @@ Globals.ThisAddIn.Application.ActiveWorkbook.Worksheets["Standard Quote"]);
             }
         }
     }
-    
+
     /**
      * <summary>
      * Class <c>AllItemList</c> queries and holds queried items
@@ -263,10 +262,16 @@ Globals.ThisAddIn.Application.ActiveWorkbook.Worksheets["Standard Quote"]);
                 IMsgSetRequest requestMsgSet = sessionManager.CreateMsgSetRequest("US", 14, 0);
                 requestMsgSet.Attributes.OnError = ENRqOnError.roeContinue;
 
+                string qbFile = "";
+                if (!Properties.Settings.Default.UseActiveQuickbook)
+                {
+                    qbFile = Properties.Settings.Default.QuickbooksPath;
+                }
+
                 //Connect to QuickBooks and begin a session
                 sessionManager.OpenConnection("", "Sample Code from OSR");
                 connectionOpen = true;
-                sessionManager.BeginSession("", ENOpenMode.omDontCare);
+                sessionManager.BeginSession(qbFile, ENOpenMode.omDontCare);
                 sessionBegun = true;
 
                 IItemNonInventoryQuery itemQuery = requestMsgSet.AppendItemNonInventoryQueryRq();
@@ -297,7 +302,7 @@ Globals.ThisAddIn.Application.ActiveWorkbook.Worksheets["Standard Quote"]);
                 return false;
             }
         }
-        
+
         /**
          * <summary>This method ensures the response is valid.</summary>
          */
@@ -329,7 +334,7 @@ Globals.ThisAddIn.Application.ActiveWorkbook.Worksheets["Standard Quote"]);
                 }
             }
         }
-        
+
         /**
          * <summary>This method adds each item and description to <see cref="Items"/></summary>
          * <remarks>Modifies <see cref="Items"/></remarks>

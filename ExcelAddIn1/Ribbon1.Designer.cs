@@ -67,13 +67,13 @@
             this.SendButton.Label = "Send";
             this.SendButton.Name = "SendButton";
             this.SendButton.ShowImage = true;
-            this.SendButton.Click += new Microsoft.Office.Tools.Ribbon.RibbonControlEventHandler(this.button1_Click);
+            this.SendButton.Click += new Microsoft.Office.Tools.Ribbon.RibbonControlEventHandler(this.SendButton_Click);
             // 
             // ChooseFileButton
             // 
             this.ChooseFileButton.Label = "Choose File";
             this.ChooseFileButton.Name = "ChooseFileButton";
-            this.ChooseFileButton.Click += new Microsoft.Office.Tools.Ribbon.RibbonControlEventHandler(this.chooseFile_Click_1);
+            this.ChooseFileButton.Click += new Microsoft.Office.Tools.Ribbon.RibbonControlEventHandler(this.ChooseFile_Click);
             // 
             // QuickBooksActiveToggle
             // 

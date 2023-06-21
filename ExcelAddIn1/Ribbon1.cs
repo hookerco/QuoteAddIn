@@ -23,20 +23,20 @@ namespace ExcelAddIn1
             }
         }
 
-        private void button1_Click(object sender, RibbonControlEventArgs e)
+        private void SendButton_Click(object sender, RibbonControlEventArgs e)
         {
             if (!isLoaded)
             {
                 isLoaded = allItemList.QueryItems();
             }
 
-            QuoteUtility quoteUtility = new QuoteUtility();
+            QBUtility quoteUtility = new QBUtility();
             //Literally just adds the list of items
             quoteUtility.AddList(ref allItemList);
             quoteUtility.RunQuoteUtility();
         }
 
-        private void chooseFile_Click_1(object sender, RibbonControlEventArgs e)
+        private void ChooseFile_Click(object sender, RibbonControlEventArgs e)
         {
             DialogResult result = OpenFileDialog1.ShowDialog();
 

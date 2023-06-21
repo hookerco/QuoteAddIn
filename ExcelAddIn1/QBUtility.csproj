@@ -185,7 +185,7 @@
     can be found.
   -->
   <ItemGroup>
-    <Compile Include="QuoteUtility.cs" />
+    <Compile Include="QBUtility.cs" />
     <Compile Include="Properties\AssemblyInfo.cs">
       <SubType>Code</SubType>
     </Compile>
@@ -227,6 +227,12 @@
       <DependentUpon>ThisAddIn.Designer.xml</DependentUpon>
     </Compile>
     <AppDesigner Include="Properties\" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\RequestLibrary\QBRequestLibrary.csproj">
+      <Project>{74130dcb-28ce-4e5b-bf4d-96b47d51646a}</Project>
+      <Name>QBRequestLibrary</Name>
+    </ProjectReference>
   </ItemGroup>
   <PropertyGroup>
     <VisualStudioVersion Condition="'$(VisualStudioVersion)' == ''">10.0</VisualStudioVersion>

@@ -3,7 +3,9 @@ Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
 VisualStudioVersion = 17.5.33627.172
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "QuoteAddIn", "ExcelAddIn1\QuoteAddIn.csproj", "{A437A186-417B-444A-992F-863DD78E0B05}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "QBUtility", "ExcelAddIn1\QBUtility.csproj", "{A437A186-417B-444A-992F-863DD78E0B05}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "QBRequestLibrary", "RequestLibrary\QBRequestLibrary.csproj", "{74130DCB-28CE-4E5B-BF4D-96B47D51646A}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -15,6 +17,10 @@ Global
 		{A437A186-417B-444A-992F-863DD78E0B05}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{A437A186-417B-444A-992F-863DD78E0B05}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{A437A186-417B-444A-992F-863DD78E0B05}.Release|Any CPU.Build.0 = Release|Any CPU
+		{74130DCB-28CE-4E5B-BF4D-96B47D51646A}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{74130DCB-28CE-4E5B-BF4D-96B47D51646A}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{74130DCB-28CE-4E5B-BF4D-96B47D51646A}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{74130DCB-28CE-4E5B-BF4D-96B47D51646A}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

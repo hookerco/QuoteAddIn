@@ -21,7 +21,7 @@ namespace ExcelAddIn1
 		 * Property <c>AllItemList</c> contains all queried items
 		 * </summary>
 		 */
-		public AllItemList AllItemList { get; set; }
+		public List<string[]> AllItemList { get; set; }
 
 		/**
 		 * <summary>
@@ -51,7 +51,7 @@ Globals.ThisAddIn.Application.ActiveWorkbook.Worksheets["Standard Quote"]);
 			Connection conn = new Connection();
 
 			try
-			{ 
+			{
 
 				conn.File = "";
 				if (!Properties.Settings.Default.UseActiveQuickbook)
@@ -61,11 +61,11 @@ Globals.ThisAddIn.Application.ActiveWorkbook.Worksheets["Standard Quote"]);
 
 				conn.Open();
 
-                IMsgSetRequest requestMsgSet = conn.sessionManager.CreateMsgSetRequest("US", 14, 0);
-                requestMsgSet.Attributes.OnError = ENRqOnError.roeContinue;
+				IMsgSetRequest requestMsgSet = conn.sessionManager.CreateMsgSetRequest("US", 14, 0);
+				requestMsgSet.Attributes.OnError = ENRqOnError.roeContinue;
 
-                //******* Add request functions here *******
-                QueryCustomer(requestMsgSet, conn.sessionManager);
+				//******* Add request functions here *******
+				QueryCustomer(requestMsgSet, conn.sessionManager);
 				FindPartsWalk();
 				//******************************************
 
@@ -76,16 +76,6 @@ Globals.ThisAddIn.Application.ActiveWorkbook.Worksheets["Standard Quote"]);
 				MessageBox.Show(e.Message);
 				conn.Close();
 			}
-		}
-
-		/**
-		 * <summary>
-		 * This method adds a previously formed list of queried objects to the class
-		 * </summary>
-		 */
-		public void AddList(ref AllItemList newList)
-		{
-			AllItemList = newList;
 		}
 
 		/**
@@ -188,13 +178,14 @@ Globals.ThisAddIn.Application.ActiveWorkbook.Worksheets["Standard Quote"]);
 			{
 				Match match = regex.Match(colB);
 
+				// 15 is arbitrary, just want to look at longer strings
 				if (match.Success && match.Value.Length > 15)
 				{
 					// gets rid of "BTI p/n "
 					string partNum = match.Value.Substring(8);
 
 					// use AllListItem query method
-					string[] foundPart = AllItemList.FindPart(partNum);
+					string[] foundPart = FindPart(partNum);
 
 					if (foundPart[0] != "")
 					{
@@ -212,61 +203,73 @@ Globals.ThisAddIn.Application.ActiveWorkbook.Worksheets["Standard Quote"]);
 				colB = worksheet.Range["B" + iterator].Text;
 			}
 		}
-	}
 
-	/**
-	 * <summary>
-	 * Class <c>AllItemList</c> queries and holds queried items
-	 * </summary>
-	 */
-	internal class AllItemList
-	{
-		/**
-		 * <summary>Field <c>items</c> is the list of the queried items</summary>
+        /**
+		 * <summary>This method searches through every item in <see cref="Items"/> to find 
+		 * the part string</summary>
+		 * <param name="part">part number to be searched</param>
+		 * <returns>First instance of the string in format of [name, description]</returns>
 		 */
-		private List<string[]> Items
-		{ get; } = new List<string[]>();
+        public string[] FindPart(string part)
+        {
+            string[] foundPart = new string[2];
+            foundPart[0] = "";
+            foundPart[1] = "";
+            bool found = false;
 
+            for (int i = 0; i < AllItemList.Count; ++i)
+            {
+                if (AllItemList[i][1].Contains(part))
+                {
 
-		/**
+                    found = true;
+                    foundPart[0] = AllItemList[i][0];
+                    foundPart[1] = AllItemList[i][1];
+                }
+                if (found == true) break;
+            }
+            return foundPart;
+        }
+
+        /**
 		 * This method queries QuickBooks for the items list
 		 */
-		public bool QueryItems()
+        static public bool QueryItems(List<string[]> ItemList)
 		{
-            Connection conn = new Connection();
+			Connection conn = new Connection();
 
-            try
+			try
 			{
-                conn.File = "";
-                if (!Properties.Settings.Default.UseActiveQuickbook)
-                {
-                    conn.File = Properties.Settings.Default.QuickbooksPath;
-                }
+				conn.File = "";
+				if (!Properties.Settings.Default.UseActiveQuickbook)
+				{
+					conn.File = Properties.Settings.Default.QuickbooksPath;
+				}
 
-                conn.Open();
+				conn.Open();
 
-                QBSessionManager sessionManager = conn.sessionManager;
+				QBSessionManager sessionManager = conn.sessionManager;
 
-                //Create the message set request object to hold our request
-                IMsgSetRequest requestMsgSet = sessionManager.CreateMsgSetRequest("US", 14, 0);
-                requestMsgSet.Attributes.OnError = ENRqOnError.roeContinue;
+				//Create the message set request object to hold our request
+				IMsgSetRequest requestMsgSet = sessionManager.CreateMsgSetRequest("US", 14, 0);
+				requestMsgSet.Attributes.OnError = ENRqOnError.roeContinue;
 
-                IItemNonInventoryQuery itemQuery = requestMsgSet.AppendItemNonInventoryQueryRq();
+				IItemNonInventoryQuery itemQuery = requestMsgSet.AppendItemNonInventoryQueryRq();
 
-                //Send the request and get the response from QuickBooks
-                IMsgSetResponse responseMsgSet = sessionManager.DoRequests(requestMsgSet);
+				//Send the request and get the response from QuickBooks
+				IMsgSetResponse responseMsgSet = sessionManager.DoRequests(requestMsgSet);
 
-				WalkItemQueryRs(responseMsgSet);
+				WalkItemQueryRs(responseMsgSet, ItemList);
 
 				conn.Close();
 
 				return true;
-            }
-			
+			}
+
 			catch (Exception e)
 			{
-                MessageBox.Show(e.Message);
-                conn.Close();
+				MessageBox.Show(e.Message);
+				conn.Close();
 				return false;
 			}
 		}
@@ -274,7 +277,7 @@ Globals.ThisAddIn.Application.ActiveWorkbook.Worksheets["Standard Quote"]);
 		/**
 		 * <summary>This method ensures the response is valid.</summary>
 		 */
-		private void WalkItemQueryRs(IMsgSetResponse responseMsgSet)
+		static private void WalkItemQueryRs(IMsgSetResponse responseMsgSet, List<string[]> ItemList)
 		{
 
 			if (responseMsgSet == null) return;
@@ -296,7 +299,7 @@ Globals.ThisAddIn.Application.ActiveWorkbook.Worksheets["Standard Quote"]);
 						{
 							//upcast to more specific type here, this is safe because we checked with response.Type check above
 							IItemNonInventoryRetList ItemNonInventoryRet = (IItemNonInventoryRetList)response.Detail;
-							WalkItemRet(ItemNonInventoryRet);
+							WalkItemRet(ItemNonInventoryRet, ItemList);
 						}
 					}
 				}
@@ -307,7 +310,7 @@ Globals.ThisAddIn.Application.ActiveWorkbook.Worksheets["Standard Quote"]);
 		 * <summary>This method adds each item and description to <see cref="Items"/></summary>
 		 * <remarks>Modifies <see cref="Items"/></remarks>
 		 */
-		private void WalkItemRet(IItemNonInventoryRetList ItemRetList)
+		static private void WalkItemRet(IItemNonInventoryRetList ItemRetList, List<string[]> ItemList)
 		{
 			if (ItemRetList == null) return;
 
@@ -341,44 +344,9 @@ Globals.ThisAddIn.Application.ActiveWorkbook.Worksheets["Standard Quote"]);
 					}
 				}
 
-				this.Items.Add(itemN);
+				ItemList.Add(itemN);
 
 			}
-		}
-
-		/**
-		 * <summary>This method searches through every item in <see cref="Items"/> to find 
-		 * the part string</summary>
-		 * <param name="part">part number to be searched</param>
-		 * <returns>First instance of the string in format of [name, description]</returns>
-		 */
-		public string[] FindPart(string part)
-		{
-			string[] foundPart = new string[2];
-			foundPart[0] = "";
-			foundPart[1] = "";
-			bool found = false;
-
-			for (int i = 0; i < Items.Count; ++i)
-			{
-				if (Items[i][1].Contains(part))
-				{
-
-					found = true;
-					foundPart[0] = Items[i][0];
-					foundPart[1] = Items[i][1];
-				}
-				if (found == true) break;
-			}
-			return foundPart;
-		}
-
-		/**
-		 * <summary>Empties <see cref="Items"/></summary>
-		 */
-		public void Clear()
-		{
-			Items.Clear();
 		}
 	}
 }

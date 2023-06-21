@@ -8,10 +8,19 @@ using Interop.QBFC14;
 
 namespace RequestLibrary
 {
+	/**
+	 * <summary>Class <c>Connection</c> is a simplification of a QuickBooks connection and session</summary>
+	 * <remarks>***Will add request and response abstractions in future***</remarks>
+	 */
 	public class Connection
 	{
 		private bool sessionBegun = false;
 		private bool connectionOpen = false;
+
+		/**
+		 * <summary>Property <c>sessionManager</c> is a read-only instance
+		 * of a QBSessionManager</summary>
+		 */
 		public QBSessionManager sessionManager
 		{
 			get { return internalManager; }

@@ -5,7 +5,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Text.RegularExpressions;
 using System.Windows.Forms;
-using RequestLibrary;
+using QBRequestLibrary;
 
 namespace ExcelAddIn1
 {

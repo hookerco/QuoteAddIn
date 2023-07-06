@@ -66,5 +66,10 @@ namespace ExcelAddIn1
 
             Properties.Settings.Default.Save();
         }
+
+        private void CreateButton_Click(object sender, RibbonControlEventArgs e)
+        {
+            QuoteBuilder.Create();
+        }
     }
 }

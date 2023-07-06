@@ -42,13 +42,17 @@
             this.ChooseFileButton = this.Factory.CreateRibbonButton();
             this.QuickBooksActiveToggle = this.Factory.CreateRibbonToggleButton();
             this.OpenFileDialog1 = new System.Windows.Forms.OpenFileDialog();
+            this.QuoteBuilderGroup = this.Factory.CreateRibbonGroup();
+            this.CreateButton = this.Factory.CreateRibbonButton();
             this.QBTab.SuspendLayout();
             this.QBGroup.SuspendLayout();
+            this.QuoteBuilderGroup.SuspendLayout();
             this.SuspendLayout();
             // 
             // QBTab
             // 
             this.QBTab.ControlId.ControlIdType = Microsoft.Office.Tools.Ribbon.RibbonControlIdType.Office;
+            this.QBTab.Groups.Add(this.QuoteBuilderGroup);
             this.QBTab.Groups.Add(this.QBGroup);
             this.QBTab.Label = "Send to QuickBooks";
             this.QBTab.Name = "QBTab";
@@ -83,6 +87,18 @@
             this.QuickBooksActiveToggle.SuperTip = "Use open QuickBooks company";
             this.QuickBooksActiveToggle.Click += new Microsoft.Office.Tools.Ribbon.RibbonControlEventHandler(this.QuickBooksActiveToggle_Click);
             // 
+            // QuoteBuilderGroup
+            // 
+            this.QuoteBuilderGroup.Items.Add(this.CreateButton);
+            this.QuoteBuilderGroup.Label = "Quote Builder";
+            this.QuoteBuilderGroup.Name = "QuoteBuilderGroup";
+            // 
+            // CreateButton
+            // 
+            this.CreateButton.Label = "Create";
+            this.CreateButton.Name = "CreateButton";
+            this.CreateButton.Click += new Microsoft.Office.Tools.Ribbon.RibbonControlEventHandler(this.CreateButton_Click);
+            // 
             // QBRibbon
             // 
             this.Name = "QBRibbon";
@@ -93,6 +109,8 @@
             this.QBTab.PerformLayout();
             this.QBGroup.ResumeLayout(false);
             this.QBGroup.PerformLayout();
+            this.QuoteBuilderGroup.ResumeLayout(false);
+            this.QuoteBuilderGroup.PerformLayout();
             this.ResumeLayout(false);
 
         }
@@ -105,6 +123,8 @@
         private System.Windows.Forms.OpenFileDialog OpenFileDialog1;
         internal Microsoft.Office.Tools.Ribbon.RibbonButton ChooseFileButton;
         internal Microsoft.Office.Tools.Ribbon.RibbonToggleButton QuickBooksActiveToggle;
+        internal Microsoft.Office.Tools.Ribbon.RibbonGroup QuoteBuilderGroup;
+        internal Microsoft.Office.Tools.Ribbon.RibbonButton CreateButton;
     }
 
     partial class ThisRibbonCollection

@@ -188,6 +188,7 @@
     can be found.
   -->
   <ItemGroup>
+    <Compile Include="QuoteBuilder.cs" />
     <Compile Include="QBUtility.cs" />
     <Compile Include="Properties\AssemblyInfo.cs">
       <SubType>Code</SubType>

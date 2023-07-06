@@ -268,7 +268,7 @@ Globals.ThisAddIn.Application.ActiveWorkbook.Worksheets["Standard Quote"]);
 
 			catch (Exception e)
 			{
-				MessageBox.Show(e.Message);
+				//MessageBox.Show(e.Message);
 				conn.Close();
 				return false;
 			}

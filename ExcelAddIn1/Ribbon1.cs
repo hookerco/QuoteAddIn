@@ -1,5 +1,6 @@
 ﻿using Microsoft.Office.Tools.Ribbon;
 using System.Collections.Generic;
+using System.IO;
 using System.Windows.Forms;
 
 namespace ExcelAddIn1
@@ -70,6 +71,19 @@ namespace ExcelAddIn1
         private void CreateButton_Click(object sender, RibbonControlEventArgs e)
         {
             QuoteBuilder.Create();
+        }
+
+        private void AddButton_Click(object sender, RibbonControlEventArgs e)
+        {
+            string filePath;
+            DialogResult result = QuoteOpenFileDialog.ShowDialog();
+            if (result == DialogResult.OK)
+            {
+                filePath = QuoteOpenFileDialog.FileName;
+
+                QuoteBuilder.Add(filePath);
+            }
+            
         }
     }
 }

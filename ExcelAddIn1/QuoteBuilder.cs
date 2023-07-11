@@ -144,6 +144,10 @@ namespace ExcelAddIn1
                 masterSheet.Cells.Range["B" + (iterator + i) + ":E" + (iterator + i)].Merge();
 
                 Excel.Range BRange = masterSheet.Cells.Range["B" + (iterator + i)];
+                
+                // Make new height same as old height
+                BRange.Rows.RowHeight = oldSheet.Range["B" + (22 + i)].RowHeight;
+
                 if (BRange.Text == "Mounting Hardware:")
                 {
                     BRange.Font.Bold = true;
@@ -169,7 +173,6 @@ namespace ExcelAddIn1
             masterSheet.Range["A" + (iterator + 1) + ":E" + (iterator + 3)].PasteSpecial(Paste: XlPasteType.xlPasteValues);
 
             RemoveZeros();
-            masterBook.Save();
         }
 
         private static void RemoveZeros()

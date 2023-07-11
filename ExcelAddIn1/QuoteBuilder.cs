@@ -12,6 +12,7 @@ using System.Diagnostics.Eventing.Reader;
 using Microsoft.SqlServer.Server;
 using System.Diagnostics;
 using System.IO;
+using System.Reflection;
 
 namespace ExcelAddIn1
 {
@@ -23,7 +24,15 @@ namespace ExcelAddIn1
 
             if (quoteSheet.Range["C1"].Text == "BEND TOOLING INC.") // If the sheet is a quote sheet
             {
-                quoteSheet.Copy();
+                try
+                {
+                    quoteSheet.Copy();
+                }
+                catch (Exception)
+                {
+                    MessageBox.Show("Please deselect cell and finalize any changes, then try again");
+                    return;
+                }
 
                 Excel.Worksheet newSheet = Globals.ThisAddIn.Application.ActiveSheet;
 
@@ -51,7 +60,9 @@ namespace ExcelAddIn1
                 endRange.Font.Color = System.Drawing.ColorTranslator.ToOle(System.Drawing.Color.White);
 
 
-                removeZeros();
+                RemoveZeros();
+                SaveAs();
+                
             }
             else
             {
@@ -64,7 +75,21 @@ namespace ExcelAddIn1
 
             Excel.Worksheet oldSheet = Globals.ThisAddIn.Application.ActiveSheet;
 
-            Excel.Workbook masterBook = Globals.ThisAddIn.Application.Workbooks.Open(filePath);
+            Excel.Workbook masterBook;
+
+            try
+            {
+                masterBook = Globals.ThisAddIn.Application.Workbooks.Open(filePath);
+                masterBook.Activate();
+            }
+            catch (Exception)
+            {
+                MessageBox.Show("Please deselect cell and finalize any changes, then try again");
+                return;
+            }
+
+            // To avoid weird COM error
+            Globals.ThisAddIn.Application.WindowState = Excel.XlWindowState.xlNormal;
 
             Excel.Worksheet masterSheet = masterBook.Worksheets[1];
             if (masterSheet.Cells.Range["C1"].Text != "BEND TOOLING INC.")
@@ -97,8 +122,7 @@ namespace ExcelAddIn1
 
             // strings of the cells' values
             colA = masterSheet.Range["A" + iterator].Text;
-
-            // while the cells aren't empty (may have to change this depending on format)
+            // "END" loop because masterSheet now ends in END (see Create())
             while (colA != "END") // Scoping out range of items
             {
                 iterator++;
@@ -115,7 +139,7 @@ namespace ExcelAddIn1
             oldRange.Copy();
             masterRange.PasteSpecial(Paste:XlPasteType.xlPasteValues);
 
-            for (int i = 0; i <= numItems;  i++) // 1 indexed ... Loop is for formatting
+            for (int i = 0; i <= numItems;  i++) // Loop is for formatting
             {
                 masterSheet.Cells.Range["B" + (iterator + i) + ":E" + (iterator + i)].Merge();
 
@@ -132,6 +156,7 @@ namespace ExcelAddIn1
                 masterSheet.Rows[iterator].Insert();
                 masterSheet.Rows[iterator].RowHeight = 12.75;
                 masterSheet.Rows[iterator].VerticalAlignment = Excel.XlVAlign.xlVAlignBottom;
+
                 Excel.Range ARange = masterSheet.Range["A" + iterator];
                 ARange.HorizontalAlignment = Excel.XlHAlign.xlHAlignLeft;
                 Excel.Range BRange = masterSheet.Range["B" + iterator];
@@ -143,10 +168,11 @@ namespace ExcelAddIn1
             oldSheet.Range["A16:E18"].Copy();
             masterSheet.Range["A" + (iterator + 1) + ":E" + (iterator + 3)].PasteSpecial(Paste: XlPasteType.xlPasteValues);
 
-            removeZeros();
+            RemoveZeros();
+            masterBook.Save();
         }
 
-        private static void removeZeros()
+        private static void RemoveZeros()
         {
             Excel.Worksheet sheet = Globals.ThisAddIn.Application.ActiveSheet;
             int iterator = 22; // Start of items
@@ -181,17 +207,18 @@ namespace ExcelAddIn1
             }
         }
 
-        private static bool IsWorkbookOpen(string filePath)
+        private static void SaveAs()
         {
-            string workbookName = Path.GetFileName(filePath);
-            foreach (Excel.Workbook wb in Globals.ThisAddIn.Application.Workbooks)
+            SaveFileDialog saveFileDialog1 = new SaveFileDialog();
+            saveFileDialog1.Filter = "Excel files (*.xlsx)|*.xlsx|All files (*.*)|*.*";
+            saveFileDialog1.FilterIndex = 1;
+            saveFileDialog1.RestoreDirectory = true;
+
+            if (saveFileDialog1.ShowDialog() == DialogResult.OK)
             {
-                if (wb.Name == workbookName)
-                {
-                    return true;
-                }
+                // Save the workbook
+                Globals.ThisAddIn.Application.ActiveWorkbook.SaveAs(saveFileDialog1.FileName);
             }
-            return false;
         }
     }
 }

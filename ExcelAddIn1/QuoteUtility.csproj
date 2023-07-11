@@ -30,18 +30,18 @@
     <DefineConstants>VSTO40</DefineConstants>
     <IsWebBootstrapper>False</IsWebBootstrapper>
     <BootstrapperEnabled>true</BootstrapperEnabled>
-    <PublishUrl>C:\Users\chooker\Documents\Projects\QuoteAddIn\</PublishUrl>
+    <PublishUrl>Z:\COLTON TEST\QBUtility Beta Install\</PublishUrl>
     <InstallUrl />
     <TargetCulture>en</TargetCulture>
-    <ApplicationVersion>1.0.0.0</ApplicationVersion>
-    <AutoIncrementApplicationRevision>false</AutoIncrementApplicationRevision>
+    <ApplicationVersion>1.0.0.1</ApplicationVersion>
+    <AutoIncrementApplicationRevision>true</AutoIncrementApplicationRevision>
     <UpdateEnabled>true</UpdateEnabled>
     <UpdateInterval>7</UpdateInterval>
     <UpdateIntervalUnits>days</UpdateIntervalUnits>
-    <ProductName>ExcelAddIn1</ProductName>
-    <PublisherName />
+    <ProductName>QBUtility Beta</ProductName>
+    <PublisherName>Colton Hooker</PublisherName>
     <SupportUrl />
-    <FriendlyName>ExcelAddIn1</FriendlyName>
+    <FriendlyName>QBUtility Beta</FriendlyName>
     <OfficeApplicationDescription />
     <LoadBehavior>3</LoadBehavior>
   </PropertyGroup>

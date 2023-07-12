@@ -13,6 +13,7 @@ using Microsoft.SqlServer.Server;
 using System.Diagnostics;
 using System.IO;
 using System.Reflection;
+using Interop.QBFC14;
 
 namespace ExcelAddIn1
 {
@@ -21,19 +22,18 @@ namespace ExcelAddIn1
         public static void Create()
         {
             Excel.Worksheet quoteSheet = Globals.ThisAddIn.Application.ActiveSheet;
-
+            
             if (quoteSheet.Range["C1"].Text == "BEND TOOLING INC.") // If the sheet is a quote sheet
             {
                 try
                 {
                     quoteSheet.Copy();
                 }
-                catch (Exception)
+                catch
                 {
                     MessageBox.Show("Please deselect cell and finalize any changes, then try again");
                     return;
                 }
-
                 Excel.Worksheet newSheet = Globals.ThisAddIn.Application.ActiveSheet;
 
                 try
@@ -43,6 +43,9 @@ namespace ExcelAddIn1
                     newSheet.Shapes.Item("Button 3").Delete();
                 }
                 catch { }
+                
+
+            
 
                 // Creates a stopping point on the quote
                 int row = 22;
@@ -55,6 +58,7 @@ namespace ExcelAddIn1
                     colB = newSheet.Cells.Range["B" + row].Text;
                 }
 
+                CopyVals(quoteSheet, newSheet, row);
                 Excel.Range endRange = newSheet.Cells.Range["A" + row];
                 endRange.Value = "END";
                 endRange.Font.Color = System.Drawing.ColorTranslator.ToOle(System.Drawing.Color.White);
@@ -62,7 +66,7 @@ namespace ExcelAddIn1
 
                 RemoveZeros();
                 SaveAs();
-                
+
             }
             else
             {
@@ -129,48 +133,13 @@ namespace ExcelAddIn1
                 colA = masterSheet.Range["A" + iterator].Text;
             }
 
-            for (int i = 0; i < numItems + 1; ++i) // + 1 to add extra space
-            {
-                masterSheet.Rows[iterator].Insert();
-            }
+            // START --- ADD AND FORMAT ITEMS ---
+            AddItems(masterSheet, oldSheet, iterator, numItems);
+            // END --- ADD AND FORMAT ITEMS ---
 
-            Excel.Range oldRange = oldSheet.Range["A22:H" + (22 + numItems)];
-            Excel.Range masterRange = masterSheet.Cells.Range["A" + iterator + ":H" + (iterator + numItems)];
-            oldRange.Copy();
-            masterRange.PasteSpecial(Paste:XlPasteType.xlPasteValues);
-
-            for (int i = 0; i <= numItems;  i++) // Loop is for formatting
-            {
-                masterSheet.Cells.Range["B" + (iterator + i) + ":E" + (iterator + i)].Merge();
-
-                Excel.Range BRange = masterSheet.Cells.Range["B" + (iterator + i)];
-                
-                // Make new height same as old height
-                BRange.Rows.RowHeight = oldSheet.Range["B" + (22 + i)].RowHeight;
-
-                if (BRange.Text == "Mounting Hardware:")
-                {
-                    BRange.Font.Bold = true;
-                }
-            }
-
-            int spacesForDesc = 5; // Number of spaces to add for order description
-            for (int i = 0; i < spacesForDesc; i++) // Formatting loop 
-            {
-                masterSheet.Rows[iterator].Insert();
-                masterSheet.Rows[iterator].RowHeight = 12.75;
-                masterSheet.Rows[iterator].VerticalAlignment = Excel.XlVAlign.xlVAlignBottom;
-
-                Excel.Range ARange = masterSheet.Range["A" + iterator];
-                ARange.HorizontalAlignment = Excel.XlHAlign.xlHAlignLeft;
-                Excel.Range BRange = masterSheet.Range["B" + iterator];
-                BRange.HorizontalAlignment = Excel.XlHAlign.xlHAlignRight;
-                Excel.Range DRange = masterSheet.Range["D" + iterator];
-                DRange.HorizontalAlignment = Excel.XlHAlign.xlHAlignRight;
-            }
-
-            oldSheet.Range["A16:E18"].Copy();
-            masterSheet.Range["A" + (iterator + 1) + ":E" + (iterator + 3)].PasteSpecial(Paste: XlPasteType.xlPasteValues);
+            // START --- ADD AND FORMAT DESCRIPTION ---
+            AddDesc(masterSheet, oldSheet, iterator);
+            // END --- ADD AND FORMAT DESCRIPTION ---
 
             RemoveZeros();
         }
@@ -187,7 +156,7 @@ namespace ExcelAddIn1
             // while the cells aren't empty (may have to change this depending on format)
             while (colA != "END")
             {
-                
+
                 if (colF == "0") // If quantity is 0
                 {
                     sheet.Rows[iterator].Delete();
@@ -222,6 +191,63 @@ namespace ExcelAddIn1
                 // Save the workbook
                 Globals.ThisAddIn.Application.ActiveWorkbook.SaveAs(saveFileDialog1.FileName);
             }
+        }
+
+        private static void AddItems(Excel.Worksheet masterSheet, Excel.Worksheet oldSheet, int iterator, int numItems)
+        {
+            for (int i = 0; i < numItems + 1; ++i) // + 1 to add extra space
+            {
+                masterSheet.Rows[iterator].Insert();
+            }
+
+            Excel.Range oldRange = oldSheet.Range["A22:H" + (22 + numItems)];
+            Excel.Range masterRange = masterSheet.Cells.Range["A" + iterator + ":H" + (iterator + numItems)];
+            oldRange.Copy();
+            masterRange.PasteSpecial(Paste: XlPasteType.xlPasteValues);
+
+            for (int i = 0; i <= numItems; i++) // Loop is for formatting
+            {
+                masterSheet.Cells.Range["B" + (iterator + i) + ":E" + (iterator + i)].Merge();
+
+                Excel.Range BRange = masterSheet.Cells.Range["B" + (iterator + i)];
+
+                // Make new height same as old height
+                BRange.Rows.RowHeight = oldSheet.Range["B" + (22 + i)].RowHeight;
+
+                if (BRange.Text == "Mounting Hardware:")
+                {
+                    BRange.Font.Bold = true;
+                }
+            }
+        }
+
+        private static void AddDesc(Excel.Worksheet masterSheet, Excel.Worksheet oldSheet, int iterator)
+        {
+            int spacesForDesc = 5; // Number of spaces to add for order description
+            for (int i = 0; i < spacesForDesc; i++)
+            {
+                masterSheet.Rows[iterator].Insert();
+                masterSheet.Rows[iterator].RowHeight = 12.75;
+                masterSheet.Rows[iterator].VerticalAlignment = Excel.XlVAlign.xlVAlignBottom;
+
+                Excel.Range ARange = masterSheet.Range["A" + iterator];
+                ARange.HorizontalAlignment = Excel.XlHAlign.xlHAlignLeft;
+                Excel.Range BRange = masterSheet.Range["B" + iterator];
+                BRange.HorizontalAlignment = Excel.XlHAlign.xlHAlignRight;
+                Excel.Range DRange = masterSheet.Range["D" + iterator];
+                DRange.HorizontalAlignment = Excel.XlHAlign.xlHAlignRight;
+            }
+
+            oldSheet.Range["A16:E18"].Copy();
+            masterSheet.Range["A" + (iterator + 1) + ":E" + (iterator + 3)].PasteSpecial(Paste: XlPasteType.xlPasteValues);
+        }
+
+        private static void CopyVals(Excel.Worksheet quoteSheet, Excel.Worksheet newSheet, int row)
+        {
+            newSheet.Range["A8"].Value = quoteSheet.Range["A8"].Value;
+            newSheet.Range["A9"].Value = quoteSheet.Range["A9"].Value;
+            newSheet.Range["A11:E14"].Value = quoteSheet.Range["A11:E14"].Value;
+            newSheet.Range["A22:G" + row].Value = quoteSheet.Range["A22:G" + row].Value;
         }
     }
 }

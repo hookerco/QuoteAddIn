@@ -76,6 +76,7 @@
             this.QBGroup.Items.Add(this.ChooseFileButton);
             this.QBGroup.Items.Add(this.QuickBooksActiveToggle);
             this.QBGroup.Name = "QBGroup";
+            this.QBGroup.Visible = false;
             // 
             // SendButton
             // 

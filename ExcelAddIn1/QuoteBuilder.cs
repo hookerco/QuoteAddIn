@@ -19,6 +19,10 @@ namespace ExcelAddIn1
 {
     internal static class QuoteBuilder
     {
+        /**
+         * <summary>Create a new sheet from active sheet</summary>
+         * <remarks>Must be on quote sheet, does not work with price breaks</remarks>
+         */
         public static void Create()
         {
             Excel.Worksheet quoteSheet = Globals.ThisAddIn.Application.ActiveSheet;
@@ -43,22 +47,12 @@ namespace ExcelAddIn1
                     newSheet.Shapes.Item("Button 3").Delete();
                 }
                 catch { }
-                
 
-            
 
                 // Creates a stopping point on the quote
-                int row = 22;
-                string colA = newSheet.Cells.Range["A" + row].Text;
-                string colB = newSheet.Cells.Range["B" + row].Text;
-                while (colA != "" || colB != "")
-                {
-                    row++;
-                    colA = newSheet.Cells.Range["A" + row].Text;
-                    colB = newSheet.Cells.Range["B" + row].Text;
-                }
+                int row = ItemsRow(newSheet);
 
-                CopyVals(quoteSheet, newSheet, row);
+                CreateCopyVals(quoteSheet, newSheet, row);
                 Excel.Range endRange = newSheet.Cells.Range["A" + row];
                 endRange.Value = "END";
                 endRange.Font.Color = System.Drawing.ColorTranslator.ToOle(System.Drawing.Color.White);
@@ -74,6 +68,10 @@ namespace ExcelAddIn1
             }
         }
 
+        /// <summary>
+        /// Adds items from ActiveSheet to previously created quote found at <paramref name="filePath"/>
+        /// </summary>
+        /// <param name="filePath">Valid filepath of previously created quote</param>
         public static void Add(string filePath)
         {
 
@@ -104,19 +102,7 @@ namespace ExcelAddIn1
             }
 
             // start of items --- Change if module changes
-            int iterator = 22;
-
-            // strings of the cells' values
-            string colA = oldSheet.Range["A" + iterator].Text;
-            string colB = oldSheet.Range["B" + iterator].Text;
-
-            // while the cells aren't empty (may have to change this depending on format)
-            while (colA != "" || colB != "") // Scoping out range of items
-            {
-                iterator++;
-                colA = oldSheet.Range["A" + iterator].Text;
-                colB = oldSheet.Range["B" + iterator].Text;
-            }
+            int iterator = ItemsRow(oldSheet);
             iterator--;
 
             int numItems = iterator - 22;
@@ -125,7 +111,7 @@ namespace ExcelAddIn1
             iterator = 22;
 
             // strings of the cells' values
-            colA = masterSheet.Range["A" + iterator].Text;
+            string colA = masterSheet.Range["A" + iterator].Text;
             // "END" loop because masterSheet now ends in END (see Create())
             while (colA != "END") // Scoping out range of items
             {
@@ -133,17 +119,14 @@ namespace ExcelAddIn1
                 colA = masterSheet.Range["A" + iterator].Text;
             }
 
-            // START --- ADD AND FORMAT ITEMS ---
             AddItems(masterSheet, oldSheet, iterator, numItems);
-            // END --- ADD AND FORMAT ITEMS ---
 
-            // START --- ADD AND FORMAT DESCRIPTION ---
             AddDesc(masterSheet, oldSheet, iterator);
-            // END --- ADD AND FORMAT DESCRIPTION ---
 
             RemoveZeros();
         }
 
+        // Removes zeros from active sheet, and only works with "created" sheet
         private static void RemoveZeros()
         {
             Excel.Worksheet sheet = Globals.ThisAddIn.Application.ActiveSheet;
@@ -179,6 +162,7 @@ namespace ExcelAddIn1
             }
         }
 
+        // just a SaveAs dialog prompt
         private static void SaveAs()
         {
             SaveFileDialog saveFileDialog1 = new SaveFileDialog();
@@ -193,6 +177,7 @@ namespace ExcelAddIn1
             }
         }
 
+        // Add items, used in Add() function
         private static void AddItems(Excel.Worksheet masterSheet, Excel.Worksheet oldSheet, int iterator, int numItems)
         {
             for (int i = 0; i < numItems + 1; ++i) // + 1 to add extra space
@@ -221,6 +206,7 @@ namespace ExcelAddIn1
             }
         }
 
+        // Adds order description, used in Add() function
         private static void AddDesc(Excel.Worksheet masterSheet, Excel.Worksheet oldSheet, int iterator)
         {
             int spacesForDesc = 5; // Number of spaces to add for order description
@@ -242,12 +228,30 @@ namespace ExcelAddIn1
             masterSheet.Range["A" + (iterator + 1) + ":E" + (iterator + 3)].PasteSpecial(Paste: XlPasteType.xlPasteValues);
         }
 
-        private static void CopyVals(Excel.Worksheet quoteSheet, Excel.Worksheet newSheet, int row)
+        // Locks in values instead of using formulas, used in Create() function
+        private static void CreateCopyVals(Excel.Worksheet quoteSheet, Excel.Worksheet newSheet, int row)
         {
             newSheet.Range["A8"].Value = quoteSheet.Range["A8"].Value;
             newSheet.Range["A9"].Value = quoteSheet.Range["A9"].Value;
             newSheet.Range["A11:E14"].Value = quoteSheet.Range["A11:E14"].Value;
+            newSheet.Range["A38"].Value = quoteSheet.Range["A38"].Value;
+            newSheet.Range["A16:E18"].Value = quoteSheet.Range["A16:E18"].Value;
             newSheet.Range["A22:G" + row].Value = quoteSheet.Range["A22:G" + row].Value;
+        }
+
+        // Helper function to find row where items end
+        private static int ItemsRow(Excel.Worksheet Sheet)
+        {
+            int row = 22;
+            string colA = Sheet.Cells.Range["A" + row].Text;
+            string colB = Sheet.Cells.Range["B" + row].Text;
+            while (colA != "" || colB != "")
+            {
+                row++;
+                colA = Sheet.Cells.Range["A" + row].Text;
+                colB = Sheet.Cells.Range["B" + row].Text;
+            }
+            return row;
         }
     }
 }

@@ -168,18 +168,19 @@ Globals.ThisAddIn.Application.ActiveWorkbook.Worksheets["Standard Quote"]);
 
 			// start of items --- Change if module changes
 			int iterator = 22;
+			// There shouldn't be this many items
+			int WAY_TOO_MANY = 150;
 
 			// strings of the cells' values
 			string colA = worksheet.Range["A" + iterator].Text;
-			string colB = worksheet.Range["B" + iterator].Text;
+            string colB = worksheet.Range["B" + iterator].Text;
 
-			// while the cells aren't empty (may have to change this depending on format)
-			while (colA != "" || colB != "")
+            // while the cells are items (may have to change this depending on format)
+            while (colA != "END" || iterator < WAY_TOO_MANY)
 			{
 				Match match = regex.Match(colB);
 
-				// 15 is arbitrary, just want to look at longer strings
-				if (match.Success && match.Value.Length > 15)
+				if (match.Success)
 				{
 					// gets rid of "BTI p/n "
 					string partNum = match.Value.Substring(8);

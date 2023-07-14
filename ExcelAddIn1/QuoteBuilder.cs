@@ -19,6 +19,7 @@ namespace ExcelAddIn1
 {
     internal static class QuoteBuilder
     {
+        static private int ITEMS_START_ROW = 22;
         /**
          * <summary>Create a new sheet from active sheet</summary>
          * <remarks>Must be on quote sheet, does not work with price breaks</remarks>
@@ -53,12 +54,8 @@ namespace ExcelAddIn1
                 int row = ItemsRow(newSheet);
 
                 CreateCopyVals(quoteSheet, newSheet, row);
-                Excel.Range endRange = newSheet.Cells.Range["A" + row];
-                endRange.Value = "END";
-                endRange.Font.Color = System.Drawing.ColorTranslator.ToOle(System.Drawing.Color.White);
 
-
-                RemoveZeros();
+                RemoveZerosAndRenumber();
                 SaveAs();
 
             }
@@ -105,39 +102,30 @@ namespace ExcelAddIn1
             int iterator = ItemsRow(oldSheet);
             iterator--;
 
-            int numItems = iterator - 22;
+            int numItems = iterator - ITEMS_START_ROW;
 
-            // start of items --- Change if module changes
-            iterator = 22;
-
-            // strings of the cells' values
-            string colA = masterSheet.Range["A" + iterator].Text;
-            // "END" loop because masterSheet now ends in END (see Create())
-            while (colA != "END") // Scoping out range of items
-            {
-                iterator++;
-                colA = masterSheet.Range["A" + iterator].Text;
-            }
+            iterator = ItemsRow(masterSheet);
 
             AddItems(masterSheet, oldSheet, iterator, numItems);
 
             AddDesc(masterSheet, oldSheet, iterator);
 
-            RemoveZeros();
+            AddBackFormulas(masterSheet, ItemsRow(masterSheet));
+
+            RemoveZerosAndRenumber();
         }
 
         // Removes zeros from active sheet, and only works with "created" sheet
-        private static void RemoveZeros()
+        private static void RemoveZerosAndRenumber()
         {
             Excel.Worksheet sheet = Globals.ThisAddIn.Application.ActiveSheet;
-            int iterator = 22; // Start of items
-            string colA = sheet.Range["A" + iterator].Text;
+            int iterator = ITEMS_START_ROW; // Start of items
+            string colA = sheet.Range["A" + (1 + iterator)].Text;
             string colF = sheet.Range["F" + iterator].Text;
 
             int currNum = 1;
-
             // while the cells aren't empty (may have to change this depending on format)
-            while (colA != "END")
+            while (!colA.Contains("Total"))
             {
 
                 if (colF == "0") // If quantity is 0
@@ -157,7 +145,7 @@ namespace ExcelAddIn1
                     iterator++;
                 }
 
-                colA = sheet.Range["A" + iterator].Text;
+                colA = sheet.Range["A" + (1+iterator)].Text;
                 colF = sheet.Range["F" + iterator].Text;
             }
         }
@@ -231,27 +219,41 @@ namespace ExcelAddIn1
         // Locks in values instead of using formulas, used in Create() function
         private static void CreateCopyVals(Excel.Worksheet quoteSheet, Excel.Worksheet newSheet, int row)
         {
-            newSheet.Range["A8"].Value = quoteSheet.Range["A8"].Value;
-            newSheet.Range["A9"].Value = quoteSheet.Range["A9"].Value;
-            newSheet.Range["A11:E14"].Value = quoteSheet.Range["A11:E14"].Value;
-            newSheet.Range["A38"].Value = quoteSheet.Range["A38"].Value;
-            newSheet.Range["A16:E18"].Value = quoteSheet.Range["A16:E18"].Value;
-            newSheet.Range["A22:G" + row].Value = quoteSheet.Range["A22:G" + row].Value;
+            newSheet.Range["A1:H" + (row + 13)].Value = quoteSheet.Range["A1:H" + (row + 13)].Value;
+            AddBackFormulas(newSheet, row);
         }
 
-        // Helper function to find row where items end
+        // Helper function to find row where items end on sheets
         private static int ItemsRow(Excel.Worksheet Sheet)
         {
-            int row = 22;
+            int row = ITEMS_START_ROW;
             string colA = Sheet.Cells.Range["A" + row].Text;
-            string colB = Sheet.Cells.Range["B" + row].Text;
-            while (colA != "" || colB != "")
+            while (!colA.Contains("Total"))
             {
                 row++;
                 colA = Sheet.Cells.Range["A" + row].Text;
-                colB = Sheet.Cells.Range["B" + row].Text;
             }
-            return row;
+            return row - 1;
+        }
+
+        private static void AddBackFormulas(Excel.Worksheet newSheet, int row)
+        {
+            newSheet.Range["H" + (row + 1)].Formula = $"=SUM(H22:H{row})";
+
+            int iterator = ITEMS_START_ROW;
+            while (iterator < row)
+            {
+                try
+                {
+                    if (newSheet.Range["A" + iterator].Value.Contains("#"))
+                    {
+                        newSheet.Range["H" + (iterator)].Formula = $"=F{iterator}*G{iterator}";
+                    }
+                }
+                catch { }
+
+                iterator++;
+            }
         }
     }
 }

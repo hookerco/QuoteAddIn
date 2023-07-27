@@ -1,29 +1,17 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using Microsoft.Office.Tools.Excel;
-using System.Threading.Tasks;
 using Microsoft.Office.Interop.Excel;
 using Excel = Microsoft.Office.Interop.Excel;
 using System.Windows.Forms;
-using Microsoft.Office.Tools.Ribbon;
-using System.Diagnostics.Eventing.Reader;
-using Microsoft.SqlServer.Server;
-using System.Diagnostics;
-using System.IO;
-using System.Reflection;
-using Interop.QBFC14;
+
 
 namespace ExcelAddIn1
 {
     internal static class QuoteBuilder
     {
-        static private int ITEMS_START_ROW = 22;
-        /**
-         * <summary>Create a new sheet from active sheet</summary>
-         * <remarks>Must be on quote sheet, does not work with price breaks</remarks>
-         */
+        static private int ITEMS_START_ROW = 22; 
+
+        ///<summary>Create a new sheet from active sheet</summary>
+        /// <remarks>Must be on quote sheet, does not work with price breaks</remarks>
         public static void Create()
         {
             Excel.Worksheet quoteSheet = Globals.ThisAddIn.Application.ActiveSheet;
@@ -49,8 +37,6 @@ namespace ExcelAddIn1
                 }
                 catch { }
 
-
-                // Creates a stopping point on the quote
                 int row = ItemsRow(newSheet);
 
                 CreateCopyVals(quoteSheet, newSheet, row);

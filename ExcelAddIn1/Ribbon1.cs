@@ -1,4 +1,5 @@
-﻿using Microsoft.Office.Tools.Ribbon;
+﻿using Interop.QBFC14;
+using Microsoft.Office.Tools.Ribbon;
 using System.Collections.Generic;
 using System.IO;
 using System.Windows.Forms;
@@ -11,6 +12,7 @@ namespace ExcelAddIn1
 		private bool isLoaded = false;
 		// allItemList must be loaded separately because a QuoteUtility object needs access to the current worksheet before it exists
 		List<string[]> AllItemList = new List<string[]>();
+
 		private void Ribbon1_Load(object sender, RibbonUIEventArgs e)
 		{
 			OpenFileDialog1.FileName = Properties.Settings.Default.QuickbooksPath;
@@ -21,7 +23,7 @@ namespace ExcelAddIn1
 			// Only if active Quickbook is opened, otherwise it would take too long
 			if (Properties.Settings.Default.UseActiveQuickbook)
 			{
-				isLoaded = QBUtility.QueryItems(AllItemList);
+                isLoaded = ExcelAddIn1.AllItemList.QueryItems(AllItemList);
 			}
 		}
 
@@ -29,13 +31,10 @@ namespace ExcelAddIn1
 		{
 			if (!isLoaded)
 			{
-				isLoaded = QBUtility.QueryItems(AllItemList);
+                isLoaded = ExcelAddIn1.AllItemList.QueryItems(AllItemList);
 			}
 
-			QBUtility quoteUtility = new QBUtility();
-			//Literally just adds the list of items
-			quoteUtility.AllItemList = AllItemList;
-			quoteUtility.RunQuoteUtility();
+			Driver.Run(AllItemList);
 		}
 
 		private void ChooseFile_Click(object sender, RibbonControlEventArgs e)
@@ -85,5 +84,5 @@ namespace ExcelAddIn1
 			}
 			
 		}
-	}
+    }
 }

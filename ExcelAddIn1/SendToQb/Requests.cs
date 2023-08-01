@@ -11,22 +11,22 @@ namespace ExcelAddIn1
 	internal static class Requests
 	{
 
-        /**
+		/**
 		 * <summary>
 		 * This method finds customer number from worksheet
 		 * </summary>
 		 * <remarks>Modifies requestMsgSet</remarks>
 		 * <returns>string as customer Name</returns>
 		 */
-        internal static string QueryCustomer(Connection conn, string name)
+		internal static string QueryCustomer(Connection conn, string name)
 		{
 
-            IMsgSetRequest requestMsgSet = conn.sessionManager.CreateMsgSetRequest("US", 14, 0);
-            requestMsgSet.Attributes.OnError = ENRqOnError.roeContinue;
+			IMsgSetRequest requestMsgSet = conn.sessionManager.CreateMsgSetRequest("US", 14, 0);
+			requestMsgSet.Attributes.OnError = ENRqOnError.roeContinue;
 
 			QBSessionManager sessionManager = conn.sessionManager;
 
-            BuildCustomerQueryRq(requestMsgSet, name);
+			BuildCustomerQueryRq(requestMsgSet, name);
 
 			IMsgSetResponse responseMsgSet = sessionManager.DoRequests(requestMsgSet);
 

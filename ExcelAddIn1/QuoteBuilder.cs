@@ -6,240 +6,237 @@ using System.Windows.Forms;
 
 namespace ExcelAddIn1
 {
-    internal static class QuoteBuilder
-    {
-        static private int ITEMS_START_ROW = 22; 
+	internal static partial class QuoteBuilder
+	{
+		static private int ITEMS_START_ROW = 22;
+		static private int SPACES_FOR_DESCRIPTION = 5;
 
-        ///<summary>Create a new sheet from active sheet</summary>
-        /// <remarks>Must be on quote sheet, does not work with price breaks</remarks>
-        public static void Create()
-        {
-            Excel.Worksheet quoteSheet = Globals.ThisAddIn.Application.ActiveSheet;
-            
-            if (quoteSheet.Range["C1"].Text == "BEND TOOLING INC.") // If the sheet is a quote sheet
-            {
-                try
-                {
-                    quoteSheet.Copy();
-                }
-                catch
-                {
-                    MessageBox.Show("Please deselect cell and finalize any changes, then try again");
-                    return;
-                }
-                Excel.Worksheet newSheet = Globals.ThisAddIn.Application.ActiveSheet;
+		/// <summary>Create a new sheet from active sheet</summary>
+		/// <remarks>Must be on quote sheet, does not work with price breaks</remarks>
+		public static void Create()
+		{
+			Excel.Worksheet oldSheet = Globals.ThisAddIn.Application.ActiveSheet;
+			
+			if (IsQuote(oldSheet)) // If the sheet is a quote sheet
+			{
+				TrytoCopy(oldSheet);
 
-                try
-                {
-                    newSheet.Shapes.Item("Button 1").Delete();
-                    newSheet.Shapes.Item("Button 2").Delete();
-                    newSheet.Shapes.Item("Button 3").Delete();
-                }
-                catch { }
+				Excel.Worksheet newSheet = Globals.ThisAddIn.Application.ActiveSheet;
 
-                int row = ItemsRow(newSheet);
+				DeleteButtons(newSheet);
 
-                CreateCopyVals(quoteSheet, newSheet, row);
+				int row = GetLastRow(newSheet);
 
-                RemoveZerosAndRenumber();
-                SaveAs();
+				CopyValues(oldSheet, newSheet, row);
+				RemoveZerosAndRenumber();
+				SaveAs();
 
-            }
-            else
-            {
-                MessageBox.Show("Please make a quote the active sheet");
-            }
-        }
+			}
+			else
+			{
+				MessageBox.Show("Please make a quote the active sheet");
+			}
+		}
 
-        /// <summary>
-        /// Adds items from ActiveSheet to previously created quote found at <paramref name="filePath"/>
-        /// </summary>
-        /// <param name="filePath">Valid filepath of previously created quote</param>
-        public static void Add(string filePath)
-        {
+		internal static void DeleteButtons(Excel.Worksheet worksheet)
+		{
+			try
+			{
+				worksheet.Shapes.Item("Button 1").Delete();
+				worksheet.Shapes.Item("Button 2").Delete();
+				worksheet.Shapes.Item("Button 3").Delete();
+			}
+			catch (System.ArgumentException) { }
+		}
 
-            Excel.Worksheet oldSheet = Globals.ThisAddIn.Application.ActiveSheet;
+		internal static void TrytoCopy(Excel.Worksheet worksheet)
+		{
+			try
+			{
+				worksheet.Copy();
+			}
+			catch
+			{
+				MessageBox.Show("Please deselect cell and finalize any changes, then try again");
+				return;
+			}
+		}
 
-            Excel.Workbook masterBook;
+		/// <summary>
+		/// Adds items from ActiveSheet to previously created quote found at <paramref name="filePath"/>
+		/// </summary>
+		/// <param name="filePath">Valid filepath of previously created quote</param>
+		public static void Add(string filePath)
+		{
 
-            try
-            {
-                masterBook = Globals.ThisAddIn.Application.Workbooks.Open(filePath);
-                masterBook.Activate();
-            }
-            catch (Exception)
-            {
-                MessageBox.Show("Please deselect cell and finalize any changes, then try again");
-                return;
-            }
+			Excel.Worksheet oldSheet = Globals.ThisAddIn.Application.ActiveSheet;
 
-            // To avoid weird COM error
-            Globals.ThisAddIn.Application.WindowState = Excel.XlWindowState.xlNormal;
+			Excel.Workbook newBook;
 
-            Excel.Worksheet masterSheet = masterBook.Worksheets[1];
-            if (masterSheet.Cells.Range["C1"].Text != "BEND TOOLING INC.")
-            {
-                masterBook.Close();
-                MessageBox.Show("File chosen is not a quote");
-                return;
-            }
+			try
+			{
+				newBook = Globals.ThisAddIn.Application.Workbooks.Open(filePath);
+				newBook.Activate();
+			}
+			catch (Exception)
+			{
+				MessageBox.Show("Please deselect cell and finalize any changes, then try again");
+				return;
+			}
 
-            // start of items --- Change if module changes
-            int iterator = ItemsRow(oldSheet);
-            iterator--;
+			// To avoid weird COM error
+			Globals.ThisAddIn.Application.WindowState = Excel.XlWindowState.xlNormal;
 
-            int numItems = iterator - ITEMS_START_ROW;
+			Excel.Worksheet newSheet = newBook.Worksheets[1];
+			if (IsNotQuote(newSheet))
+			{
+				newBook.Close();
+				MessageBox.Show("File chosen is not a quote");
+				return;
+			}
 
-            iterator = ItemsRow(masterSheet);
+			// start of items --- Change if module changes
+			int lastRow = GetLastRow(oldSheet);
+			lastRow--;
 
-            AddItems(masterSheet, oldSheet, iterator, numItems);
+			int numItems = lastRow - ITEMS_START_ROW;
 
-            AddDesc(masterSheet, oldSheet, iterator);
+			lastRow = GetLastRow(newSheet);
 
-            AddBackFormulas(masterSheet, ItemsRow(masterSheet));
+			AddItems(newSheet, oldSheet, lastRow, numItems);
 
-            RemoveZerosAndRenumber();
-        }
+			AddDesc(newSheet, oldSheet, lastRow);
 
-        // Removes zeros from active sheet, and only works with "created" sheet
-        private static void RemoveZerosAndRenumber()
-        {
-            Excel.Worksheet sheet = Globals.ThisAddIn.Application.ActiveSheet;
-            int iterator = ITEMS_START_ROW; // Start of items
-            string colA = sheet.Range["A" + (1 + iterator)].Text;
-            string colF = sheet.Range["F" + iterator].Text;
+			AddBackFormulas(newSheet, GetLastRow(newSheet));
 
-            int currNum = 1;
-            // while the cells aren't empty (may have to change this depending on format)
-            while (!colA.Contains("Total"))
-            {
+			RemoveZerosAndRenumber();
+		}
 
-                if (colF == "0") // If quantity is 0
-                {
-                    sheet.Rows[iterator].Delete();
-                }
+		// Removes zeros from active sheet, and only works with "created" sheet
+		private static void RemoveZerosAndRenumber()
+		{
+			Excel.Worksheet sheet = Globals.ThisAddIn.Application.ActiveSheet;
+			int currRow = ITEMS_START_ROW; // Start of items
+			string colA = sheet.Range["A" + (1 + currRow)].Text;
+			string colF = sheet.Range["F" + currRow].Text;
 
-                else if (colF != "") // If quantity > 0, Make the new value the current num 
-                {
-                    sheet.Range["A" + iterator].Value = "#" + currNum;
-                    currNum++;
-                    iterator++;
-                }
+			int currNum = 1;
+			// while the cells aren't empty (may have to change this depending on format)
+			while (!colA.Contains("Total"))
+			{
 
-                else // if it's not an item
-                {
-                    iterator++;
-                }
+				if (colF == "0") // If quantity is 0
+				{
+					sheet.Rows[currRow].Delete();
+				}
 
-                colA = sheet.Range["A" + (1+iterator)].Text;
-                colF = sheet.Range["F" + iterator].Text;
-            }
-        }
+				else if (colF != "") // If quantity > 0, Make the new value the current num 
+				{
+					sheet.Range["A" + currRow].Value = "#" + currNum;
+					currNum++;
+					currRow++;
+				}
 
-        // just a SaveAs dialog prompt
-        private static void SaveAs()
-        {
-            SaveFileDialog saveFileDialog1 = new SaveFileDialog();
-            saveFileDialog1.Filter = "Excel files (*.xlsx)|*.xlsx|All files (*.*)|*.*";
-            saveFileDialog1.FilterIndex = 1;
-            saveFileDialog1.RestoreDirectory = true;
+				else // if it's not an item
+				{
+					currRow++;
+				}
 
-            if (saveFileDialog1.ShowDialog() == DialogResult.OK)
-            {
-                // Save the workbook
-                Globals.ThisAddIn.Application.ActiveWorkbook.SaveAs(saveFileDialog1.FileName);
-            }
-        }
+				colA = sheet.Range["A" + (1+currRow)].Text;
+				colF = sheet.Range["F" + currRow].Text;
+			}
+		}
 
-        // Add items, used in Add() function
-        private static void AddItems(Excel.Worksheet masterSheet, Excel.Worksheet oldSheet, int iterator, int numItems)
-        {
-            for (int i = 0; i < numItems + 1; ++i) // + 1 to add extra space
-            {
-                masterSheet.Rows[iterator].Insert();
-            }
+		// just a SaveAs dialog prompt
+		private static void SaveAs()
+		{
+			SaveFileDialog saveFileDialog = new SaveFileDialog();
+			saveFileDialog.Filter = "Excel files (*.xlsx)|*.xlsx|All files (*.*)|*.*";
+			saveFileDialog.FilterIndex = 1;
+			saveFileDialog.RestoreDirectory = true;
 
-            Excel.Range oldRange = oldSheet.Range["A22:H" + (22 + numItems)];
-            Excel.Range masterRange = masterSheet.Cells.Range["A" + iterator + ":H" + (iterator + numItems)];
-            oldRange.Copy();
-            masterRange.PasteSpecial(Paste: XlPasteType.xlPasteValues);
+			if (saveFileDialog.ShowDialog() == DialogResult.OK)
+			{
+				// Save the workbook
+				Globals.ThisAddIn.Application.ActiveWorkbook.SaveAs(saveFileDialog.FileName);
+			}
+		}
 
-            for (int i = 0; i <= numItems; i++) // Loop is for formatting
-            {
-                masterSheet.Cells.Range["B" + (iterator + i) + ":E" + (iterator + i)].Merge();
+		// Add items, used in Add() function
+		private static void AddItems(Excel.Worksheet newSheet, Excel.Worksheet oldSheet, int iterator, int numItems)
+		{
+			for (int i = 0; i < numItems + 1; ++i) // + 1 to add extra space
+			{
+				newSheet.Rows[iterator].Insert();
+			}
 
-                Excel.Range BRange = masterSheet.Cells.Range["B" + (iterator + i)];
+			Excel.Range oldRange = oldSheet.Range["A22:H" + (22 + numItems)];
+			Excel.Range newRange = newSheet.Cells.Range["A" + iterator + ":H" + (iterator + numItems)];
+			oldRange.Copy();
+			newRange.PasteSpecial(Paste: XlPasteType.xlPasteValues);
 
-                // Make new height same as old height
-                BRange.Rows.RowHeight = oldSheet.Range["B" + (22 + i)].RowHeight;
+			for (int i = 0; i <= numItems; i++) // Loop is for formatting
+			{
+				newSheet.Cells.Range["B" + (iterator + i) + ":E" + (iterator + i)].Merge();
 
-                if (BRange.Text == "Mounting Hardware:")
-                {
-                    BRange.Font.Bold = true;
-                }
-            }
-        }
+				Excel.Range BRange = newSheet.Cells.Range["B" + (iterator + i)];
 
-        // Adds order description, used in Add() function
-        private static void AddDesc(Excel.Worksheet masterSheet, Excel.Worksheet oldSheet, int iterator)
-        {
-            int spacesForDesc = 5; // Number of spaces to add for order description
-            for (int i = 0; i < spacesForDesc; i++)
-            {
-                masterSheet.Rows[iterator].Insert();
-                masterSheet.Rows[iterator].RowHeight = 12.75;
-                masterSheet.Rows[iterator].VerticalAlignment = Excel.XlVAlign.xlVAlignBottom;
+				// Make new height same as old height
+				BRange.Rows.RowHeight = oldSheet.Range["B" + (22 + i)].RowHeight;
 
-                Excel.Range ARange = masterSheet.Range["A" + iterator];
-                ARange.HorizontalAlignment = Excel.XlHAlign.xlHAlignLeft;
-                Excel.Range BRange = masterSheet.Range["B" + iterator];
-                BRange.HorizontalAlignment = Excel.XlHAlign.xlHAlignRight;
-                Excel.Range DRange = masterSheet.Range["D" + iterator];
-                DRange.HorizontalAlignment = Excel.XlHAlign.xlHAlignRight;
-            }
+				if (BRange.Text == "Mounting Hardware:")
+				{
+					BRange.Font.Bold = true;
+				}
+			}
+		}
 
-            oldSheet.Range["A16:E18"].Copy();
-            masterSheet.Range["A" + (iterator + 1) + ":E" + (iterator + 3)].PasteSpecial(Paste: XlPasteType.xlPasteValues);
-        }
+		// Adds order description, used in Add() function
+		private static void AddDesc(Excel.Worksheet newSheet, Excel.Worksheet oldSheet, int iterator)
+		{
+			for (int i = 0; i < SPACES_FOR_DESCRIPTION; i++)
+			{
+				newSheet.Rows[iterator].Insert();
+				newSheet.Rows[iterator].RowHeight = 12.75;
+				newSheet.Rows[iterator].VerticalAlignment = Excel.XlVAlign.xlVAlignBottom;
 
-        // Locks in values instead of using formulas, used in Create() function
-        private static void CreateCopyVals(Excel.Worksheet quoteSheet, Excel.Worksheet newSheet, int row)
-        {
-            newSheet.Range["A1:H" + (row + 13)].Value = quoteSheet.Range["A1:H" + (row + 13)].Value;
-            AddBackFormulas(newSheet, row);
-        }
+				Excel.Range ARange = newSheet.Range["A" + iterator];
+				ARange.HorizontalAlignment = Excel.XlHAlign.xlHAlignLeft;
+				Excel.Range BRange = newSheet.Range["B" + iterator];
+				BRange.HorizontalAlignment = Excel.XlHAlign.xlHAlignRight;
+				Excel.Range DRange = newSheet.Range["D" + iterator];
+				DRange.HorizontalAlignment = Excel.XlHAlign.xlHAlignRight;
+			}
 
-        // Helper function to find row where items end on sheets
-        private static int ItemsRow(Excel.Worksheet Sheet)
-        {
-            int row = ITEMS_START_ROW;
-            string colA = Sheet.Cells.Range["A" + row].Text;
-            while (!colA.Contains("Total"))
-            {
-                row++;
-                colA = Sheet.Cells.Range["A" + row].Text;
-            }
-            return row - 1;
-        }
+			oldSheet.Range["A16:E18"].Copy();
+			newSheet.Range["A" + (iterator + 1) + ":E" + (iterator + 3)].PasteSpecial(Paste: XlPasteType.xlPasteValues);
+		}
 
-        private static void AddBackFormulas(Excel.Worksheet newSheet, int row)
-        {
-            newSheet.Range["H" + (row + 1)].Formula = $"=SUM(H22:H{row})";
+		// Locks in values instead of using formulas, used in Create() function
+		private static void CopyValues(Excel.Worksheet oldSheet, Excel.Worksheet newSheet, int row)
+		{
+			newSheet.Range["A1:H" + (row + 13)].Value = oldSheet.Range["A1:H" + (row + 13)].Value;
+			AddBackFormulas(newSheet, row);
+		}
 
-            int iterator = ITEMS_START_ROW;
-            while (iterator < row)
-            {
-                try
-                {
-                    if (newSheet.Range["A" + iterator].Value.Contains("#"))
-                    {
-                        newSheet.Range["H" + (iterator)].Formula = $"=F{iterator}*G{iterator}";
-                    }
-                }
-                catch { }
+		private static void AddBackFormulas(Excel.Worksheet newSheet, int row)
+		{
+			newSheet.Range["H" + (row + 1)].Formula = $"=SUM(H22:H{row})";
 
-                iterator++;
-            }
-        }
-    }
+			int iterator = ITEMS_START_ROW;
+			while (iterator < row)
+			{
+				try
+				{
+					if (newSheet.Range["A" + iterator].Value.Contains("#"))
+					{
+						newSheet.Range["H" + (iterator)].Formula = $"=F{iterator}*G{iterator}";
+					}
+				}
+				catch { }
+
+				iterator++;
+			}
+		}
+	}
 }

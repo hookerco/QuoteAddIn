@@ -188,10 +188,11 @@
     can be found.
   -->
   <ItemGroup>
-    <Compile Include="AllItemList.cs" />
-    <Compile Include="Driver.cs" />
+    <Compile Include="QuoteBuilder_helpers.cs" />
+    <Compile Include="SendToQb\AllItemList.cs" />
+    <Compile Include="SendToQb\Driver.cs" />
     <Compile Include="QuoteBuilder.cs" />
-    <Compile Include="Requests.cs" />
+    <Compile Include="SendToQb\Requests.cs" />
     <Compile Include="Properties\AssemblyInfo.cs">
       <SubType>Code</SubType>
     </Compile>
@@ -223,7 +224,7 @@
     <Compile Include="Ribbon1.Designer.cs">
       <DependentUpon>Ribbon1.cs</DependentUpon>
     </Compile>
-    <Compile Include="SendWorksheet.cs" />
+    <Compile Include="SendToQb\SendWorksheet.cs" />
     <Compile Include="ThisAddIn.cs">
       <SubType>Code</SubType>
     </Compile>

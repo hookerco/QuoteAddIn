@@ -15,33 +15,33 @@ namespace ExcelAddIn1
 		internal static void Run(List<string[]> itemList)
 		{
 
-            Excel.Worksheet worksheet = Globals.ThisAddIn.Application.ActiveSheet;
+			Excel.Worksheet worksheet = Globals.ThisAddIn.Application.ActiveSheet;
 
-            if (worksheet.Range["C1"].Text == "BEND TOOLING INC.")
+			if (worksheet.Range["C1"].Text == "BEND TOOLING INC.")
 			{
-                Connection conn = SetConnection();
+				Connection conn = SetConnection();
 
-                string customer = "00000";
-                try
-                {
-                    customer = Requests.QueryCustomer(conn, "12209");
-                }
-                catch
-                {
-                    conn.Close();
-                    MessageBox.Show("Could not complete QuickBooks request");
-                }
+				string customer = "00000";
+				try
+				{
+					customer = Requests.QueryCustomer(conn, "12209");
+				}
+				catch
+				{
+					conn.Close();
+					MessageBox.Show("Could not complete QuickBooks request");
+				}
 
-                SendWorksheet sendSheet = new SendWorksheet(customer);
-                sendSheet.ConvertSheet(worksheet, itemList);
+				SendWorksheet sendSheet = new SendWorksheet(customer);
+				sendSheet.ConvertSheet(worksheet, itemList);
 
-                conn.Close();
-            }
+				conn.Close();
+			}
 			else
 			{
 				MessageBox.Show("Please run when on a quote");
 			}
-            
+			
 		}
 		
 		private static Connection SetConnection()

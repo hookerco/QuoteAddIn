@@ -23,7 +23,7 @@ namespace ExcelAddIn1
 			// Only if active Quickbook is opened, otherwise it would take too long
 			if (Properties.Settings.Default.UseActiveQuickbook)
 			{
-                isLoaded = ExcelAddIn1.AllItemList.QueryItems(AllItemList);
+				isLoaded = ExcelAddIn1.AllItemList.QueryItems(AllItemList);
 			}
 		}
 
@@ -31,7 +31,7 @@ namespace ExcelAddIn1
 		{
 			if (!isLoaded)
 			{
-                isLoaded = ExcelAddIn1.AllItemList.QueryItems(AllItemList);
+				isLoaded = ExcelAddIn1.AllItemList.QueryItems(AllItemList);
 			}
 
 			Driver.Run(AllItemList);
@@ -84,5 +84,5 @@ namespace ExcelAddIn1
 			}
 			
 		}
-    }
+	}
 }

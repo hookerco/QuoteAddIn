@@ -9,9 +9,10 @@ using Excel = Microsoft.Office.Interop.Excel;
 
 namespace ExcelAddIn1
 {
-	internal static partial class QuoteBuilder
+	internal partial class QuoteBuilder
 	{
 		static string QUOTE_TITLE = "BEND TOOLING INC.";
+
 		internal static bool IsQuote(Excel.Worksheet worksheet)
 		{
 			return worksheet.Range["C1"].Text == QUOTE_TITLE;

@@ -39,13 +39,6 @@ namespace ExcelAddIn1
 
 			CustomerQueryRq.ORCustomerListQuery.CustomerListFilter.ORNameFilter.NameFilter.MatchCriterion.SetValue(ENMatchCriterion.mcEndsWith);
 
-			//Regex regex = new Regex(@"\d{5}$");
-
-			//// Customer ID location --- Change if Module Changes
-			////string name = worksheet.Range["B11"].Value.ToString();
-			//Match match = regex.Match(name);
-			//name = match.Value;
-
 			CustomerQueryRq.ORCustomerListQuery.CustomerListFilter.ORNameFilter.NameFilter.Name.SetValue(name);
 			CustomerQueryRq.IncludeRetElementList.Add("Name");
 		}

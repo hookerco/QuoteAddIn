@@ -1,5 +1,4 @@
 ﻿using System;
-using Microsoft.Office.Interop.Excel;
 using Excel = Microsoft.Office.Interop.Excel;
 using System.Windows.Forms;
 
@@ -15,38 +14,17 @@ namespace ExcelAddIn1
 		/// <remarks>Must be on quote sheet, does not work with price breaks</remarks>
 		public static void Create()
 		{
-			Excel.Worksheet oldSheet = Globals.ThisAddIn.Application.ActiveSheet;
+			QuoteSheet oldSheet = new QuoteSheet(Globals.ThisAddIn.Application.ActiveSheet);
 			
-			if (IsQuote(oldSheet)) // If the sheet is a quote sheet
-			{
-				TrytoCopy(oldSheet);
+			TrytoCopy(oldSheet.sheet);
 
-				Excel.Worksheet newSheet = Globals.ThisAddIn.Application.ActiveSheet;
+			QuoteSheet newSheet = new QuoteSheet(Globals.ThisAddIn.Application.ActiveSheet);
 
-				DeleteButtons(newSheet);
+			newSheet.DeleteButtons();
 
-				int row = GetLastRow(newSheet);
-
-				CopyValues(oldSheet, newSheet, row);
-				RemoveZerosAndRenumber();
-				SaveAs();
-
-			}
-			else
-			{
-				MessageBox.Show("Please make a quote the active sheet");
-			}
-		}
-
-		internal static void DeleteButtons(Excel.Worksheet worksheet)
-		{
-			try
-			{
-				worksheet.Shapes.Item("Button 1").Delete();
-				worksheet.Shapes.Item("Button 2").Delete();
-				worksheet.Shapes.Item("Button 3").Delete();
-			}
-			catch (System.ArgumentException) { }
+			CopyValues(oldSheet.sheet, newSheet.sheet, newSheet.lastRow);
+			RemoveZerosAndRenumber();
+			SaveAs();
 		}
 
 		internal static void TrytoCopy(Excel.Worksheet worksheet)
@@ -170,10 +148,11 @@ namespace ExcelAddIn1
 				newSheet.Rows[iterator].Insert();
 			}
 
+
 			Excel.Range oldRange = oldSheet.Range["A22:H" + (22 + numItems)];
 			Excel.Range newRange = newSheet.Cells.Range["A" + iterator + ":H" + (iterator + numItems)];
 			oldRange.Copy();
-			newRange.PasteSpecial(Paste: XlPasteType.xlPasteValues);
+			newRange.PasteSpecial(Paste: Excel.XlPasteType.xlPasteValues);
 
 			for (int i = 0; i <= numItems; i++) // Loop is for formatting
 			{
@@ -209,7 +188,7 @@ namespace ExcelAddIn1
 			}
 
 			oldSheet.Range["A16:E18"].Copy();
-			newSheet.Range["A" + (iterator + 1) + ":E" + (iterator + 3)].PasteSpecial(Paste: XlPasteType.xlPasteValues);
+			newSheet.Range["A" + (iterator + 1) + ":E" + (iterator + 3)].PasteSpecial(Paste: Excel.XlPasteType.xlPasteValues);
 		}
 
 		// Locks in values instead of using formulas, used in Create() function

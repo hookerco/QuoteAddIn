@@ -189,6 +189,7 @@
   -->
   <ItemGroup>
     <Compile Include="QuoteBuilder_helpers.cs" />
+    <Compile Include="QuoteSheet.cs" />
     <Compile Include="SendToQb\AllItemList.cs" />
     <Compile Include="SendToQb\Driver.cs" />
     <Compile Include="QuoteBuilder.cs" />

@@ -2,18 +2,15 @@
 using QBRequestLibrary;
 using System;
 using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 
 namespace ExcelAddIn1
 {
-	internal static class AllItemList
+	public static class AllItemList
 	{
 		/**
 		 * <summary>This method queries QuickBooks for the items list</summary>
 		 */
-		internal static bool QueryItems(List<string[]> ItemList)
+		public static bool QueryItems(List<string[]> ItemList)
 		{
 			Connection conn = new Connection();
 
@@ -132,7 +129,7 @@ namespace ExcelAddIn1
 		 * <param name="part">part number to be searched</param>
 		 * <returns>First instance of the string in format of [name, description]</returns>
 		 */
-		static internal (string num, string desc) FindPart(string part, List<string[]> AllItemList)
+		static public (string num, string desc) FindPart(string part, List<string[]> AllItemList)
 		{
 			string foundNum = ""; // Part number (serial)
 			string foundDesc = ""; // Description

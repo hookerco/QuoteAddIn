@@ -11,6 +11,12 @@ using System.Linq.Expressions;
 
 namespace ExcelAddIn1
 {
+	public class NotPartException:Exception
+	{
+		public NotPartException() { }
+
+
+	}
 	internal class SendWorksheet
 	{
 		private int nextRow = 0;
@@ -55,25 +61,27 @@ namespace ExcelAddIn1
 				Excel.Range quantRange = oldSheet.Range["F"+row];
 				Excel.Range priceRange = oldSheet.Range["G"+row];
 
-				string pNum = "";
+				string QBPartNum = "";
 				string desc = descRange.Value;
 
 				if (colA is string && colA.Contains("#")) {
-					string partNum = FindPN(descRange.Text);
-					
-					if (partNum != "")
+					try
 					{
-						(pNum, desc) = AllItemList.FindPart(partNum, itemList);
-						if (pNum == "")
+						string QuotePartNum = FindPN(descRange.Text);
+						
+						(QBPartNum, desc) = AllItemList.FindPart(QuotePartNum, itemList);
+						if (QBPartNum == "")
 						{
 							desc = descRange.Value;
 						}
+
+						int quant = (int)quantRange.Value;
+						double price = priceRange.Value;
+
+						AddItem(QBPartNum, desc, quant, price);
 					}
+					catch (NotPartException ex) { }
 
-					int quant = (int)quantRange.Value;
-					double price = priceRange.Value;
-
-					this.AddItem(pNum, desc, quant, price);
 				}
 
 				colA = oldSheet.Cells[++row, 1].Text;
@@ -83,20 +91,16 @@ namespace ExcelAddIn1
 		}
 
 		// Finds ALL text after "BTI p/n"
+		// Input is string, will find any string after 'BTI p/n' until hits whitespace (.) Rejects any value with length under 6. Why?
 		internal static string FindPN(string desc)
 		{
-			string pattern = @"BTI p/n (.+)";
+			string pattern = @"^(?<partNumber>.*?),";
 			Match match = Regex.Match(desc, pattern);
 			if (match.Success)
 			{
-				if (match.Groups[1].Value.Length > 5)
-				{
-
-					return match.Groups[1].Value;
-				}
+				return match.Groups["partNumber"].Value;
 			}
-
-			return "";
+			throw new NotPartException();
 		}
 
 		internal void AddButton()

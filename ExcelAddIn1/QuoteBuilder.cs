@@ -1,12 +1,16 @@
 ﻿using System;
 using Excel = Microsoft.Office.Interop.Excel;
 using System.Windows.Forms;
+using QuoteSheetLibrary;
 
 
 namespace ExcelAddIn1
 {
+	// TODO: Refactor QuoteSheet out of QuoteBuilder for long-term use and error-hardiness
+	// Issue is that the Interop Globals (Like ActiveSheet) and QuoteSheet's handling of Excel Sheets are automatically coupled. 
 	internal static partial class QuoteBuilder
 	{
+
 		static private int ITEMS_START_ROW = 22;
 		static private int SPACES_FOR_DESCRIPTION = 5;
 
@@ -14,13 +18,13 @@ namespace ExcelAddIn1
 		/// <remarks>Must be on quote sheet, does not work with price breaks</remarks>
 		public static void Create()
 		{
-			QuoteSheet oldSheet = new QuoteSheet(Globals.ThisAddIn.Application.ActiveSheet);
+			QuoteSheet oldSheet = new StandardQuoteSheet(Globals.ThisAddIn.Application.ActiveSheet);
 			
 			TrytoCopy(oldSheet.sheet);
 
-			QuoteSheet newSheet = new QuoteSheet(Globals.ThisAddIn.Application.ActiveSheet);
+			QuoteSheet newSheet = new StandardQuoteSheet(Globals.ThisAddIn.Application.ActiveSheet);
 
-			newSheet.DeleteButtons();
+			newSheet.DeleteButtons(); // Button 2 won't work after copying since it redirects to RFQ sheet
 
 			CopyValues(oldSheet.sheet, newSheet.sheet, newSheet.lastRow);
 			RemoveZerosAndRenumber();
@@ -32,6 +36,7 @@ namespace ExcelAddIn1
 			try
 			{
 				worksheet.Copy();
+				worksheet.Name = "Quote";
 			}
 			catch
 			{

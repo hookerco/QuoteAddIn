@@ -189,7 +189,6 @@
   -->
   <ItemGroup>
     <Compile Include="QuoteBuilder_helpers.cs" />
-    <Compile Include="QuoteSheet.cs" />
     <Compile Include="SendToQb\AllItemList.cs" />
     <Compile Include="SendToQb\Driver.cs" />
     <Compile Include="QuoteBuilder.cs" />
@@ -236,6 +235,12 @@
       <DependentUpon>ThisAddIn.Designer.xml</DependentUpon>
     </Compile>
     <AppDesigner Include="Properties\" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\QuoteSheetLibrary\QuoteSheetLibrary.csproj">
+      <Project>{014767cf-aa9c-4f9f-b30a-81544d36bb4e}</Project>
+      <Name>QuoteSheetLibrary</Name>
+    </ProjectReference>
   </ItemGroup>
   <PropertyGroup>
     <VisualStudioVersion Condition="'$(VisualStudioVersion)' == ''">10.0</VisualStudioVersion>

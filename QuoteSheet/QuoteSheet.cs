@@ -5,18 +5,24 @@ using System.Text;
 using System.Threading.Tasks;
 using Excel = Microsoft.Office.Interop.Excel;
 
-namespace ExcelAddIn1
+namespace QuoteSheetLibrary
 {
-	internal class QuoteSheet
+	public abstract class QuoteSheet
+	{
+		public Excel.Worksheet sheet { get; protected set; }
+		public int lastRow { get; protected set; }
+		public class NotQuoteException : Exception
+		{
+			public NotQuoteException(string message = "Sheet is not in quote format") : base(message) { }
+		}
+	}
+	internal class StandardQuoteSheet : QuoteSheet
 	{
 		static private int ITEMS_START_ROW = 22;
 		static private int SPACES_FOR_DESCRIPTION = 5;
 		static string QUOTE_TITLE = "BEND TOOLING INC.";
 
-
-		internal Excel.Worksheet sheet { get; private set; }
-		internal int lastRow { get; private set; }
-		internal QuoteSheet(Excel.Worksheet sheet)
+		public StandardQuoteSheet(Excel.Worksheet sheet)
 		{
 			if (IsNotQuote(sheet))
 			{
@@ -49,12 +55,7 @@ namespace ExcelAddIn1
 			return !IsQuote(worksheet);
 		}
 
-		public class NotQuoteException : Exception
-		{
-			public NotQuoteException(string message = "Sheet is not in quote format") : base(message) { }
-		}
-
-		internal void DeleteButtons()
+		public void DeleteButtons()
 		{
 			try
 			{

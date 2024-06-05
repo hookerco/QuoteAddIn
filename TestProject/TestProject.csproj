@@ -18,7 +18,6 @@
 
   <ItemGroup>
     <ProjectReference Include="..\ExcelAddIn1\QuoteUtility.csproj" />
-    <ProjectReference Include="..\QuoteBuilder\QuoteBuilder.csproj" />
   </ItemGroup>
 
 </Project>

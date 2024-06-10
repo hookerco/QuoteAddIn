@@ -96,7 +96,7 @@
 			// 
 			this.QBButton.ControlSize = Microsoft.Office.Core.RibbonControlSize.RibbonControlSizeLarge;
 			this.QBButton.Image = ((System.Drawing.Image)(resources.GetObject("QBButton.Image")));
-			this.QBButton.Label = "QuickBooks";
+			this.QBButton.Label = "Prepare for Sales Order";
 			this.QBButton.Name = "QBButton";
 			this.QBButton.ShowImage = true;
 			this.QBButton.Click += new Microsoft.Office.Tools.Ribbon.RibbonControlEventHandler(this.SendButton_Click);

@@ -25,7 +25,7 @@
     <OutputType>Library</OutputType>
     <NoStandardLibraries>false</NoStandardLibraries>
     <RootNamespace>ExcelAddIn1</RootNamespace>
-    <AssemblyName>ExcelAddIn1</AssemblyName>
+    <AssemblyName>QuoteUtilityForQuoteBooks</AssemblyName>
     <TargetFrameworkVersion>v4.7.2</TargetFrameworkVersion>
     <DefineConstants>VSTO40</DefineConstants>
     <IsWebBootstrapper>False</IsWebBootstrapper>
@@ -189,6 +189,7 @@
   -->
   <ItemGroup>
     <Compile Include="QuoteBuilder_helpers.cs" />
+    <Compile Include="QuoteSheet.cs" />
     <Compile Include="SendToQb\AllItemList.cs" />
     <Compile Include="SendToQb\Driver.cs" />
     <Compile Include="QuoteBuilder.cs" />
@@ -236,12 +237,6 @@
     </Compile>
     <AppDesigner Include="Properties\" />
   </ItemGroup>
-  <ItemGroup>
-    <ProjectReference Include="..\QuoteSheetLibrary\QuoteSheetLibrary.csproj">
-      <Project>{014767cf-aa9c-4f9f-b30a-81544d36bb4e}</Project>
-      <Name>QuoteSheetLibrary</Name>
-    </ProjectReference>
-  </ItemGroup>
   <PropertyGroup>
     <VisualStudioVersion Condition="'$(VisualStudioVersion)' == ''">10.0</VisualStudioVersion>
     <VSToolsPath Condition="'$(VSToolsPath)' == ''">$(MSBuildExtensionsPath32)\Microsoft\VisualStudio\v$(VisualStudioVersion)</VSToolsPath>
@@ -250,10 +245,14 @@
     <SignManifests>true</SignManifests>
   </PropertyGroup>
   <PropertyGroup>
-    <ManifestKeyFile>ExcelAddIn1_TemporaryKey.pfx</ManifestKeyFile>
+    <ManifestKeyFile>
+    </ManifestKeyFile>
   </PropertyGroup>
   <PropertyGroup>
-    <ManifestCertificateThumbprint>625969FDE2D9EE1E4C0385DFD5D21A2887B053AF</ManifestCertificateThumbprint>
+    <ManifestCertificateThumbprint>996B92198021B7122DB3DF32B5C0ED26DD604C50</ManifestCertificateThumbprint>
+  </PropertyGroup>
+  <PropertyGroup>
+    <SignAssembly>true</SignAssembly>
   </PropertyGroup>
   <!-- Include the build rules for a C# project. -->
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />

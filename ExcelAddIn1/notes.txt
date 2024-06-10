@@ -1,0 +1,2 @@
+﻿6/5/2024:
+	- Cleaned up Regex where it finds a part number from the quotebook description.

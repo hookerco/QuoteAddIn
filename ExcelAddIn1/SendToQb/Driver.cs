@@ -12,10 +12,14 @@ namespace ExcelAddIn1
 {
 	internal static class Driver
 	{
-		internal static void Run(List<string[]> itemList)
+		internal static void Run()
 		{
 
 			Excel.Worksheet worksheet = Globals.ThisAddIn.Application.ActiveSheet;
+
+			List<string[]> itemList = new List<string[]>();
+			AllItemList.QueryItems(itemList);
+
 
 			if (worksheet.Range["C1"].Text == "BEND TOOLING INC.")
 			{
@@ -33,7 +37,7 @@ namespace ExcelAddIn1
 				}
 
 				SendWorksheet sendSheet = new SendWorksheet(customer);
-				sendSheet.ConvertSheet(worksheet, itemList);
+				sendSheet.ConvertSheet(worksheet, ref itemList);
 
 				conn.Close();
 			}
@@ -47,7 +51,6 @@ namespace ExcelAddIn1
 		private static Connection SetConnection()
 		{
 			Connection conn = new Connection();
-
 
 			conn.File = "";
 			if (!Properties.Settings.Default.UseActiveQuickbook)

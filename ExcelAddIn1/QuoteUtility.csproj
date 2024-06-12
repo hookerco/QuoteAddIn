@@ -188,6 +188,7 @@
     can be found.
   -->
   <ItemGroup>
+    <Compile Include="QuoteItem.cs" />
     <Compile Include="QuoteBuilder_helpers.cs" />
     <Compile Include="QuoteSheet.cs" />
     <Compile Include="SendToQb\AllItemList.cs" />

@@ -9,7 +9,8 @@ namespace TestProject
 		[TestMethod]
 		public void TestEmptyList()
 		{
-			(string name, string desc) = ExcelAddIn1.AllItemList.FindPart("MCDALDF", new List<string[]>());
+			List<string[]> list = new List<string[]>();
+			(string name, string desc) = ExcelAddIn1.AllItemList.FindPart("MCDALDF", ref list);
 			Debug.WriteLine($"Name: {name}, Desc: {desc}");
 			Assert.AreEqual(name, "");
 			Assert.AreEqual(desc, "");

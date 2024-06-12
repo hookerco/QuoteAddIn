@@ -129,7 +129,7 @@ namespace ExcelAddIn1
 		 * <param name="part">part number to be searched</param>
 		 * <returns>First instance of the string in format of [name, description]</returns>
 		 */
-		static public (string num, string desc) FindPart(string part, ref List<string[]> AllItemList)
+		static public string FindPart(string part, ref List<string[]> AllItemList)
 		{
 			string foundNum = ""; // Part number (serial)
 			string foundDesc = ""; // Description
@@ -147,7 +147,7 @@ namespace ExcelAddIn1
 				if (found == true) break;
 			}
 			
-			return (foundNum, foundDesc);
+			return foundNum;
 		}
 
 	}

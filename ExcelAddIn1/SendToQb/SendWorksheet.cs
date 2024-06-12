@@ -10,6 +10,9 @@ using Microsoft.Office.Tools.Excel;
 using System.Linq.Expressions;
 using System.Windows.Forms;
 using Button = Microsoft.Office.Tools.Excel.Controls.Button;
+using Worksheet = Microsoft.Office.Tools.Excel.Worksheet;
+using QBRequestLibrary;
+using Microsoft.Office.Interop.Excel;
 
 namespace ExcelAddIn1
 {
@@ -20,10 +23,13 @@ namespace ExcelAddIn1
 
 	internal class SendWorksheet
 	{
+		private static int firstRow = 0;
 		private int nextRow = 0;
-		Excel.Worksheet sendSheet;
+		private readonly Excel.Worksheet sendSheet;
+		private Button closeButton;
 		private Button sendButton;
-		private List<string[]> _itemList;
+		private List<string[]> _allItemList;
+		private List<SendSheetQuoteItem> _currItemList= new List<SendSheetQuoteItem>();
 
 		internal SendWorksheet(string customer)
 		{
@@ -39,6 +45,7 @@ namespace ExcelAddIn1
 			sendSheet.Cells[2, 6] = "IsNew";
 
 			nextRow = 3;
+			firstRow = 3;
 		}
 
 		internal void AddItem(string num, string desc, int quantity, double price, bool isNew)
@@ -47,26 +54,27 @@ namespace ExcelAddIn1
 			sendSheet.Cells[nextRow, 2].Value = desc;
 			sendSheet.Cells[nextRow, 3].Value = quantity;
 			sendSheet.Cells[nextRow, 4].Value = price;
-			sendSheet.Cells[nextRow, 6].Value = isNew ? "Y" : "F";
+			sendSheet.Cells[nextRow, 6].Value = isNew ? "Y" : "N";
 
 			nextRow++;
 		}
 
 		internal void ConvertSheet(Excel.Worksheet oldSheet, ref List<string[]> itemList)
 		{
-			_itemList = itemList;
+			_allItemList = itemList;
 			sendSheet.Columns[1].NumberFormat = "@";
 			int row = 22;
 			string colA = oldSheet.Cells[row, 1].Text;
-			NumberGenerator genNum = new NumberGenerator(_itemList);
+			NumberGenerator genNum = new NumberGenerator(_allItemList);
 
 			while (!colA.Contains("Total"))
 			{
+				SendSheetQuoteItem newItem = new SendSheetQuoteItem(sendSheet.Range[nextRow + "1", nextRow + "6"]);
 
-				Excel.Range numRange = oldSheet.Range["A" + row];
-				Excel.Range descRange = oldSheet.Range["B" + row];
-				Excel.Range quantRange = oldSheet.Range["F" + row];
-				Excel.Range priceRange = oldSheet.Range["G" + row];
+				newItem.SetNumber("");
+				newItem.SetDescription(oldSheet.Range["B" + row].Value);
+				newItem.SetQuantity(oldSheet.Range["F" + row].Value);
+				newItem.SetRate(oldSheet.Range["G" + row].Value);
 
 				string QBPartNum = "";
 				string desc = descRange.Value;
@@ -78,12 +86,18 @@ namespace ExcelAddIn1
 					{
 						string QuotePartNum = FindPN(descRange.Text);
 
-						(QBPartNum, desc) = AllItemList.FindPart(QuotePartNum, ref itemList);
+						QBPartNum = AllItemList.FindPart(QuotePartNum, ref itemList);
+
+						if (QBPartNum == "")
+						{
+							QBPartNum = DieSetItem.GetPartNum(QuotePartNum); // if item is die set item, should be in quickbooks as a variable item
+
+						}
 						if (QBPartNum == "")
 						{
 							isNew = true;
 							desc = descRange.Value;
-							QBPartNum = genNum.Generate();
+							//QBPartNum = genNum.Generate();
 						}
 
 						int quant = (int)quantRange.Value;
@@ -98,7 +112,7 @@ namespace ExcelAddIn1
 				colA = oldSheet.Cells[++row, 1].Text;
 			}
 
-			AddCloseButton();
+			AddButtons();
 		}
 
 		// Input is string, will find part number. Part number is the text before first comma. Rejects any value with length under 6. Why?
@@ -121,10 +135,10 @@ namespace ExcelAddIn1
 
 		internal void AddCloseButton()
 		{
-			sendButton = new Button();
+			closeButton = new Button();
 
-			sendButton.Text = "Close";
-			sendButton.Click += (sender, e) =>
+			closeButton.Text = "Close";
+			closeButton.Click += (sender, e) =>
 			{
 				Globals.ThisAddIn.Application.DisplayAlerts = false;
 				sendSheet.Delete();
@@ -134,15 +148,176 @@ namespace ExcelAddIn1
 			Worksheet sheet = Globals.Factory.GetVstoObject(sendSheet);
 
 			Excel.Range range = sheet.Range["A" + nextRow];
+			sheet.Controls.AddControl(closeButton, range, "closeButton");
+		}
+
+		internal void AddSendButton()
+		{
+			sendButton = new Button();
+
+			sendButton.Text = "Send";
+			sendButton.Click += (sender, e) =>
+			{
+				Send();
+			};
+
+			Worksheet sheet = Globals.Factory.GetVstoObject(sendSheet);
+
+			Excel.Range range = sheet.Range["B" + nextRow];
 			sheet.Controls.AddControl(sendButton, range, "sendButton");
 		}
 
-		internal void AddSendButton() { }
+		private void Send()
+		{
+			AddItemsToQB();
+		}
+
+		private void AddItemsToQB()
+		{
+			List<(string, string)> newItems = new List<(string, string)>();
+			for (int i = firstRow; i < nextRow; ++i)
+			{
+				if (sendSheet.Range["F" + i].Value == "Y")
+				{
+					string number = sendSheet.Range["A" + i].Value;
+					string desc = sendSheet.Range["B" + i].Value;
+					newItems.Add((number, desc));
+				}
+			}
+			List<(string, string)> addedList = new List<(string, string)>();
+			if (newItems.Count > 0)
+			{
+				addedList = SendRequest.AddItems(newItems);
+			}
+
+			ChangeToAdded(addedList);
+		}
+
+		// iterate through items in sendSheet, change isNew to F if in the "addedItems" list
+		private void ChangeToAdded(List<(string, string)> addedItems)
+		{
+			var addedNums = addedItems.Select(x=>x.Item1).ToList();
+			for (int i = firstRow;i < nextRow; ++i)
+			{
+				if (addedNums.Contains(sendSheet.Range["A"+i.ToString()].Value as string))
+				{
+					sendSheet.Range["F"+i.ToString()].Value = "N";
+				}
+			}
+
+			foreach ((string num, string desc) in addedItems)
+			{
+				string[] newItem = new string[2];
+				newItem[0] = num;
+				newItem[1] = desc;
+				this._allItemList.Add(newItem);
+			}
+		}
+
+		private static class SendRequest
+		{
+			public static List<(string, string)> AddItems(List<(string, string)> items)
+			{
+				// Convert format from list to NonInvItem List
+				List<NonInvItem> list = new List<NonInvItem>();
+				foreach ((string num, string desc) in items)
+				{
+					NonInvItem item = new NonInvItem();
+					item.Name = num;
+					item.Desc = desc;
+					item.AccountName = "Sales Income";
+					list.Add(item);
+				}
+
+				AddItemNonInventoryRequest rq = new AddItemNonInventoryRequest(list);
+				rq.Connect();
+				List<StatusResponse> rs = rq.Send();
+				rq.Disconnect();
+
+				// if item was succesfully added, return it in the list. (So it can be changed from "isNew" = Y)
+				List<(string, string)> addedList = new List<(string, string)>();
+				int item_idx = 0;
+				foreach (StatusResponse status in rs)
+				{
+					if (status._code == 0)
+					{
+						addedList.Add((list[item_idx].Name, list[item_idx].Desc));
+					}
+
+					item_idx++;
+				}
+
+				return addedList;
+				
+			}
+
+			//private static Dictionary<string, bool> CustomNumberCheck(List<string> allitemList, List<string> customList)
+			//{
+			//	foreach (string item in customList)
+			//	{
+
+			//	}
+			//}
+		}
+
+		private class SendSheetQuoteItem : IQuoteItem
+		{
+			Range _number;
+			int _numberColumn = 1;
+			Range _override;
+			int _overrideColumn = 2;
+			Range _description;
+			int _descriptionColumn = 3;
+			Range _rate;
+			int _rateColumn = 4;
+			Range _quantity;
+			int _quantityColumn = 5;
+			Range _isNew;
+			int _isNewColumn = 6;
+
+			// Gives both Excel Interface and Data
+			public SendSheetQuoteItem(Excel.Range lineRange, IQuoteItem quoteItem)
+			{
+				SetRanges(lineRange);
+
+				SetNumber(quoteItem.GetNumber());
+				SetDescription(quoteItem.GetDescription());
+				SetRate(quoteItem.GetRate());
+				SetQuantity(quoteItem.GetQuantity());
+			}
+
+			// Gives it Excel Interface
+			public SendSheetQuoteItem(Excel.Range lineRange)
+			{
+				SetRanges(lineRange);
+			}
+
+			// Sets Excel Interface
+			private void SetRanges(Excel.Range lineRange)
+			{
+				_number = lineRange[lineRange.Row, _numberColumn];
+				_description = lineRange[lineRange.Row, _descriptionColumn];
+				_rate = lineRange[lineRange.Row, _rateColumn];
+				_quantity = lineRange[lineRange.Row, _quantityColumn];
+			}
+			public string GetNumber() { return _number.Value; }
+			public void SetNumber(string value) { _number.Value = value; }
+			public string GetDescription() { return _description.Value; }
+			public void SetDescription(string value) { _description.Value = value; }
+			public string GetRate() { return _rate.Value; }
+			public void SetRate(string value) { _rate.Value = value; }
+			public string GetQuantity() { return _quantity.Value; }
+			public void SetQuantity(string value) { _quantity.Value = value; }
+			public string GetOverride() { return _override.Value; }
+			public void SetOverride(string value ) { _override.Value = value; }
+			public string GetIsNew() { return _isNew.Value; }
+			public void SetIsNew(string value) { _isNew.Value = value; }
+		}
 	}
 
 	internal class NumberGenerator
 	{
-		SortedSet<int> sortedList = new SortedSet<int>();
+		readonly SortedSet<int> sortedList = new SortedSet<int>();
 
 		internal NumberGenerator(List<string[]> itemList)
 		{
@@ -177,4 +352,60 @@ namespace ExcelAddIn1
 			return "1-" + sortedList.Count.ToString("D4");
 		}
 	}
+
+	public class DieSetItem
+	{
+		DieSetItemType type;
+		string QBNum;
+
+
+		DieSetItem(string partNum)
+		{
+			if (partNum.StartsWith("BB/"))
+			{
+				type = DieSetItemType.BB;
+				QBNum = "1-4501";
+			}
+
+			else if (partNum.StartsWith("CI/"))
+			{
+				type = DieSetItemType.CI;
+				QBNum = "1-4502";
+			}
+
+			else if (partNum.StartsWith("CD")) // CD or CDX
+			{
+				type = DieSetItemType.CD;
+				QBNum = "1-4503";
+			}
+
+			else if (partNum.StartsWith("PD")) // PD or PDX
+			{
+				type = DieSetItemType.PD;
+				QBNum = "1-4504";
+			}
+
+			else
+			{
+				type = DieSetItemType.NONE;
+				QBNum = "";
+			}
+		}
+
+		public static string GetPartNum(string partNumString)
+		{
+			DieSetItem item = new DieSetItem(partNumString);
+			return item.QBNum;
+		}
+	}
+
+	public enum DieSetItemType
+	{
+		BB,
+		CI,
+		CD,
+		PD,
+		NONE
+	}
+
 }

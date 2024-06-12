@@ -9,49 +9,47 @@ namespace ExcelAddIn1
 
 	public partial class QBRibbon
 	{
-		private bool isLoaded = false;
-
 		private void Ribbon1_Load(object sender, RibbonUIEventArgs e)
 		{
-			OpenFileDialog1.FileName = Properties.Settings.Default.QuickbooksPath;
-			ChooseFileButton.SuperTip = OpenFileDialog1.FileName;
-			QuickBooksActiveToggle.Checked = Properties.Settings.Default.UseActiveQuickbook;
+			//OpenFileDialog1.FileName = Properties.Settings.Default.QuickbooksPath;
+			//ChooseFileButton.SuperTip = OpenFileDialog1.FileName;
+			//QuickBooksActiveToggle.Checked = Properties.Settings.Default.UseActiveQuickbook;
 		}
 
-		private void SendButton_Click(object sender, RibbonControlEventArgs e)
+		private void SalesOrderButton_Click(object sender, RibbonControlEventArgs e)
 		{
 			Driver.Run();
 		}
 
-		private void ChooseFile_Click(object sender, RibbonControlEventArgs e)
-		{
-			DialogResult result = OpenFileDialog1.ShowDialog();
+		//private void ChooseFile_Click(object sender, RibbonControlEventArgs e)
+		//{
+		//	DialogResult result = OpenFileDialog1.ShowDialog();
 
-			if (result == DialogResult.OK)
-			{
-				string filePath = OpenFileDialog1.FileName;
+		//	if (result == DialogResult.OK)
+		//	{
+		//		string filePath = OpenFileDialog1.FileName;
 
-				Properties.Settings.Default.QuickbooksPath = filePath;
+		//		Properties.Settings.Default.QuickbooksPath = filePath;
 
-				ChooseFileButton.SuperTip = OpenFileDialog1.FileName;
+		//		ChooseFileButton.SuperTip = OpenFileDialog1.FileName;
 
-				Properties.Settings.Default.Save();
-			}
-		}
+		//		Properties.Settings.Default.Save();
+		//	}
+		//}
 
-		private void QuickBooksActiveToggle_Click(object sender, RibbonControlEventArgs e)
-		{
-			if (QuickBooksActiveToggle.Checked)
-			{
-				Properties.Settings.Default.UseActiveQuickbook = true;
-			}
-			else
-			{
-				Properties.Settings.Default.UseActiveQuickbook = false;
-			}
+		//private void QuickBooksActiveToggle_Click(object sender, RibbonControlEventArgs e)
+		//{
+		//	if (QuickBooksActiveToggle.Checked)
+		//	{
+		//		Properties.Settings.Default.UseActiveQuickbook = true;
+		//	}
+		//	else
+		//	{
+		//		Properties.Settings.Default.UseActiveQuickbook = false;
+		//	}
 
-			Properties.Settings.Default.Save();
-		}
+		//	Properties.Settings.Default.Save();
+		//}
 
 		private void CreateButton_Click(object sender, RibbonControlEventArgs e)
 		{

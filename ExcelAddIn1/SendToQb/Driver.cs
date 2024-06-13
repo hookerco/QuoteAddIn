@@ -36,10 +36,9 @@ namespace ExcelAddIn1
 					MessageBox.Show("Could not complete QuickBooks request");
 				}
 
-				SendWorksheet sendSheet = new SendWorksheet(customer);
-				sendSheet.ConvertSheet(worksheet, ref itemList);
-
 				conn.Close();
+				SendWorksheet sendSheet = new SendWorksheet(customer, worksheet);
+				sendSheet.ConvertSheet(ref itemList);
 			}
 			else
 			{

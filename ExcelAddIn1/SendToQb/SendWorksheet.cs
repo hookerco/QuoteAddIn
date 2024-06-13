@@ -12,7 +12,6 @@ using System.Windows.Forms;
 using Button = Microsoft.Office.Tools.Excel.Controls.Button;
 using Worksheet = Microsoft.Office.Tools.Excel.Worksheet;
 using QBRequestLibrary;
-using Microsoft.Office.Interop.Excel;
 
 namespace ExcelAddIn1
 {
@@ -23,43 +22,52 @@ namespace ExcelAddIn1
 
 	internal class SendWorksheet
 	{
-		private static int firstRow = 0;
-		private int nextRow = 0;
+		private int firstRow;
+		private int nextRow;
+		private readonly Excel.Worksheet oldSheet;
 		private readonly Excel.Worksheet sendSheet;
 		private Button closeButton;
 		private Button sendButton;
 		private List<string[]> _allItemList;
 		private List<SendSheetQuoteItem> _currItemList= new List<SendSheetQuoteItem>();
 
-		internal SendWorksheet(string customer)
+		private static int _numberColumn = 1;
+		private static int _overrideColumn = 2;
+		private static int _descriptionColumn = 3;
+		private static int _quantityColumn = 4;
+		private static int _rateColumn = 5;
+		private static int _isNewColumn = 6;
+
+		internal SendWorksheet(string customer, Excel.Worksheet oldSheet)
 		{
-			sendSheet = Globals.ThisAddIn.Application.Worksheets.Add() as Excel.Worksheet;
+			sendSheet = oldSheet.Application.Worksheets.Add() as Excel.Worksheet;
 
 			sendSheet.Name = "Send Quote";
 			sendSheet.Cells[1, 1] = customer;
-			sendSheet.Cells[2, 1] = "Number";
-			sendSheet.Cells[2, 2] = "Description";
-			sendSheet.Cells[2, 3] = "Quantity";
-			sendSheet.Cells[2, 4] = "Price";
-			sendSheet.Cells[2, 5] = "# Override";
-			sendSheet.Cells[2, 6] = "IsNew";
+			sendSheet.Cells[2, _numberColumn] = "Number";
+			sendSheet.Cells[2, _descriptionColumn] = "Description";
+			sendSheet.Cells[2, _quantityColumn] = "Quantity";
+			sendSheet.Cells[2, _rateColumn] = "Rate";
+			sendSheet.Cells[2, _overrideColumn] = "# Override";
+			sendSheet.Cells[2, _isNewColumn] = "IsNew";
 
 			nextRow = 3;
 			firstRow = 3;
+			this.oldSheet = oldSheet;
 		}
 
-		internal void AddItem(string num, string desc, int quantity, double price, bool isNew)
+		private void AddItem(SendSheetQuoteItem item)
 		{
-			sendSheet.Cells[nextRow, 1].Value = num;
-			sendSheet.Cells[nextRow, 2].Value = desc;
-			sendSheet.Cells[nextRow, 3].Value = quantity;
-			sendSheet.Cells[nextRow, 4].Value = price;
-			sendSheet.Cells[nextRow, 6].Value = isNew ? "Y" : "N";
+			sendSheet.Cells[nextRow, 1].Value = item.GetNumber();
+			sendSheet.Cells[nextRow, 2].Value = item.GetDescription();
+			sendSheet.Cells[nextRow, 3].Value = item.GetQuantity();
+			sendSheet.Cells[nextRow, 4].Value = item.GetRate();
+			sendSheet.Cells[nextRow, 6].Value = item.GetIsNew() ? "Y" : "N";
 
 			nextRow++;
 		}
 
-		internal void ConvertSheet(Excel.Worksheet oldSheet, ref List<string[]> itemList)
+		internal void ConvertSheet(ref List<string[]> itemList)
 		{
 			_allItemList = itemList;
 			sendSheet.Columns[1].NumberFormat = "@";
@@ -69,43 +77,39 @@ namespace ExcelAddIn1
 
 			while (!colA.Contains("Total"))
 			{
-				SendSheetQuoteItem newItem = new SendSheetQuoteItem(sendSheet.Range[nextRow + "1", nextRow + "6"]);
-
-				newItem.SetNumber("");
-				newItem.SetDescription(oldSheet.Range["B" + row].Value);
-				newItem.SetQuantity(oldSheet.Range["F" + row].Value);
-				newItem.SetRate(oldSheet.Range["G" + row].Value);
-
-				string QBPartNum = "";
-				string desc = descRange.Value;
-				bool isNew = false;
-
-				if (colA is string && colA.Contains("#") && quantRange.Text != "0")
+				if (colA is string && colA.Contains("#") && oldSheet.Cells[row, 6].Text != "0")
 				{
 					try
 					{
-						string QuotePartNum = FindPN(descRange.Text);
+						// make new baseQuote to pass into SendSheetQuoteItem
+						BaseQuote newQuote = new BaseQuote();
+						newQuote.SetNumber("");
+						newQuote.SetDescription(oldSheet.Range["B" + row].Value);
+						newQuote.SetQuantity((int)oldSheet.Range["F" + row].Value);
+						newQuote.SetRate((double)oldSheet.Range["G" + row].Value);
 
-						QBPartNum = AllItemList.FindPart(QuotePartNum, ref itemList);
+						SendSheetQuoteItem newItem = new SendSheetQuoteItem(newQuote, nextRow);
+						_currItemList.Add(newItem);
+						newItem.SetIsNew(false);
 
-						if (QBPartNum == "")
+						string QuotePartNum = FindPN(newItem.GetDescription());
+
+						newItem.SetNumber(AllItemList.FindPart(QuotePartNum, ref _allItemList));
+						
+						if (newItem.GetNumber() == "") // if new item isn't in allItemList from QB
 						{
-							QBPartNum = DieSetItem.GetPartNum(QuotePartNum); // if item is die set item, should be in quickbooks as a variable item
+							newItem.SetNumber(DieSetItem.GetPartNum(QuotePartNum)); // if item is die set item, should be in quickbooks as a variable item
 
 						}
-						if (QBPartNum == "")
+						if (newItem.GetNumber() == "") // if new item isn't part of the die set
 						{
-							isNew = true;
-							desc = descRange.Value;
-							//QBPartNum = genNum.Generate();
+							newItem.SetIsNew(true); // Then it needs a new serialized part number
+							//newItem.SetNumber(genNum.Generate());
 						}
 
-						int quant = (int)quantRange.Value;
-						double price = priceRange.Value;
-
-						AddItem(QBPartNum, desc, quant, price, isNew);
+						AddItem(newItem);
 					}
-					catch (NotPartException ex) { }
+					catch (NotPartException) { }
 
 				}
 
@@ -129,6 +133,7 @@ namespace ExcelAddIn1
 
 		internal void AddButtons()
 		{
+			sendSheet.Cells[nextRow++, 1].Value = "End Items";
 			AddCloseButton();
 			AddSendButton();
 		}
@@ -260,58 +265,34 @@ namespace ExcelAddIn1
 			//}
 		}
 
-		private class SendSheetQuoteItem : IQuoteItem
+		private class SendSheetQuoteItem
 		{
-			Range _number;
-			int _numberColumn = 1;
-			Range _override;
-			int _overrideColumn = 2;
-			Range _description;
-			int _descriptionColumn = 3;
-			Range _rate;
-			int _rateColumn = 4;
-			Range _quantity;
-			int _quantityColumn = 5;
-			Range _isNew;
-			int _isNewColumn = 6;
+			IQuoteItem internalQuote;
+			string _override;
+			bool _isNew;
+			int _row;
 
 			// Gives both Excel Interface and Data
-			public SendSheetQuoteItem(Excel.Range lineRange, IQuoteItem quoteItem)
+			public SendSheetQuoteItem(IQuoteItem quoteItem, int row)
 			{
-				SetRanges(lineRange);
-
-				SetNumber(quoteItem.GetNumber());
-				SetDescription(quoteItem.GetDescription());
-				SetRate(quoteItem.GetRate());
-				SetQuantity(quoteItem.GetQuantity());
-			}
-
-			// Gives it Excel Interface
-			public SendSheetQuoteItem(Excel.Range lineRange)
-			{
-				SetRanges(lineRange);
+				internalQuote = quoteItem;
+				_row = row;
 			}
 
 			// Sets Excel Interface
-			private void SetRanges(Excel.Range lineRange)
-			{
-				_number = lineRange[lineRange.Row, _numberColumn];
-				_description = lineRange[lineRange.Row, _descriptionColumn];
-				_rate = lineRange[lineRange.Row, _rateColumn];
-				_quantity = lineRange[lineRange.Row, _quantityColumn];
-			}
-			public string GetNumber() { return _number.Value; }
-			public void SetNumber(string value) { _number.Value = value; }
-			public string GetDescription() { return _description.Value; }
-			public void SetDescription(string value) { _description.Value = value; }
-			public string GetRate() { return _rate.Value; }
-			public void SetRate(string value) { _rate.Value = value; }
-			public string GetQuantity() { return _quantity.Value; }
-			public void SetQuantity(string value) { _quantity.Value = value; }
-			public string GetOverride() { return _override.Value; }
-			public void SetOverride(string value ) { _override.Value = value; }
-			public string GetIsNew() { return _isNew.Value; }
-			public void SetIsNew(string value) { _isNew.Value = value; }
+
+			public string GetNumber() { return internalQuote.GetNumber(); }
+			public void SetNumber(string value) { internalQuote.SetNumber(value); }
+			public string GetDescription() { return internalQuote.GetDescription(); }
+			public void SetDescription(string value) { internalQuote.SetDescription(value); }
+			public double GetRate() { return internalQuote.GetRate(); }
+			public void SetRate(double value) { internalQuote.SetRate(value); }
+			public int GetQuantity() { return internalQuote.GetQuantity(); }
+			public void SetQuantity(int value) { internalQuote.SetQuantity(value); }
+			public string GetOverride() { return _override; }
+			public void SetOverride(string value ) { _override = value; }
+			public bool GetIsNew() { return _isNew; }
+			public void SetIsNew(bool value) { _isNew = value; }
 		}
 	}
 

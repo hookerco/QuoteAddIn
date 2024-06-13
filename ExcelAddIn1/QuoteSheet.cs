@@ -30,6 +30,7 @@ namespace QuoteSheetLibrary
 				sheet.Shapes.Item("Button 3").Delete();
 			}
 			catch (System.ArgumentException) { }
+			catch (System.Reflection.TargetInvocationException) { }
 		}
 	}
 	

@@ -12,10 +12,10 @@ namespace ExcelAddIn1
 		void SetNumber(string value);
 		string GetDescription();
 		void SetDescription(string value);
-		string GetRate();
-		void SetRate(string value);
-		string GetQuantity();
-		void SetQuantity(string value);
+		double GetRate();
+		void SetRate(double value);
+		int GetQuantity();
+		void SetQuantity(int value);
 	}
 
 	internal interface IQuote
@@ -32,16 +32,16 @@ namespace ExcelAddIn1
 	{
 		protected string _number;
 		protected string _description;
-		protected string _rate;
-		protected string _quantity;
+		protected double _rate;
+		protected int _quantity;
 
 		public string GetNumber() => _number;
 		public void SetNumber(string value) => _number = value;
 		public string GetDescription() => _description;
 		public void SetDescription(string value) => _description = value;
-		public string GetRate() => _rate;
-		public void SetRate(string value) => _rate = value;
-		public string GetQuantity() => _quantity;
-		public void SetQuantity(string value) => _quantity = value;
+		public double GetRate() => _rate;
+		public void SetRate(double value) => _rate = value;
+		public int GetQuantity() => _quantity;
+		public void SetQuantity(int value) => _quantity = value;
 	}
 }

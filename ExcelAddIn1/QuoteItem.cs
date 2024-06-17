@@ -28,7 +28,7 @@ namespace ExcelAddIn1
 		void SetItems(List<IQuoteItem> value);
 	}
 
-	internal class BaseQuote : IQuoteItem
+	internal class BaseQuoteItem : IQuoteItem
 	{
 		protected string _number;
 		protected string _description;

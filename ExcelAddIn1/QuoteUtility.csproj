@@ -226,7 +226,7 @@
     <Compile Include="Ribbon1.Designer.cs">
       <DependentUpon>Ribbon1.cs</DependentUpon>
     </Compile>
-    <Compile Include="SendToQb\SendWorksheet.cs" />
+    <Compile Include="SendToQb\SalesOrderWorksheet.cs" />
     <Compile Include="ThisAddIn.cs">
       <SubType>Code</SubType>
     </Compile>

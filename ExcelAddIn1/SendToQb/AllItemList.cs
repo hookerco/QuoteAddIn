@@ -2,6 +2,7 @@
 using QBRequestLibrary;
 using System;
 using System.Collections.Generic;
+using static System.Windows.Forms.VisualStyles.VisualStyleElement;
 
 namespace ExcelAddIn1
 {
@@ -125,11 +126,11 @@ namespace ExcelAddIn1
 
 		/**
 		 * <summary>This method searches through every item in <see cref="Items"/> to find 
-		 * the part string</summary>
-		 * <param name="part">part number to be searched</param>
+		 * the BTI part string</summary>
+		 * <param name="part">BTI part number to be searched</param>
 		 * <returns>First instance of the string in format of [name, description]</returns>
 		 */
-		static public string FindPart(string part, ref List<string[]> AllItemList)
+		static public string FindMPN(string part, ref List<string[]> AllItemList)
 		{
 			string foundNum = ""; // Part number (serial)
 			string foundDesc = ""; // Description
@@ -150,5 +151,26 @@ namespace ExcelAddIn1
 			return foundNum;
 		}
 
+		// same as above but with Serialized number
+		static public string FindSerialNumber(string part, ref List<string[]> AllItemList)
+		{
+			string foundNum = ""; // Part number (serial)
+			string foundDesc = ""; // Description
+			bool found = false;
+
+			for (int i = 0; i < AllItemList.Count; ++i)
+			{
+				if (AllItemList[i][0] == part)
+				{
+
+					found = true;
+					foundNum = AllItemList[i][0];
+					foundDesc = AllItemList[i][1];
+				}
+				if (found == true) break;
+			}
+
+			return foundNum;
+		}
 	}
 }

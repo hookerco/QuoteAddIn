@@ -17,10 +17,6 @@ namespace ExcelAddIn1
 
 			Excel.Worksheet worksheet = Globals.ThisAddIn.Application.ActiveSheet;
 
-			List<string[]> itemList = new List<string[]>();
-			AllItemList.QueryItems(itemList);
-
-
 			if (worksheet.Range["C1"].Text == "BEND TOOLING INC.")
 			{
 				Connection conn = SetConnection();
@@ -37,8 +33,8 @@ namespace ExcelAddIn1
 				}
 
 				conn.Close();
-				SendWorksheet sendSheet = new SendWorksheet(customer, worksheet);
-				sendSheet.ConvertSheet(ref itemList);
+				SalesOrderWorksheet sendSheet = new SalesOrderWorksheet(customer, worksheet);
+				sendSheet.ConvertSheet();
 			}
 			else
 			{

@@ -1,4 +1,3 @@
-
 using System.Diagnostics;
 
 namespace TestProject
@@ -10,10 +9,9 @@ namespace TestProject
 		public void TestEmptyList()
 		{
 			List<string[]> list = new List<string[]>();
-			(string name, string desc) = ExcelAddIn1.AllItemList.FindSerialNumber("MCDALDF", ref list);
-			Debug.WriteLine($"Name: {name}, Desc: {desc}");
+			string name = AllItemList.FindSerialNumber("MCDALDF", ref list);
+			Debug.WriteLine($"Name: {name}");
 			Assert.AreEqual(name, "");
-			Assert.AreEqual(desc, "");
 		}
 	}
 }

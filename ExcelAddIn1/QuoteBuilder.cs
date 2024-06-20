@@ -18,11 +18,11 @@ namespace ExcelAddIn1
 		/// <remarks>Must be on quote sheet, does not work with price breaks</remarks>
 		public static void Create()
 		{
-			QuoteSheet oldSheet = new StandardQuoteSheet(Globals.ThisAddIn.Application.ActiveSheet);
+			QuoteSheet oldSheet = new StandardQuoteSheet24(Globals.ThisAddIn.Application.ActiveSheet);
 			
 			TrytoCopy(oldSheet.sheet);
 
-			QuoteSheet newSheet = new StandardQuoteSheet(Globals.ThisAddIn.Application.ActiveSheet);
+			QuoteSheet newSheet = new StandardQuoteSheet24(Globals.ThisAddIn.Application.ActiveSheet);
 
 			newSheet.DeleteButtons(); // Button 2 won't work after copying since it redirects to RFQ sheet
 

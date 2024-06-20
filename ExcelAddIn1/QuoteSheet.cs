@@ -9,9 +9,6 @@ namespace QuoteSheetLibrary
 {
 	public abstract class QuoteSheet
 	{
-		protected int ITEMS_START_ROW = 22;
-		protected string QUOTE_STRING = "QUOTATION NO.";
-
 		public Excel.Worksheet sheet { get; set; }
 		public int lastRow { get; protected set; }
 		public class NotQuoteException : Exception
@@ -34,9 +31,12 @@ namespace QuoteSheetLibrary
 		}
 	}
 	
-	public class StandardQuoteSheet : QuoteSheet
+	public class StandardQuoteSheet24 : QuoteSheet
 	{
-		public StandardQuoteSheet(Excel.Worksheet sheet)
+        protected int ITEMS_START_ROW = 22;
+        protected string QUOTE_STRING = "QUOTATION NO.";
+
+        public StandardQuoteSheet24(Excel.Worksheet sheet)
 		{
 			if (IsNotQuote(sheet))
 			{

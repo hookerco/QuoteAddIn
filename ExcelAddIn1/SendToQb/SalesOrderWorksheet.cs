@@ -1,12 +1,11 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.Text.RegularExpressions;
 using Excel = Microsoft.Office.Interop.Excel;
 using Button = Microsoft.Office.Tools.Excel.Controls.Button;
 using Worksheet = Microsoft.Office.Tools.Excel.Worksheet;
 using QBRequestLibrary;
-using System.Diagnostics;
+using System.Windows.Forms;
 
 namespace ExcelAddIn1
 {
@@ -24,7 +23,7 @@ namespace ExcelAddIn1
 		private readonly Excel.Worksheet soSheet; // underlying Excel sheet
 		private Button closeButton; 
 		private Button sendButton;
-
+		private bool sent = false;
 		private static int _numberColumn = 1;
 		private static int _overrideColumn = 2;
 		private static int _descriptionColumn = 3;
@@ -37,7 +36,7 @@ namespace ExcelAddIn1
 
 			soSheet.Name = "Send Quote";
 			soSheet.Cells[1, 1] = customer;
-			soSheet.Cells[2, _numberColumn] = "Item";
+			soSheet.Cells[2, _numberColumn] = "Number";
 			soSheet.Cells[2, _descriptionColumn] = "Description";
 			soSheet.Cells[2, _quantityColumn] = "Quantity";
 			soSheet.Cells[2, _rateColumn] = "Rate";
@@ -54,8 +53,6 @@ namespace ExcelAddIn1
 		/// <param name="item">The SOSheetQuoteItem to add.</param>
 		private void AddItem(SOSheetQuoteItem item)
 		{
-			soSheet.Cells[nextRow, _numberColumn].Value = item.GetNumber();
-
 			soSheet.Cells[nextRow, _descriptionColumn].Value = item.GetDescription();
 
 			soSheet.Cells[nextRow, _quantityColumn].Value = item.GetQuantity();
@@ -176,6 +173,12 @@ namespace ExcelAddIn1
 
 		private void Send()
 		{
+			if (sent)
+			{
+				MessageBox.Show("SalesOrder already sent. Please close and reopen the sheet to send again.");
+				return;
+			}
+
 			List<SOSheetQuoteItem> salesOrderList = ListOfItems();
 
 			List<string[]> allItemList = new List<string[]>();
@@ -183,12 +186,11 @@ namespace ExcelAddIn1
 
 			AddUnknownItemsToQB(salesOrderList, allItemList);
 
-			string message = "";
-			foreach (SOSheetQuoteItem item in salesOrderList)
-			{
-				message += $"{item.GetNumber()}: {item.GetDescription()}\n\n";
-			}
-			System.Windows.Forms.MessageBox.Show(message);
+			MarkNumbersOnSheet(salesOrderList);
+
+			SendRequest.SendSalesOrder(salesOrderList, soSheet.Cells[1, 1].Text);
+
+			sent = true;
 		}
 
 		
@@ -248,18 +250,23 @@ namespace ExcelAddIn1
 				{
 					string QuotePartNum = FindPNinDescription(item.GetDescription());
 
-					if (CheckIfExists(ref item, QuotePartNum, ref allItemList)) {
+					if (CheckIfExists(ref item, QuotePartNum, ref allItemList)) 
+					{
 						continue;
 					}
 
-					GetCorrectItemNumber(ref item, QuotePartNum, generator);
-					newItems.Add((item.GetNumber(), item.GetDescription()));
+					bool isDieSet = GetCorrectItemNumber(ref item, QuotePartNum, generator);
+
+					if (!isDieSet)
+					{
+						newItems.Add((item.GetNumber(), item.GetDescription()));
+					}
 				}
 			}
 
 			if (newItems.Count > 0)
 			{
-				//addedList = SendRequest.AddItems(newItems);
+				newItems = SendRequest.AddItems(newItems);
 			}
 
 			ChangeToAdded(newItems, allItemList);
@@ -297,18 +304,25 @@ namespace ExcelAddIn1
 			return false;
 		}
 
-		private void GetCorrectItemNumber(ref SOSheetQuoteItem item, string QuotePartNum, NumberGenerator numberGenerator)
+		/// <summary>
+		/// Gives the items the correct item number. Returns true if DieSetItem, false if generated number.
+		/// </summary>
+		/// <param name="item"></param>
+		/// <param name="QuotePartNum"></param>
+		/// <param name="numberGenerator"></param>
+		/// <returns></returns>
+		private bool GetCorrectItemNumber(ref SOSheetQuoteItem item, string QuotePartNum, NumberGenerator numberGenerator)
 		{
 
 
 			if (item.GetNumber() == "") // if new item isn't in allItemList from QB
 			{
 				item.SetNumber(DieSetItem.GetPartNum(QuotePartNum)); // if item is die set item, should be in quickbooks as a variable item
-			}
 
-			if (item.GetNumber() == "")
-			{
-				item.SetNumber(DieSetItem.GetPartNum(QuotePartNum));
+				if (item.GetNumber() != "")
+                {
+                    return true;
+                }
 			}
 
 			if (item.GetNumber() == "")
@@ -316,6 +330,7 @@ namespace ExcelAddIn1
 				item.SetNumber(numberGenerator.Generate());
 			}
 
+			return false;
 		}
 
 		// iterate through items in soSheet, change isNew to F if in the "addedItems" salesOrderList
@@ -330,9 +345,17 @@ namespace ExcelAddIn1
 			}
 		}
 
+		private void MarkNumbersOnSheet(List<SOSheetQuoteItem> itemList)
+		{
+			for (int i = 0; i < itemList.Count; ++i)
+            {
+                soSheet.Cells[itemList[i].Row, _numberColumn].Value = itemList[i].GetNumber();
+            }
+		}
+
 		private static class SendRequest
 		{
-			public static List<(string, string)> AddItems(List<(string, string)> items)
+			internal static List<(string, string)> AddItems(List<(string, string)> items)
 			{
 				// Convert format from salesOrderList to NonInvItem List
 				List<NonInvItem> list = new List<NonInvItem>();
@@ -353,21 +376,68 @@ namespace ExcelAddIn1
 				// if item was succesfully added, return it in the salesOrderList. (So it can be changed from "isNew" = Y)
 				List<(string, string)> addedList = new List<(string, string)>();
 				int item_idx = 0;
+
+				bool success = true;
 				foreach (StatusResponse status in rs)
 				{
 					if (status._code == 0)
 					{
 						addedList.Add((list[item_idx].Name, list[item_idx].Desc));
 					}
+					else                     {
+                        success = false;
+                    }	
 
 					item_idx++;
 				}
 
+				if (!success)
+                {
+                    throw new Exception("Error adding items to QuickBooks");
+                }
+
 				return addedList;
 			}
-		}
 
-		private class SOSheetQuoteItem : IQuoteItem
+            internal static int SendSalesOrder(List<SOSheetQuoteItem> items, string customer)
+            {
+                SalesOrderRequest rq = new SalesOrderRequest(QuoteItemToSalesOrder(items, customer));
+                rq.Connect();
+                StatusResponse rs = rq.Send();
+                rq.Disconnect();
+
+                if (rs._code != 0)
+                {
+                    throw new Exception("Error sending sales order to QuickBooks");
+                }
+
+                return 0;
+            }
+
+            private static SalesOrder QuoteItemToSalesOrder(List<SOSheetQuoteItem> items, string customer)
+            {
+                List<NonInvItem> nonInvList = new List<NonInvItem>();
+
+                foreach (SOSheetQuoteItem item in items)
+                {
+                    NonInvItem soItem = new NonInvItem();
+
+                    soItem.AccountName = "Sales Income";
+                    soItem.Name = item.GetNumber();
+                    soItem.Desc = item.GetDescription();
+                    soItem.Quantity = item.GetQuantity();
+                    soItem.Rate = item.GetRate();
+
+                    nonInvList.Add(soItem);
+                }
+
+                SalesOrder order = new SalesOrder(customer, nonInvList);
+
+                return order;
+            }
+        }
+
+		internal class SOSheetQuoteItem : IQuoteItem
 		{
 			IQuoteItem internalQuote;
 			string _override;
@@ -399,7 +469,7 @@ namespace ExcelAddIn1
 
 	internal class NumberGenerator
 	{
-		readonly SortedSet<int> sortedList = new SortedSet<int>();
+		private readonly SortedSet<int> sortedList = new SortedSet<int>();
 
 		internal NumberGenerator(List<string[]> itemList)
 		{

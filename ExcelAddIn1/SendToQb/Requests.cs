@@ -20,8 +20,8 @@ namespace ExcelAddIn1
 		 */
 		internal static string QueryCustomer(Connection conn, string name)
 		{
-
 			IMsgSetRequest requestMsgSet = conn.sessionManager.CreateMsgSetRequest("US", 14, 0);
+
 			requestMsgSet.Attributes.OnError = ENRqOnError.roeContinue;
 
 			QBSessionManager sessionManager = conn.sessionManager;

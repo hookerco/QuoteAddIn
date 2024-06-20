@@ -2,6 +2,7 @@
 using QBRequestLibrary;
 using System;
 using System.Collections.Generic;
+using System.Text.RegularExpressions;
 using static System.Windows.Forms.VisualStyles.VisualStyleElement;
 
 namespace ExcelAddIn1
@@ -138,7 +139,7 @@ namespace ExcelAddIn1
 
 			for (int i = 0; i < AllItemList.Count; ++i)
 			{
-				if (AllItemList[i][1].Contains(part))
+				if (AllItemList[i][1].Contains(part) && IsOurPartNum(part))
 				{
 
 					found = true;
@@ -160,7 +161,7 @@ namespace ExcelAddIn1
 
 			for (int i = 0; i < AllItemList.Count; ++i)
 			{
-				if (AllItemList[i][0] == part)
+				if (AllItemList[i][0] == part && IsOurPartNum(part))
 				{
 
 					found = true;
@@ -171,6 +172,21 @@ namespace ExcelAddIn1
 			}
 
 			return foundNum;
+		}
+
+		static public bool IsOurPartNum(string part)
+		{
+			Regex rgx = new Regex(@"^(?:\d-)?\d+$"); // if 1 or 2-dash number or just plain number. 
+			if (rgx.IsMatch(part))
+            {
+                return true;
+            }
+            if (part.ToLower().Contains("spec"))
+            {
+                return true;
+            }
+
+			return false;
 		}
 	}
 }

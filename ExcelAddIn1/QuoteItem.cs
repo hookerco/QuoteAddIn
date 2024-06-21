@@ -6,7 +6,7 @@ using System.Threading.Tasks;
 
 namespace ExcelAddIn1
 {
-	internal interface IQuoteItem
+	public interface IQuoteItem
 	{
 		string GetNumber();
 		void SetNumber(string value);
@@ -18,7 +18,7 @@ namespace ExcelAddIn1
 		void SetQuantity(int value);
 	}
 
-	internal interface IQuote
+	public interface IQuote
 	{
 		string GetQuoteNumber();
 		void SetQuoteNumber(int value);

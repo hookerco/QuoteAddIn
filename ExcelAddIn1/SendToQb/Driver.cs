@@ -7,6 +7,7 @@ using System.Windows.Forms;
 using Microsoft.Office.Tools.Excel;
 using Excel = Microsoft.Office.Interop.Excel;
 using QBRequestLibrary;
+using System.Text.RegularExpressions;
 
 namespace ExcelAddIn1
 {
@@ -21,10 +22,13 @@ namespace ExcelAddIn1
 			{
 				Connection conn = SetConnection();
 
-				string customer = "00000";
+				Regex rgx = new Regex(@"- (?<customer>.+)$");
+				Match mtch = rgx.Match(worksheet.Range["B11"].Text);
+				string customer = mtch.Groups["customer"].Value;
+
 				try
 				{
-					customer = Requests.QueryCustomer(conn, "12209");
+					customer = Requests.QueryCustomer(conn, customer);
 				}
 				catch
 				{

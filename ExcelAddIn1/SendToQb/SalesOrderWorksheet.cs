@@ -6,6 +6,7 @@ using Button = Microsoft.Office.Tools.Excel.Controls.Button;
 using Worksheet = Microsoft.Office.Tools.Excel.Worksheet;
 using QBRequestLibrary;
 using System.Windows.Forms;
+using Microsoft.Office.Interop.Excel;
 
 namespace ExcelAddIn1
 {
@@ -17,8 +18,8 @@ namespace ExcelAddIn1
 	// Represents the little sheet that pops up after pressing "Prepare for Sales Order"
 	internal class SalesOrderWorksheet
 	{
-		private int firstRow; // first row of items
-		private int nextRow; // next unused row
+		private int firstRow = 3; // first row of items
+		private int nextRow = 3; // next unused row
 		private readonly Excel.Worksheet oldSheet; // sheet that we're reading from
 		private readonly Excel.Worksheet soSheet; // underlying Excel sheet
 		private Button closeButton; 
@@ -34,25 +35,31 @@ namespace ExcelAddIn1
 		{
 			soSheet = oldSheet.Application.Worksheets.Add() as Excel.Worksheet;
 
+			// To ensure I can lock cells when needed
+			soSheet.Cells.Locked = false;
+
 			soSheet.Name = "Send Quote";
 			soSheet.Cells[1, 1] = customer;
+			soSheet.Cells[1, 1].Locked = true;
 			soSheet.Cells[2, _numberColumn] = "Number";
 			soSheet.Cells[2, _descriptionColumn] = "Description";
 			soSheet.Cells[2, _quantityColumn] = "Quantity";
 			soSheet.Cells[2, _rateColumn] = "Rate";
 			soSheet.Cells[2, _overrideColumn] = "# Override";
 
-			nextRow = 3;
-			firstRow = 3;
+
 			this.oldSheet = oldSheet;
 		}
 
-		/// <summary>
-		/// Add an item to a row of the sheet.
-		/// </summary>
-		/// <param name="item">The SOSheetQuoteItem to add.</param>
-		private void AddItem(SOSheetQuoteItem item)
+        /// <summary>
+        /// Add an item to the next row of the SalesOrderSheet. Modifies <c>nextRow</c>
+        /// </summary>
+        /// <param name="item">The SOSheetQuoteItem to add.</param>
+        private void AddItem(SOSheetQuoteItem item)
 		{
+			Excel.Range numRange = soSheet.Cells[nextRow, _numberColumn];
+			numRange.Locked = true;
+
 			soSheet.Cells[nextRow, _descriptionColumn].Value = item.GetDescription();
 
 			soSheet.Cells[nextRow, _quantityColumn].Value = item.GetQuantity();
@@ -115,6 +122,8 @@ namespace ExcelAddIn1
 			}
 
 			AddButtons();
+
+			soSheet.Protect();
 		}
 
 		// Input is string, will find part number. Part number is the text before first comma.
@@ -131,10 +140,8 @@ namespace ExcelAddIn1
 
 		internal void AddButtons()
 		{
-			soSheet.Cells[nextRow++, 1].Value = "End Items";
 			AddCloseButton();
 			AddSendButton();
-			nextRow--; // decrement so that nextRow goes back to the "End Items" line
 		}
 
 		internal void AddCloseButton()
@@ -173,35 +180,40 @@ namespace ExcelAddIn1
 
 		private void Send()
 		{
+			soSheet.Unprotect();
+
 			if (sent)
 			{
 				MessageBox.Show("SalesOrder already sent. Please close and reopen the sheet to send again.");
 				return;
 			}
 
-			List<SOSheetQuoteItem> salesOrderList = ListOfItems();
+			List<SOSheetQuoteItem> salesOrderList = GetItemsOnSheet();
 
-			List<string[]> allItemList = new List<string[]>();
-			AllItemList.QueryItems(allItemList);
+			AllItemList allItemList = new AllItemList();
+			allItemList.QueryItems();
 
 			AddUnknownItemsToQB(salesOrderList, allItemList);
 
 			MarkNumbersOnSheet(salesOrderList);
 
-			SendRequest.SendSalesOrder(salesOrderList, soSheet.Cells[1, 1].Text);
+			//SendRequest.SendSalesOrder(salesOrderList, soSheet.Cells[1, 1].Text);
 
 			sent = true;
+
+			soSheet.Cells.Locked = true;
+			soSheet.Protect();
 		}
 
 		
-		private List<SOSheetQuoteItem> ListOfItems()
+		private List<SOSheetQuoteItem> GetItemsOnSheet()
 		{ 
 			List<SOSheetQuoteItem> itemList = new List<SOSheetQuoteItem>();
 
 			for (int i = firstRow; i < nextRow; i++)
 			{
-				string overrideNum = soSheet.Cells[i, _overrideColumn].Value;
-				string description = soSheet.Cells[i, _descriptionColumn].Value;
+				string overrideNum = soSheet.Cells[i, _overrideColumn].Text;
+				string description = soSheet.Cells[i, _descriptionColumn].Text;
 				int quantity = (int)soSheet.Cells[i, _quantityColumn].Value; // cast to int bc excel only uses doubles
 				double rate = soSheet.Cells[i, _rateColumn].Value;
 
@@ -224,7 +236,7 @@ namespace ExcelAddIn1
 		/// </summary>
 		/// <param name="salesOrderItems"></param>
 		/// <param name="allItemList"></param>
-		private void AddUnknownItemsToQB(List<SOSheetQuoteItem> salesOrderItems, List<string[]> allItemList)
+		private void AddUnknownItemsToQB(List<SOSheetQuoteItem> salesOrderItems, AllItemList allItemList)
 		{
 			List<(string, string)> newItems = new List<(string, string)>();
 			NumberGenerator generator = new NumberGenerator(allItemList);
@@ -278,9 +290,9 @@ namespace ExcelAddIn1
 		/// <param name="item">SOSheetQuoteItem of item to check</param>
 		/// <param name="allItemList"></param>
 		/// <returns>a bool that indicates whether the item's override number is in allItemsList</returns>
-		private bool CheckOverride(ref SOSheetQuoteItem item, ref List<string[]> allItemList)
+		private bool CheckOverride(ref SOSheetQuoteItem item, ref AllItemList allItemList)
 		{
-			string number = AllItemList.FindSerialNumber(item.GetOverride(), ref allItemList);
+			string number = allItemList.FindSerialNumber(item.GetOverride());
 			item.SetNumber(item.GetOverride());
 			return number == "" ? false : true;
 		}
@@ -292,9 +304,9 @@ namespace ExcelAddIn1
 		/// </summary>
 		/// <param name="item">The SOSheetQuoteItem to check</param>
 		/// <param name="allItemList">The list of all items</param>
-		private bool CheckIfExists(ref SOSheetQuoteItem item, string QuotePartNum, ref List<string[]> allItemList)
+		private bool CheckIfExists(ref SOSheetQuoteItem item, string QuotePartNum, ref AllItemList allItemList)
 		{
-			item.SetNumber(AllItemList.FindMPN(QuotePartNum, ref allItemList));
+			item.SetNumber(allItemList.FindMPN(QuotePartNum));
 
 			if (item.GetNumber() != "") // if new item isn't in allItemList from QB
 			{
@@ -334,13 +346,13 @@ namespace ExcelAddIn1
 		}
 
 		// iterate through items in soSheet, change isNew to F if in the "addedItems" salesOrderList
-		private void ChangeToAdded(List<(string, string)> addedItems, List<string[]> allItemList)
+		private void ChangeToAdded(List<(string, string)> addedItems, AllItemList allItemList)
 		{
 			foreach ((string num, string desc) in addedItems)
 			{
-				string[] newItem = new string[2];
-				newItem[0] = num;
-				newItem[1] = desc;
+				BaseQuoteItem newItem = new BaseQuoteItem();
+				newItem.SetNumber(num);
+				newItem.SetDescription(desc);
 				allItemList.Add(newItem);
 			}
 		}
@@ -469,39 +481,28 @@ namespace ExcelAddIn1
 
 	internal class NumberGenerator
 	{
-		private readonly SortedSet<int> sortedList = new SortedSet<int>();
+		private readonly SortedSet<int> sortedNumberSet = new SortedSet<int>();
 
-		internal NumberGenerator(List<string[]> itemList)
+		internal NumberGenerator(AllItemList itemList)
 		{
-			foreach (string[] item in itemList)
-			{
-				string partNumString = item[0];
-				string pattern = @"^1-(?<number>\d+).*?";
-				Match match = Regex.Match(partNumString, pattern);
 
-				if (match.Success)
-				{
-					partNumString = match.Groups["number"].Value;
-					int partNum = int.Parse(partNumString);
-					sortedList.Add(partNum);
-				}
-			}
+			itemList.GetNumberSet(ref sortedNumberSet);
 		}
 
 		internal string Generate()
 		{
 			int count = 0;
-			foreach (int partNum in sortedList)
+			foreach (int partNum in sortedNumberSet)
 			{
 				if (count != partNum)
 				{
-					sortedList.Add(count);
+					sortedNumberSet.Add(count);
 					return "1-" + count.ToString("D4");
 				}
 				count++;
 			}
-			sortedList.Add(sortedList.Count);
-			return "1-" + sortedList.Count.ToString("D4");
+			sortedNumberSet.Add(sortedNumberSet.Count);
+			return "1-" + sortedNumberSet.Count.ToString("D4");
 		}
 	}
 

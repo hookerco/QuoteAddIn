@@ -1,18 +1,27 @@
 ﻿using Interop.QBFC14;
 using QBRequestLibrary;
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Text.RegularExpressions;
+using System.Windows.Forms.VisualStyles;
 using static System.Windows.Forms.VisualStyles.VisualStyleElement;
 
 namespace ExcelAddIn1
 {
-	public static class AllItemList
+	public class AllItemList
 	{
+		private List<IQuoteItem> itemList = new List<IQuoteItem>();
+
+		public void Add(IQuoteItem item)
+		{
+			itemList.Add(item);
+		}
+
 		/**
 		 * <summary>This method queries QuickBooks for the items list</summary>
 		 */
-		public static bool QueryItems(List<string[]> ItemList)
+		public bool QueryItems()
 		{
 			Connection conn = new Connection();
 
@@ -37,7 +46,7 @@ namespace ExcelAddIn1
 				//Send the request and get the response from QuickBooks
 				IMsgSetResponse responseMsgSet = sessionManager.DoRequests(requestMsgSet);
 
-				WalkItemQueryRs(responseMsgSet, ItemList);
+				WalkItemQueryRs(responseMsgSet, itemList);
 
 				conn.Close();
 
@@ -55,7 +64,7 @@ namespace ExcelAddIn1
 		/**
 		 * <summary>This method ensures the response is valid</summary>
 		 */
-		private static void WalkItemQueryRs(IMsgSetResponse responseMsgSet, List<string[]> ItemList)
+		private static void WalkItemQueryRs(IMsgSetResponse responseMsgSet, List<IQuoteItem> ItemList)
 		{
 
 			if (responseMsgSet == null) return;
@@ -88,7 +97,7 @@ namespace ExcelAddIn1
 		 * <summary>This method adds each item and description to <see cref="Items"/></summary>
 		 * <remarks>Modifies <see cref="Items"/></remarks>
 		 */
-		static private void PopulateItemList(IItemNonInventoryRetList ItemRetList, List<string[]> ItemList)
+		static private void PopulateItemList(IItemNonInventoryRetList ItemRetList, List<IQuoteItem> ItemList)
 		{
 			if (ItemRetList == null) return;
 
@@ -98,9 +107,9 @@ namespace ExcelAddIn1
 
 				// Some items are SalesOrPurchase, some are SalesAndPurchase? Try catch wouldn't fix it
 				// Adds non-inventory items' names and descriptions to memory (this.items)
-				string[] itemN = new string[2];
-				itemN[0] = ItemRet.Name.GetValue();
-				itemN[1] = "";
+				BaseQuoteItem itemN = new BaseQuoteItem();
+				itemN.SetNumber(ItemRet.Name.GetValue());
+				itemN.SetDescription("");
 
 
 
@@ -108,7 +117,7 @@ namespace ExcelAddIn1
 				{
 					if (ItemRet.ORSalesPurchase.SalesOrPurchase.Desc != null)
 					{
-						itemN[1] = ItemRet.ORSalesPurchase.SalesOrPurchase.Desc.GetValue();
+                        itemN.SetDescription(ItemRet.ORSalesPurchase.SalesOrPurchase.Desc.GetValue());
 					}
 
 				}
@@ -116,7 +125,7 @@ namespace ExcelAddIn1
 				{
 					if (ItemRet.ORSalesPurchase.SalesAndPurchase.SalesDesc != null)
 					{
-						itemN[1] = ItemRet.ORSalesPurchase.SalesAndPurchase.SalesDesc.GetValue();
+						itemN.SetDescription(ItemRet.ORSalesPurchase.SalesAndPurchase.SalesDesc.GetValue());
 					}
 				}
 
@@ -131,20 +140,19 @@ namespace ExcelAddIn1
 		 * <param name="part">BTI part number to be searched</param>
 		 * <returns>First instance of the string in format of [name, description]</returns>
 		 */
-		static public string FindMPN(string part, ref List<string[]> AllItemList)
+		public string FindMPN(string part)
 		{
 			string foundNum = ""; // Part number (serial)
 			string foundDesc = ""; // Description
 			bool found = false;
 
-			for (int i = 0; i < AllItemList.Count; ++i)
+			for (int i = 0; i < itemList.Count; ++i)
 			{
-				if (AllItemList[i][1].Contains(part) && IsOurPartNum(part))
+				if (itemList[i].GetDescription().Contains(part) && IsOurPartNum(itemList[i].GetNumber()))
 				{
-
 					found = true;
-					foundNum = AllItemList[i][0];
-					foundDesc = AllItemList[i][1];
+					foundNum = itemList[i].GetNumber();
+					foundDesc = itemList[i].GetDescription();
 				}
 				if (found == true) break;
 			}
@@ -153,20 +161,19 @@ namespace ExcelAddIn1
 		}
 
 		// same as above but with Serialized number
-		static public string FindSerialNumber(string part, ref List<string[]> AllItemList)
+		public string FindSerialNumber(string part)
 		{
 			string foundNum = ""; // Part number (serial)
 			string foundDesc = ""; // Description
 			bool found = false;
 
-			for (int i = 0; i < AllItemList.Count; ++i)
+			for (int i = 0; i < itemList.Count; ++i)
 			{
-				if (AllItemList[i][0] == part && IsOurPartNum(part))
+				if (itemList[i].GetNumber() == part && IsOurPartNum(part))
 				{
-
 					found = true;
-					foundNum = AllItemList[i][0];
-					foundDesc = AllItemList[i][1];
+					foundNum = itemList[i].GetNumber();
+					foundDesc = itemList[i].GetDescription();
 				}
 				if (found == true) break;
 			}
@@ -174,7 +181,7 @@ namespace ExcelAddIn1
 			return foundNum;
 		}
 
-		static public bool IsOurPartNum(string part)
+		private bool IsOurPartNum(string part)
 		{
 			Regex rgx = new Regex(@"^(?:\d-)?\d+$"); // if 1 or 2-dash number or just plain number. 
 			if (rgx.IsMatch(part))
@@ -187,6 +194,23 @@ namespace ExcelAddIn1
             }
 
 			return false;
+		}
+
+		internal void GetNumberSet(ref SortedSet<int> sortedNumberSet)
+		{
+			foreach (IQuoteItem item in itemList)
+			{
+				string partNumString = item.GetNumber();
+				string pattern = @"^1-(?<number>\d+).*?";
+				Match match = Regex.Match(partNumString, pattern);
+
+				if (match.Success)
+				{
+					partNumString = match.Groups["number"].Value;
+					int partNum = int.Parse(partNumString);
+					sortedNumberSet.Add(partNum);
+				}
+			}
 		}
 	}
 }

@@ -197,7 +197,7 @@ namespace ExcelAddIn1
 
 			MarkNumbersOnSheet(salesOrderList);
 
-			//SendRequest.SendSalesOrder(salesOrderList, soSheet.Cells[1, 1].Text);
+			SendRequest.SendSalesOrder(salesOrderList, soSheet.Cells[1, 1].Text);
 
 			sent = true;
 

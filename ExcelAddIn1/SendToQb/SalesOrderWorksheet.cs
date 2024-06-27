@@ -6,7 +6,6 @@ using Button = Microsoft.Office.Tools.Excel.Controls.Button;
 using Worksheet = Microsoft.Office.Tools.Excel.Worksheet;
 using QBRequestLibrary;
 using System.Windows.Forms;
-using Microsoft.Office.Interop.Excel;
 
 namespace ExcelAddIn1
 {
@@ -70,7 +69,7 @@ namespace ExcelAddIn1
 		}
 
 
-		private bool IsValidItem(Excel.Worksheet sheet, int row)
+		private bool IsValidItem(int row)
 		{
 
 			// like #1 or #234
@@ -94,12 +93,12 @@ namespace ExcelAddIn1
 		internal void ConvertSheet()
 		{
 			soSheet.Columns[1].NumberFormat = "@";
-			int row = 22;
+			int row = 15;
 			string rowNumber = oldSheet.Cells[row, 1].Text;
 
 			while (!rowNumber.StartsWith("Total"))
 			{
-				if (IsValidItem(oldSheet, row))
+				if (IsValidItem(row))
 				{
 					try
 					{
@@ -146,10 +145,11 @@ namespace ExcelAddIn1
 
 		internal void AddCloseButton()
 		{
-			closeButton = new Button();
-
-			closeButton.Text = "Close";
-			closeButton.Click += (sender, e) =>
+			closeButton = new Button
+			{
+				Text = "Close"
+			};
+            closeButton.Click += (sender, e) =>
 			{
 				Globals.ThisAddIn.Application.DisplayAlerts = false;
 				soSheet.Delete();
@@ -164,10 +164,11 @@ namespace ExcelAddIn1
 
 		internal void AddSendButton()
 		{
-			sendButton = new Button();
-
-			sendButton.Text = "Send";
-			sendButton.Click += (sender, e) =>
+            sendButton = new Button
+            {
+                Text = "Send"
+            };
+            sendButton.Click += (sender, e) =>
 			{
 				Send();
 			};
@@ -181,6 +182,13 @@ namespace ExcelAddIn1
 		private void Send()
 		{
 			soSheet.Unprotect();
+			string customer = soSheet.Cells[1, 1].Text;
+
+            if (customer == "" || customer == "Customer not found")
+			{
+				MessageBox.Show("Please enter customer name from QuickBooks in cell A1");
+				return;
+			}
 
 			if (sent)
 			{
@@ -197,7 +205,7 @@ namespace ExcelAddIn1
 
 			MarkNumbersOnSheet(salesOrderList);
 
-			SendRequest.SendSalesOrder(salesOrderList, soSheet.Cells[1, 1].Text);
+			SendRequest.SendSalesOrder(salesOrderList, customer);
 
 			sent = true;
 
@@ -245,7 +253,6 @@ namespace ExcelAddIn1
 			{
 				SOSheetQuoteItem item = salesOrderItems[i];
 				string overrideNum = item.GetOverride();
-				string desc = item.GetDescription();
 
 				// if overridden, check if it's in allItemList
 				// if it isn't, add it to newItems
@@ -272,16 +279,15 @@ namespace ExcelAddIn1
 					if (!isDieSet)
 					{
 						newItems.Add((item.GetNumber(), item.GetDescription()));
+						allItemList.Add(item);
 					}
 				}
 			}
 
 			if (newItems.Count > 0)
 			{
-				newItems = SendRequest.AddItems(newItems);
+				SendRequest.AddItems(newItems);
 			}
-
-			ChangeToAdded(newItems, allItemList);
 		}
 
 		/// <summary>
@@ -294,7 +300,7 @@ namespace ExcelAddIn1
 		{
 			string number = allItemList.FindSerialNumber(item.GetOverride());
 			item.SetNumber(item.GetOverride());
-			return number == "" ? false : true;
+			return number != "";
 		}
 
 
@@ -346,15 +352,13 @@ namespace ExcelAddIn1
 		}
 
 		// iterate through items in soSheet, change isNew to F if in the "addedItems" salesOrderList
-		private void ChangeToAdded(List<(string, string)> addedItems, AllItemList allItemList)
+		private void ChangeToAdded(string num, string desc, AllItemList allItemList)
 		{
-			foreach ((string num, string desc) in addedItems)
-			{
-				BaseQuoteItem newItem = new BaseQuoteItem();
-				newItem.SetNumber(num);
-				newItem.SetDescription(desc);
-				allItemList.Add(newItem);
-			}
+			BaseQuoteItem newItem = new BaseQuoteItem();
+			newItem.SetNumber(num);
+			newItem.SetDescription(desc);
+			allItemList.Add(newItem);
+			
 		}
 
 		private void MarkNumbersOnSheet(List<SOSheetQuoteItem> itemList)
@@ -373,17 +377,17 @@ namespace ExcelAddIn1
 				List<NonInvItem> list = new List<NonInvItem>();
 				foreach ((string num, string desc) in items)
 				{
-					NonInvItem item = new NonInvItem();
-					item.Name = num;
-					item.Desc = desc;
-					item.AccountName = "Sales Income";
-					list.Add(item);
+                    NonInvItem item = new NonInvItem
+                    {
+                        Name = num,
+                        Desc = desc,
+                        AccountName = "Sales Income"
+                    };
+                    list.Add(item);
 				}
 
 				AddItemNonInventoryRequest rq = new AddItemNonInventoryRequest(list);
-				rq.Connect();
-				List<StatusResponse> rs = rq.Send();
-				rq.Disconnect();
+				List<StatusResponse> rs = rq.SendRequest();
 
 				// if item was succesfully added, return it in the salesOrderList. (So it can be changed from "isNew" = Y)
 				List<(string, string)> addedList = new List<(string, string)>();
@@ -414,9 +418,7 @@ namespace ExcelAddIn1
             internal static int SendSalesOrder(List<SOSheetQuoteItem> items, string customer)
             {
                 SalesOrderRequest rq = new SalesOrderRequest(QuoteItemToSalesOrder(items, customer));
-                rq.Connect();
-                StatusResponse rs = rq.Send();
-                rq.Disconnect();
+                StatusResponse rs = rq.SendRequest();
 
                 if (rs._code != 0)
                 {
@@ -432,13 +434,14 @@ namespace ExcelAddIn1
 
                 foreach (SOSheetQuoteItem item in items)
                 {
-                    NonInvItem soItem = new NonInvItem();
-
-                    soItem.AccountName = "Sales Income";
-                    soItem.Name = item.GetNumber();
-                    soItem.Desc = item.GetDescription();
-                    soItem.Quantity = item.GetQuantity();
-                    soItem.Rate = item.GetRate();
+                    NonInvItem soItem = new NonInvItem
+                    {
+                        AccountName = "Sales Income",
+                        Name = item.GetNumber(),
+                        Desc = item.GetDescription(),
+                        Quantity = item.GetQuantity(),
+                        Rate = item.GetRate()
+                    };
 
                     nonInvList.Add(soItem);
                 }
@@ -502,13 +505,14 @@ namespace ExcelAddIn1
 				count++;
 			}
 			sortedNumberSet.Add(sortedNumberSet.Count);
-			return "1-" + sortedNumberSet.Count.ToString("D4");
+
+			string num = "1-" + sortedNumberSet.Count.ToString("D4");
+            return num;
 		}
 	}
 
 	public class DieSetItem
 	{
-		DieSetItemType type;
 		string QBNum;
 
 
@@ -516,31 +520,26 @@ namespace ExcelAddIn1
 		{
 			if (partNum.StartsWith("BB/"))
 			{
-				type = DieSetItemType.BB;
 				QBNum = "1-4501";
 			}
 
 			else if (partNum.StartsWith("CI/"))
 			{
-				type = DieSetItemType.CI;
 				QBNum = "1-4502";
 			}
 
 			else if (partNum.StartsWith("CD")) // CD or CDX
 			{
-				type = DieSetItemType.CD;
 				QBNum = "1-4503";
 			}
 
 			else if (partNum.StartsWith("PD")) // PD or PDX
 			{
-				type = DieSetItemType.PD;
 				QBNum = "1-4504";
 			}
 
 			else
 			{
-				type = DieSetItemType.NONE;
 				QBNum = "";
 			}
 		}
@@ -550,14 +549,5 @@ namespace ExcelAddIn1
 			DieSetItem item = new DieSetItem(partNumString);
 			return item.QBNum;
 		}
-	}
-
-	public enum DieSetItemType
-	{
-		BB,
-		CI,
-		CD,
-		PD,
-		NONE
 	}
 }

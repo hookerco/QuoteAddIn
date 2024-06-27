@@ -20,23 +20,20 @@ namespace ExcelAddIn1
 
 			if (worksheet.Range["C1"].Text == "BEND TOOLING INC.")
 			{
-				Connection conn = SetConnection();
-
-				Regex rgx = new Regex(@"- (?<customer>.+)$");
+				Regex rgx = new Regex(@"- (?<customer>\d\d\d\d\d)$");
 				Match mtch = rgx.Match(worksheet.Range["B11"].Text);
 				string customer = mtch.Groups["customer"].Value;
 
 				try
 				{
-					customer = Requests.QueryCustomer(conn, customer);
+					customer = Requests.QueryCustomer(customer);
 				}
-				catch
+				catch (Exception ex)
 				{
-					conn.Close();
-					MessageBox.Show("Could not complete QuickBooks request");
+					MessageBox.Show($"Could not find customer \"{customer}\" in QuickBooks or connect to quickbooks");
+					customer = "Customer not found";
 				}
 
-				conn.Close();
 				SalesOrderWorksheet sendSheet = new SalesOrderWorksheet(customer, worksheet);
 				sendSheet.ConvertSheet();
 			}
@@ -44,31 +41,6 @@ namespace ExcelAddIn1
 			{
 				MessageBox.Show("Please run when on a quote");
 			}
-			
 		}
-		
-		private static Connection SetConnection()
-		{
-			Connection conn = new Connection();
-
-			conn.File = "";
-			if (!Properties.Settings.Default.UseActiveQuickbook)
-			{
-				conn.File = Properties.Settings.Default.QuickbooksPath;
-			}
-
-			try
-			{
-				conn.Open();
-			}
-			catch (Exception)
-			{ // Cleanly close session and connection 
-				conn.Close();
-				return null;
-			}
-
-			return conn;
-		}
-
 	}
 }

@@ -181,36 +181,43 @@ namespace ExcelAddIn1
 
 		private void Send()
 		{
-			soSheet.Unprotect();
-			string customer = soSheet.Cells[1, 1].Text;
-
-            if (customer == "" || customer == "Customer not found")
+			try
 			{
-				MessageBox.Show("Please enter customer name from QuickBooks in cell A1");
-				return;
+				soSheet.Unprotect();
+				string customer = soSheet.Cells[1, 1].Text;
+
+				if (customer == "" || customer == "Customer not found")
+				{
+					MessageBox.Show("Please enter customer name from QuickBooks in cell A1");
+					return;
+				}
+
+				if (sent)
+				{
+					MessageBox.Show("SalesOrder already sent. Please close and reopen the sheet to send again.");
+					return;
+				}
+
+				List<SOSheetQuoteItem> salesOrderList = GetItemsOnSheet();
+
+				AllItemList allItemList = new AllItemList();
+				allItemList.QueryItems();
+
+				AddUnknownItemsToQB(salesOrderList, allItemList);
+
+				MarkNumbersOnSheet(salesOrderList);
+
+				SendRequest.SendSalesOrder(salesOrderList, customer);
+
+				sent = true;
+
+				soSheet.Cells.Locked = true;
+				soSheet.Protect();
 			}
-
-			if (sent)
-			{
-				MessageBox.Show("SalesOrder already sent. Please close and reopen the sheet to send again.");
-				return;
-			}
-
-			List<SOSheetQuoteItem> salesOrderList = GetItemsOnSheet();
-
-			AllItemList allItemList = new AllItemList();
-			allItemList.QueryItems();
-
-			AddUnknownItemsToQB(salesOrderList, allItemList);
-
-			MarkNumbersOnSheet(salesOrderList);
-
-			SendRequest.SendSalesOrder(salesOrderList, customer);
-
-			sent = true;
-
-			soSheet.Cells.Locked = true;
-			soSheet.Protect();
+			catch (Exception ex)
+            {
+                MessageBox.Show(ex.Message + "\n\n" + ex.StackTrace);
+            }
 		}
 
 		

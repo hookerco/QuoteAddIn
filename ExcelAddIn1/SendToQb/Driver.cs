@@ -30,12 +30,22 @@ namespace ExcelAddIn1
 				}
 				catch (Exception ex)
 				{
-					MessageBox.Show($"Could not find customer \"{customer}\" in QuickBooks or connect to quickbooks");
+					MessageBox.Show($"Could not find customer \"{customer}\" in QuickBooks or connect to quickbooks\n\n" +
+						ex.Message + "\n\n" + ex.StackTrace);
+					 
 					customer = "Customer not found";
 				}
 
-				SalesOrderWorksheet sendSheet = new SalesOrderWorksheet(customer, worksheet);
-				sendSheet.ConvertSheet();
+				try
+				{
+					SalesOrderWorksheet sendSheet = new SalesOrderWorksheet(customer, worksheet);
+					sendSheet.ConvertSheet();
+				}
+				catch (Exception ex)
+				{
+					MessageBox.Show(ex.Message + "\n\n" + ex.StackTrace);
+				}
+
 			}
 			else
 			{

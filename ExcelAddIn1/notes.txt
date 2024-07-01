@@ -1,2 +1,4 @@
-﻿6/5/2024:
-	- Cleaned up Regex where it finds a part number from the quotebook description.
+﻿Notes
+
+- Doesn't respond well when rate field is left empty (Q37927)
+- Can have error when incorrect customer name is entered in Salesorderworksheet, only puts new items in, doesn't create sales order

@@ -33,7 +33,7 @@
     <PublishUrl>Z:\COLTON TEST\QBUtility Beta Install\</PublishUrl>
     <InstallUrl />
     <TargetCulture>en</TargetCulture>
-    <ApplicationVersion>1.0.0.10</ApplicationVersion>
+    <ApplicationVersion>1.0.0.12</ApplicationVersion>
     <AutoIncrementApplicationRevision>true</AutoIncrementApplicationRevision>
     <UpdateEnabled>true</UpdateEnabled>
     <UpdateInterval>7</UpdateInterval>
@@ -242,6 +242,9 @@
   </ItemGroup>
   <ItemGroup>
     <None Include="BTIIncLogo.ico" />
+  </ItemGroup>
+  <ItemGroup>
+    <Content Include="notes.txt" />
   </ItemGroup>
   <PropertyGroup>
     <VisualStudioVersion Condition="'$(VisualStudioVersion)' == ''">10.0</VisualStudioVersion>

@@ -6,6 +6,7 @@ using Button = Microsoft.Office.Tools.Excel.Controls.Button;
 using Worksheet = Microsoft.Office.Tools.Excel.Worksheet;
 using QBRequestLibrary;
 using System.Windows.Forms;
+using Microsoft.Office.Core;
 
 namespace ExcelAddIn1
 {
@@ -17,8 +18,8 @@ namespace ExcelAddIn1
 	// Represents the little sheet that pops up after pressing "Prepare for Sales Order"
 	internal class SalesOrderWorksheet
 	{
-		private int firstRow = 3; // first row of items
-		private int nextRow = 3; // next unused row
+		private int firstRow = 5; // first row of items
+		private int nextRow = 5; // next unused row
 		private readonly Excel.Worksheet oldSheet; // sheet that we're reading from
 		private readonly Excel.Worksheet soSheet; // underlying Excel sheet
 		private Button closeButton; 
@@ -29,6 +30,10 @@ namespace ExcelAddIn1
 		private static int _descriptionColumn = 3;
 		private static int _quantityColumn = 4;
 		private static int _rateColumn = 5;
+		private static int _customerRow = 1;
+		private static int _PORow = 2;
+		private static int _dueDateRow = 3;
+		private static int _labelRow = 4;
 
 		internal SalesOrderWorksheet(string customer, Excel.Worksheet oldSheet)
 		{
@@ -38,13 +43,18 @@ namespace ExcelAddIn1
 			soSheet.Cells.Locked = false;
 
 			soSheet.Name = "Send Quote";
-			soSheet.Cells[1, 1] = customer;
-			soSheet.Cells[1, 1].Locked = true;
-			soSheet.Cells[2, _numberColumn] = "Number";
-			soSheet.Cells[2, _descriptionColumn] = "Description";
-			soSheet.Cells[2, _quantityColumn] = "Quantity";
-			soSheet.Cells[2, _rateColumn] = "Rate";
-			soSheet.Cells[2, _overrideColumn] = "# Override";
+			soSheet.Cells[_customerRow, 1] = customer;
+			soSheet.Cells[_customerRow, 1].Locked = true;
+			soSheet.Cells[_PORow, 1] = "Type customer PO# here";
+			soSheet.Cells[_PORow, 1].Locked = false;
+			soSheet.Cells[_dueDateRow, 1] = "Due Date";
+			soSheet.Cells[_dueDateRow, 1].Locked = false;
+
+			soSheet.Cells[_labelRow, _numberColumn] = "Number";
+			soSheet.Cells[_labelRow, _descriptionColumn] = "Description";
+			soSheet.Cells[_labelRow, _quantityColumn] = "Quantity";
+			soSheet.Cells[_labelRow, _rateColumn] = "Rate";
+			soSheet.Cells[_labelRow, _overrideColumn] = "# Override";
 
 
 			this.oldSheet = oldSheet;
@@ -96,6 +106,10 @@ namespace ExcelAddIn1
 			int row = 15;
 			string rowNumber = oldSheet.Cells[row, 1].Text;
 
+			string dueDate = calculateDueDate();
+			soSheet.Cells[_dueDateRow, 1] = dueDate;
+			soSheet.Cells[_dueDateRow, 1].Locked = true;
+
 			while (!rowNumber.StartsWith("Total"))
 			{
 				if (IsValidItem(row))
@@ -124,6 +138,44 @@ namespace ExcelAddIn1
 
 			soSheet.Protect();
 		}
+
+		private string calculateDueDate()
+		{
+			string dueDate = "";
+
+			int row = findLeadTimeRow();
+			Regex regex = new Regex(@"^Lead time: +\d-(?<LeadTimeWeeks>\d).*$");
+			string leadTime = oldSheet.Cells[row, 1].Text;
+			Match match = regex.Match(leadTime);
+			if (match.Success)
+            {
+                int weeks = int.Parse(match.Groups["LeadTimeWeeks"].Value);
+                DateTime dueDateDT = DateTime.Now.AddDays(weeks * 7);
+				dueDate = dueDateDT.ToString();
+            }
+			else
+			{
+				throw new Exception("Lead time not found");
+			}
+			return dueDate;
+		}
+
+		private int findLeadTimeRow()
+		{
+			int row = nextRow;
+			string title = oldSheet.Cells[row, 1].Text;
+			while (!title.StartsWith("Lead time:"))
+			{
+				++row;
+				title = oldSheet.Cells[row, 1].Text;
+				if (row > 100)
+                {
+                    throw new Exception("Lead Time not found"); // no unlimited loops
+                }
+			}
+
+			return row;
+        }
 
 		// Input is string, will find part number. Part number is the text before first comma.
 		internal static string FindPNinDescription(string desc)
@@ -185,6 +237,8 @@ namespace ExcelAddIn1
 			{
 				soSheet.Unprotect();
 				string customer = soSheet.Cells[1, 1].Text;
+				string po = soSheet.Cells[2, 1].Text;
+				DateTime dueDate = DateTime.Parse(soSheet.Cells[3, 1].Text);
 
 				if (customer == "" || customer == "Customer not found")
 				{
@@ -207,7 +261,7 @@ namespace ExcelAddIn1
 
 				MarkNumbersOnSheet(salesOrderList);
 
-				SendRequest.SendSalesOrder(salesOrderList, customer);
+				SendRequest.SendSalesOrder(salesOrderList, customer, po, dueDate);
 
 				sent = true;
 
@@ -422,9 +476,9 @@ namespace ExcelAddIn1
 				return addedList;
 			}
 
-            internal static int SendSalesOrder(List<SOSheetQuoteItem> items, string customer)
+            internal static int SendSalesOrder(List<SOSheetQuoteItem> items, string customer, string po, DateTime dueDate)
             {
-                SalesOrderRequest rq = new SalesOrderRequest(QuoteItemToSalesOrder(items, customer));
+                SalesOrderRequest rq = new SalesOrderRequest(QuoteItemToSalesOrder(items, customer, po, dueDate));
                 StatusResponse rs = rq.SendRequest();
 
                 if (rs._code != 0)
@@ -435,7 +489,7 @@ namespace ExcelAddIn1
                 return 0;
             }
 
-            private static SalesOrder QuoteItemToSalesOrder(List<SOSheetQuoteItem> items, string customer)
+            private static SalesOrder QuoteItemToSalesOrder(List<SOSheetQuoteItem> items, string customer, string po, DateTime dueDate)
             {
                 List<NonInvItem> nonInvList = new List<NonInvItem>();
 
@@ -453,7 +507,7 @@ namespace ExcelAddIn1
                     nonInvList.Add(soItem);
                 }
 
-                SalesOrder order = new SalesOrder(customer, nonInvList);
+                SalesOrder order = new SalesOrder(customer, po, dueDate, nonInvList);
 
                 return order;
             }

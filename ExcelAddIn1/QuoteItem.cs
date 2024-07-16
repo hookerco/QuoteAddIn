@@ -28,7 +28,7 @@ namespace ExcelAddIn1
 		void SetItems(List<IQuoteItem> value);
 	}
 
-	internal class BaseQuoteItem : IQuoteItem
+	public class BaseQuoteItem : IQuoteItem
 	{
 		protected string _number;
 		protected string _description;
@@ -44,4 +44,18 @@ namespace ExcelAddIn1
 		public int GetQuantity() => _quantity;
 		public void SetQuantity(int value) => _quantity = value;
 	}
+
+    public class BaseQuote : IQuote
+    {
+        private string _quoteNumber;
+        private string _customer;
+        private List<IQuoteItem> _items;
+
+        public string GetQuoteNumber() => _quoteNumber;
+        public void SetQuoteNumber(int value) => _quoteNumber = value.ToString();
+        public string GetCustomer() => _customer;
+        public void SetCustomer(string value) => _customer = value;
+        public List<IQuoteItem> GetItems() => _items;
+        public void SetItems(List<IQuoteItem> value) => _items = value;
+    }
 }

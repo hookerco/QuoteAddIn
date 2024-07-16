@@ -6,7 +6,6 @@ using Button = Microsoft.Office.Tools.Excel.Controls.Button;
 using Worksheet = Microsoft.Office.Tools.Excel.Worksheet;
 using QBRequestLibrary;
 using System.Windows.Forms;
-using Microsoft.Office.Core;
 
 namespace ExcelAddIn1
 {
@@ -106,7 +105,8 @@ namespace ExcelAddIn1
 			int row = 15;
 			string rowNumber = oldSheet.Cells[row, 1].Text;
 
-			string dueDate = calculateDueDate();
+			int weeks = findLeadTimeWeeks();
+			string dueDate = CalculateDueDate.calculateDueDate(weeks);
 			soSheet.Cells[_dueDateRow, 1] = dueDate;
 			soSheet.Cells[_dueDateRow, 1].Locked = true;
 
@@ -139,28 +139,7 @@ namespace ExcelAddIn1
 			soSheet.Protect();
 		}
 
-		private string calculateDueDate()
-		{
-			string dueDate = "";
-
-			int row = findLeadTimeRow();
-			Regex regex = new Regex(@"^Lead time: +\d-(?<LeadTimeWeeks>\d).*$");
-			string leadTime = oldSheet.Cells[row, 1].Text;
-			Match match = regex.Match(leadTime);
-			if (match.Success)
-            {
-                int weeks = int.Parse(match.Groups["LeadTimeWeeks"].Value);
-                DateTime dueDateDT = DateTime.Now.AddDays(weeks * 7);
-				dueDate = dueDateDT.ToString();
-            }
-			else
-			{
-				throw new Exception("Lead time not found");
-			}
-			return dueDate;
-		}
-
-		private int findLeadTimeRow()
+		private int findLeadTimeWeeks()
 		{
 			int row = nextRow;
 			string title = oldSheet.Cells[row, 1].Text;
@@ -174,7 +153,16 @@ namespace ExcelAddIn1
                 }
 			}
 
-			return row;
+            Regex regex = new Regex(@"^Lead time: +[0-9]+-(?<LeadTimeWeeks>[0-9]+).*$");
+            string leadTime = oldSheet.Cells[row, 1].Text;
+            Match match = regex.Match(leadTime);
+			if (!match.Success)
+            {
+                throw new Exception("Lead Time not found");
+            }
+            int weeks = int.Parse(match.Groups["LeadTimeWeeks"].Value);
+
+            return weeks;
         }
 
 		// Input is string, will find part number. Part number is the text before first comma.

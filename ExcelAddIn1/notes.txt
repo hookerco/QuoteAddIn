@@ -2,3 +2,4 @@
 
 - Doesn't respond well when rate field is left empty (Q37927)
 - Can have error when incorrect customer name is entered in Salesorderworksheet, only puts new items in, doesn't create sales order
+- Computer\HKEY_CLASSES_ROOT\QBFC14.QBSessionManager\CLSID

@@ -59,11 +59,11 @@ namespace ExcelAddIn1
 			this.oldSheet = oldSheet;
 		}
 
-        /// <summary>
-        /// Add an item to the next row of the SalesOrderSheet. Modifies <c>nextRow</c>
-        /// </summary>
-        /// <param name="item">The SOSheetQuoteItem to add.</param>
-        private void AddItem(SOSheetQuoteItem item)
+		/// <summary>
+		/// Add an item to the next row of the SalesOrderSheet. Modifies <c>nextRow</c>
+		/// </summary>
+		/// <param name="item">The SOSheetQuoteItem to add.</param>
+		private void AddItem(SOSheetQuoteItem item)
 		{
 			Excel.Range numRange = soSheet.Cells[nextRow, _numberColumn];
 			numRange.Locked = true;
@@ -148,22 +148,22 @@ namespace ExcelAddIn1
 				++row;
 				title = oldSheet.Cells[row, 1].Text;
 				if (row > 100)
-                {
-                    throw new Exception("Lead Time not found"); // no unlimited loops
-                }
+				{
+					throw new Exception("Lead Time not found"); // no unlimited loops
+				}
 			}
 
-            Regex regex = new Regex(@"^Lead time: +[0-9]+-(?<LeadTimeWeeks>[0-9]+).*$");
-            string leadTime = oldSheet.Cells[row, 1].Text;
-            Match match = regex.Match(leadTime);
+			Regex regex = new Regex(@"^Lead time: +[0-9]+-(?<LeadTimeWeeks>[0-9]+).*$");
+			string leadTime = oldSheet.Cells[row, 1].Text;
+			Match match = regex.Match(leadTime);
 			if (!match.Success)
-            {
-                throw new Exception("Lead Time not found");
-            }
-            int weeks = int.Parse(match.Groups["LeadTimeWeeks"].Value);
+			{
+				throw new Exception("Lead Time not found");
+			}
+			int weeks = int.Parse(match.Groups["LeadTimeWeeks"].Value);
 
-            return weeks;
-        }
+			return weeks;
+		}
 
 		// Input is string, will find part number. Part number is the text before first comma.
 		internal static string FindPNinDescription(string desc)
@@ -189,7 +189,7 @@ namespace ExcelAddIn1
 			{
 				Text = "Close"
 			};
-            closeButton.Click += (sender, e) =>
+			closeButton.Click += (sender, e) =>
 			{
 				Globals.ThisAddIn.Application.DisplayAlerts = false;
 				soSheet.Delete();
@@ -204,11 +204,11 @@ namespace ExcelAddIn1
 
 		internal void AddSendButton()
 		{
-            sendButton = new Button
-            {
-                Text = "Send"
-            };
-            sendButton.Click += (sender, e) =>
+			sendButton = new Button
+			{
+				Text = "Send"
+			};
+			sendButton.Click += (sender, e) =>
 			{
 				Send();
 			};
@@ -257,9 +257,9 @@ namespace ExcelAddIn1
 				soSheet.Protect();
 			}
 			catch (Exception ex)
-            {
-                MessageBox.Show(ex.Message + "\n\n" + ex.StackTrace);
-            }
+			{
+				MessageBox.Show(ex.Message + "\n\n" + ex.StackTrace);
+			}
 		}
 
 		
@@ -387,9 +387,9 @@ namespace ExcelAddIn1
 				item.SetNumber(DieSetItem.GetPartNum(QuotePartNum)); // if item is die set item, should be in quickbooks as a variable item
 
 				if (item.GetNumber() != "")
-                {
-                    return true;
-                }
+				{
+					return true;
+				}
 			}
 
 			if (item.GetNumber() == "")
@@ -413,9 +413,9 @@ namespace ExcelAddIn1
 		private void MarkNumbersOnSheet(List<SOSheetQuoteItem> itemList)
 		{
 			for (int i = 0; i < itemList.Count; ++i)
-            {
-                soSheet.Cells[itemList[i].Row, _numberColumn].Value = itemList[i].GetNumber();
-            }
+			{
+				soSheet.Cells[itemList[i].Row, _numberColumn].Value = itemList[i].GetNumber();
+			}
 		}
 
 		private static class SendRequest
@@ -426,13 +426,13 @@ namespace ExcelAddIn1
 				List<NonInvItem> list = new List<NonInvItem>();
 				foreach ((string num, string desc) in items)
 				{
-                    NonInvItem item = new NonInvItem
-                    {
-                        Name = num,
-                        Desc = desc,
-                        AccountName = "Sales Income"
-                    };
-                    list.Add(item);
+					NonInvItem item = new NonInvItem
+					{
+						Name = num,
+						Desc = desc,
+						AccountName = "Sales Income"
+					};
+					list.Add(item);
 				}
 
 				AddItemNonInventoryRequest rq = new AddItemNonInventoryRequest(list);
@@ -450,56 +450,56 @@ namespace ExcelAddIn1
 						addedList.Add((list[item_idx].Name, list[item_idx].Desc));
 					}
 					else                     {
-                        success = false;
-                    }	
+						success = false;
+					}	
 
 					item_idx++;
 				}
 
 				if (!success)
-                {
-                    throw new Exception("Error adding items to QuickBooks");
-                }
+				{
+					throw new Exception("Error adding items to QuickBooks");
+				}
 
 				return addedList;
 			}
 
-            internal static int SendSalesOrder(List<SOSheetQuoteItem> items, string customer, string po, DateTime dueDate)
-            {
-                SalesOrderRequest rq = new SalesOrderRequest(QuoteItemToSalesOrder(items, customer, po, dueDate));
-                StatusResponse rs = rq.SendRequest();
+			internal static int SendSalesOrder(List<SOSheetQuoteItem> items, string customer, string po, DateTime dueDate)
+			{
+				SalesOrderRequest rq = new SalesOrderRequest(QuoteItemToSalesOrder(items, customer, po, dueDate));
+				StatusResponse rs = rq.SendRequest();
 
-                if (rs._code != 0)
-                {
-                    throw new Exception("Error sending sales order to QuickBooks");
-                }
+				if (rs._code != 0)
+				{
+					throw new Exception("Error sending sales order to QuickBooks");
+				}
 
-                return 0;
-            }
+				return 0;
+			}
 
-            private static SalesOrder QuoteItemToSalesOrder(List<SOSheetQuoteItem> items, string customer, string po, DateTime dueDate)
-            {
-                List<NonInvItem> nonInvList = new List<NonInvItem>();
+			private static SalesOrder QuoteItemToSalesOrder(List<SOSheetQuoteItem> items, string customer, string po, DateTime dueDate)
+			{
+				List<NonInvItem> nonInvList = new List<NonInvItem>();
 
-                foreach (SOSheetQuoteItem item in items)
-                {
-                    NonInvItem soItem = new NonInvItem
-                    {
-                        AccountName = "Sales Income",
-                        Name = item.GetNumber(),
-                        Desc = item.GetDescription(),
-                        Quantity = item.GetQuantity(),
-                        Rate = item.GetRate()
-                    };
+				foreach (SOSheetQuoteItem item in items)
+				{
+					NonInvItem soItem = new NonInvItem
+					{
+						AccountName = "Sales Income",
+						Name = item.GetNumber(),
+						Desc = item.GetDescription(),
+						Quantity = item.GetQuantity(),
+						Rate = item.GetRate()
+					};
 
-                    nonInvList.Add(soItem);
-                }
+					nonInvList.Add(soItem);
+				}
 
-                SalesOrder order = new SalesOrder(customer, po, dueDate, nonInvList);
+				SalesOrder order = new SalesOrder(customer, po, dueDate, nonInvList);
 
-                return order;
-            }
-        }
+				return order;
+			}
+		}
 
 		internal class SOSheetQuoteItem : IQuoteItem
 		{
@@ -556,7 +556,7 @@ namespace ExcelAddIn1
 			sortedNumberSet.Add(sortedNumberSet.Count);
 
 			string num = "1-" + sortedNumberSet.Count.ToString("D4");
-            return num;
+			return num;
 		}
 	}
 

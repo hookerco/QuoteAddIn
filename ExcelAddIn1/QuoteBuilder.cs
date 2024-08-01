@@ -88,7 +88,7 @@ namespace ExcelAddIn1
 
 			AddItems(newSheet, oldSheet, lastRow, numItems);
 
-			AddDesc(newSheet, oldSheet, lastRow);
+			// AddDesc(newSheet, oldSheet, lastRow); // -- Not wanted by office
 
 			AddBackFormulas(newSheet, GetLastRow(newSheet));
 

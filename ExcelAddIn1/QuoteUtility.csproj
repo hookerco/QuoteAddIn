@@ -33,7 +33,7 @@
     <PublishUrl>Z:\COLTON TEST\QBUtility Beta Install\</PublishUrl>
     <InstallUrl />
     <TargetCulture>en</TargetCulture>
-    <ApplicationVersion>1.0.0.15</ApplicationVersion>
+    <ApplicationVersion>1.0.0.16</ApplicationVersion>
     <AutoIncrementApplicationRevision>true</AutoIncrementApplicationRevision>
     <UpdateEnabled>true</UpdateEnabled>
     <UpdateInterval>7</UpdateInterval>
@@ -123,10 +123,10 @@
   -->
   <ItemGroup>
     <Reference Include="Accessibility" />
-    <Reference Include="interop.QBFC14, Version=14.0.0.1, Culture=neutral, PublicKeyToken=31d8aec643e18259">
+    <Reference Include="interop.QBFC14, Version=15.0.0.1, Culture=neutral, PublicKeyToken=31d8aec643e18259, processorArchitecture=MSIL">
       <SpecificVersion>False</SpecificVersion>
       <EmbedInteropTypes>True</EmbedInteropTypes>
-      <HintPath>..\..\..\..\..\..\Program Files (x86)\Intuit\IDN\QBSDK14.0\interop.QBFC14.dll</HintPath>
+      <HintPath>..\..\..\..\..\..\Program Files (x86)\Common Files\Intuit\QuickBooks\interop.QBFC14.dll</HintPath>
     </Reference>
     <Reference Include="Microsoft.Office.Tools.Excel.v4.0.Utilities, Version=10.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a, processorArchitecture=MSIL" />
     <Reference Include="PublicHoliday, Version=2.39.0.0, Culture=neutral, processorArchitecture=MSIL">
@@ -191,13 +191,13 @@
     can be found.
   -->
   <ItemGroup>
-    <Compile Include="QuoteItem.cs" />
-    <Compile Include="QuoteBuilder_helpers.cs" />
-    <Compile Include="QuoteSheet.cs" />
+    <Compile Include="QuoteBuilder\QuoteItem.cs" />
+    <Compile Include="QuoteBuilder\QuoteBuilder_helpers.cs" />
+    <Compile Include="QuoteBuilder\QuoteSheet.cs" />
     <Compile Include="SendToQb\AllItemList.cs" />
     <Compile Include="SendToQb\CalculateDueDate.cs" />
     <Compile Include="SendToQb\Driver.cs" />
-    <Compile Include="QuoteBuilder.cs" />
+    <Compile Include="QuoteBuilder\QuoteBuilder.cs" />
     <Compile Include="SendToQb\Requests.cs" />
     <Compile Include="Properties\AssemblyInfo.cs">
       <SubType>Code</SubType>
@@ -251,6 +251,12 @@
   </ItemGroup>
   <ItemGroup>
     <Content Include="notes.txt" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\QuickBooksIPCContracts\QuickBooksIPCContracts.csproj">
+      <Project>{500e69e0-4ab5-41ad-8468-1584e27725f6}</Project>
+      <Name>QuickBooksIPCContracts</Name>
+    </ProjectReference>
   </ItemGroup>
   <PropertyGroup>
     <VisualStudioVersion Condition="'$(VisualStudioVersion)' == ''">10.0</VisualStudioVersion>

@@ -1,5 +1,4 @@
-﻿using Interop.QBFC14;
-using QBRequestLibrary;
+﻿using QBRequestLibrary;
 
 namespace ExcelAddIn1
 {

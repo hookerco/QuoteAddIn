@@ -118,7 +118,7 @@ namespace QBRequestLibrary
             AccountNum = accountNum;
         }
     }
-    public class CustomerQueryRequest : Request<string, CustomerQueryResponse>
+    public class CustomerQueryRequest : Request<string, QBCustomer>
     {
         public CustomerQueryRequest(string name)
         {
@@ -145,7 +145,7 @@ namespace QBRequestLibrary
         }
     }
 
-    public class SalesOrder : QBOrder
+    public class SalesOrder
     {
         public string CustomerFullName { get; set; }
         public string CustomerPO { get; set; }

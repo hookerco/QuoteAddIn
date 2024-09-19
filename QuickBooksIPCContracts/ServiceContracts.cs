@@ -7,12 +7,18 @@ namespace QuickBooksIPCService
     public interface IQuickBooksService
     {
         [OperationContract]
-        StatusResponse<QBOrder> AddOrder(QBOrder order);
+        QBStatusResponse<QBOrder> AddOrder(QBOrder order);
 
         [OperationContract]
         QBOrder GetOrder(string order);
 
         [OperationContract]
         QBCustomer GetCustomer(string accountNumber);
+
+        [OperationContract]
+        QBStatusResponse<QBItem> GetItem(QBItem item);
+
+        [OperationContract]
+        QBStatusResponse<QBItem> AddItem(QBItem item);
     }
 }

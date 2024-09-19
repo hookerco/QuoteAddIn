@@ -47,7 +47,7 @@ namespace QuickBooksIPCContracts
     }
 
     [DataContract]
-    public class StatusResponse<T>
+    public class QBStatusResponse<T>
     {
         [DataMember]
         public string StatusMessage { get; set; }

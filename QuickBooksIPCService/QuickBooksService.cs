@@ -6,7 +6,7 @@ namespace QuickBooksIPCService
 {
     public class QuickBooksService : IQuickBooksService
     {
-        public string AddOrder(QBOrder quote)
+        public QBStatusResponse<QBOrder> AddOrder(QBOrder quote)
         {
             // Convert the Quote data contract to QuickBooks SDK objects
             // Example:

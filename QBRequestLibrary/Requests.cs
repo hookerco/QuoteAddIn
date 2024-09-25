@@ -1,8 +1,10 @@
 ﻿using Interop.QBFC14;
 using QuickBooksIPCContracts;
 using System;
+using System.CodeDom;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Diagnostics.Tracing;
 
 namespace QBRequestLibrary
 {
@@ -20,6 +22,8 @@ namespace QBRequestLibrary
         protected Connection _connection = new Connection();
         protected bool _open = false;
         protected IMsgSetRequest _msgSetRequest;
+        protected const short QBSDKMajorVersion = 14;
+        protected const short QBSDKMinorVersion = 0;
 
         public virtual void Set(T1 value)
         {
@@ -51,7 +55,7 @@ namespace QBRequestLibrary
                 throw new NoValueException();
             }
 
-            _msgSetRequest = _connection.SessionManager.CreateMsgSetRequest("US", 14, 0);
+            _msgSetRequest = _connection.SessionManager.CreateMsgSetRequest("US", QBSDKMajorVersion, QBSDKMinorVersion);
             _msgSetRequest.Attributes.OnError = ENRqOnError.roeContinue;
             BuildHelper();
         }
@@ -107,18 +111,7 @@ namespace QBRequestLibrary
             Disconnect();
         }
     }
-
-    public class CustomerQueryResponse
-    {
-        public string Name { get; private set; }
-        public string AccountNum { get; private set; }
-        public CustomerQueryResponse(string name, string accountNum)
-        {
-            Name = name;
-            AccountNum = accountNum;
-        }
-    }
-    public class CustomerQueryRequest : Request<string, QBCustomer>
+    public class CustomerQueryRequest : Request<string, QBCustomer>, ICustomerQueryRequest
     {
         public CustomerQueryRequest(string name)
         {
@@ -132,7 +125,7 @@ namespace QBRequestLibrary
             CustomerQueryRq.ORCustomerListQuery.CustomerListFilter.ORNameFilter.NameFilter.Name.SetValue(_value);
         }
 
-        protected override CustomerQueryResponse ConvertResponse(IMsgSetResponse responseSet)
+        protected override QBCustomer ConvertResponse(IMsgSetResponse responseSet)
         {
             IResponse response = GetFirstResponse(responseSet);
             if ((ENResponseType)response.Type.GetValue() != ENResponseType.rtCustomerQueryRs) { throw new QBRequestLibraryRuntimeError("Not a customerQueryResponse"); }
@@ -141,43 +134,18 @@ namespace QBRequestLibrary
             string name = customerRet.FullName.GetValue();
             string num = customerRet.AccountNumber.GetValue();
 
-            return new CustomerQueryResponse(name, num);
-        }
-    }
-
-    public class SalesOrder
-    {
-        public string CustomerFullName { get; set; }
-        public string CustomerPO { get; set; }
-        public List<NonInvItem> SalesOrderLines { get; set; }
-
-        public SalesOrder(string customerFullName, string PO, DateTime dueDate, List<NonInvItem> items)
-        {
-            SalesOrderLines = new List<NonInvItem>(items);
-            CustomerFullName = customerFullName;
-            CustomerPO = PO;
-            DueDate = dueDate;
-        }
-
-        public void AddSalesOrderRq(ref ISalesOrderAdd SalesOrderAddRq)
-        {
-            SalesOrderAddRq.CustomerRef.FullName.SetValue(CustomerFullName);
-            SalesOrderAddRq.PONumber.SetValue(CustomerPO);
-            SalesOrderAddRq.DueDate.SetValue(DueDate);
-            SalesOrderAddRq.ShipDate.SetValue(DueDate);
-
-            foreach (var item in SalesOrderLines)
+            return new QBCustomer
             {
-                ISalesOrderLineAdd SalesOrderLineAdd = SalesOrderAddRq.ORSalesOrderLineAddList.Append().SalesOrderLineAdd;
-                SalesOrderLineAdd.ItemRef.FullName.SetValue(item.Number);
-                SalesOrderLineAdd.Quantity.SetValue(item.Quantity);
-                SalesOrderLineAdd.ORRatePriceLevel.Rate.SetValue(item.Rate);
-            }
+                AccountNumber = num,
+                Name = name
+            };
         }
     }
-    public class SalesOrderRequest : Request<SalesOrder, StatusResponse>
+
+    public class SalesOrderRequest : Request<QBOrder, QBStatusResponse<string>>, ISalesOrderRequest
     {
-        public SalesOrderRequest(SalesOrder salesOrder)
+        private readonly QBOrder salesOrder;
+        public SalesOrderRequest(QBOrder salesOrder)
         {
             Set(salesOrder);
         }
@@ -186,10 +154,21 @@ namespace QBRequestLibrary
         {
             ISalesOrderAdd SalesOrderAddRq = _msgSetRequest.AppendSalesOrderAddRq();
 
-            _value.AddSalesOrderRq(ref SalesOrderAddRq);
+            SalesOrderAddRq.CustomerRef.FullName.SetValue(salesOrder.Customer.Name);
+            SalesOrderAddRq.PONumber.SetValue(salesOrder.Customer.PO);
+            SalesOrderAddRq.DueDate.SetValue(salesOrder.DueDate);
+            SalesOrderAddRq.ShipDate.SetValue(salesOrder.DueDate);
+
+            foreach (var item in salesOrder.Items)
+            {
+                ISalesOrderLineAdd SalesOrderLineAdd = SalesOrderAddRq.ORSalesOrderLineAddList.Append().SalesOrderLineAdd;
+                SalesOrderLineAdd.ItemRef.FullName.SetValue(item.Number);
+                SalesOrderLineAdd.Quantity.SetValue(item.Quantity);
+                SalesOrderLineAdd.ORRatePriceLevel.Rate.SetValue(item.Rate);
+            }
         }
 
-        protected override StatusResponse ConvertResponse(IMsgSetResponse responseSet)
+        protected override QBStatusResponse<string> ConvertResponse(IMsgSetResponse responseSet)
         {
             IResponse response;
             try
@@ -202,20 +181,25 @@ namespace QBRequestLibrary
                 response = responseSet.ResponseList.GetAt(0);
             }
             if ((ENResponseType)response.Type.GetValue() != ENResponseType.rtSalesOrderAddRs) { throw new QBRequestLibraryRuntimeError("Not a SalesOrderAddResponse"); }
-            return new StatusResponse(response.StatusMessage, response.StatusCode);
+            return new QBStatusResponse<string>
+            {
+                StatusCode = response.StatusCode,
+                StatusMessage = response.StatusMessage
+
+            };
         }
     }
 
-    public class AddItemNonInventoryRequest : Request<List<NonInvItem>, List<StatusResponse>>
+    public class AddItemNonInventoryRequest : Request<List<QBItem>, List<QBStatusResponse<string>>>, IAddItemNonInventoryRequest
     {
-        public AddItemNonInventoryRequest(List<NonInvItem> nonInvItems)
+        public AddItemNonInventoryRequest(List<QBItem> nonInvItems)
         {
             Set(nonInvItems);
         }
 
         protected override void BuildHelper()
         {
-            foreach (NonInvItem item in _value)
+            foreach (QBItem item in _value)
             {
                 IItemNonInventoryAdd addRq = _msgSetRequest.AppendItemNonInventoryAddRq();
                 addRq.Name.SetValue(item.Number);
@@ -224,42 +208,83 @@ namespace QBRequestLibrary
             }
         }
 
-        protected override List<StatusResponse> ConvertResponse(IMsgSetResponse responseSet)
+        protected override List<QBStatusResponse<string>> ConvertResponse(IMsgSetResponse responseSet)
         {
-            List<StatusResponse> responseList = new List<StatusResponse>();
+            List<QBStatusResponse<string>> responseList = new List<QBStatusResponse<string>>();
             IResponseList iResponseList = (IResponseList)responseSet.ResponseList;
             for (int i = 0; i < iResponseList.Count; ++i)
             {
                 IResponse response = iResponseList.GetAt(i);
                 if ((ENResponseType)response.Type.GetValue() != ENResponseType.rtItemNonInventoryAddRs) { throw new QBRequestLibraryRuntimeError("Not a NonInvItemAddResponse"); }
-                responseList.Add(new StatusResponse(response.StatusMessage, response.StatusCode));
+                responseList.Add(new QBStatusResponse<string>
+                {
+                    StatusCode = response.StatusCode,
+                    StatusMessage = response.StatusMessage
+                });
             }
 
             return responseList;
         }
     }
 
-    /**
-	 * <summary>Default Response when information other than success unnecessary.</summary>
-	 */
-    public class StatusResponse
+    public class AllItemNonInvQueryRequest : Request<Object, QBStatusResponse<List<QBItem>>>, IAllItemNonInvQueryRequest
     {
-        public int _code;
-        public string _message;
-        public StatusResponse(string message, int code)
+        public AllItemNonInvQueryRequest()
         {
-            this._message = message;
-            _code = code;
+            Set(null);
         }
-    }
 
-    public class NonInvItem : QBItem
-    {
-        public string AccountName { get; set; }
-    }
+        protected override void BuildRequest()
+        {
+            _msgSetRequest = _connection.SessionManager.CreateMsgSetRequest("US", QBSDKMajorVersion, QBSDKMinorVersion);
+            _msgSetRequest.Attributes.OnError = ENRqOnError.roeContinue;
+            BuildHelper();
+        }
 
-    /**
-	 * <summary>Represents SalesOrderRequest parameter</summary>
-	 */
-    
-}
+        protected override void BuildHelper()
+        {
+            IItemNonInventoryQuery ItemNonInventoryQueryRq = _msgSetRequest.AppendItemNonInventoryQueryRq();
+        }
+
+        protected override QBStatusResponse<List<QBItem>> ConvertResponse(IMsgSetResponse responseSet)
+        {
+
+            QBStatusResponse<List<QBItem>> retResponse = new QBStatusResponse<List<QBItem>>();
+            retResponse.Data = new List<QBItem>();
+            IResponseList iResponseList = (IResponseList)responseSet.ResponseList;
+            for (int i = 0; i < iResponseList.Count; ++i)
+            {
+                IResponse response = iResponseList.GetAt(i);
+                if ((ENResponseType)response.Type.GetValue() != ENResponseType.rtItemNonInventoryQueryRs) { throw new QBRequestLibraryRuntimeError("Not an ItemNonInventoryQueryRs Response"); }
+                IItemNonInventoryRetList ItemNonInventoryRetList = (IItemNonInventoryRetList)response.Detail;
+
+                for (int j = 0; j < ItemNonInventoryRetList.Count; ++j)
+                {
+                    IItemNonInventoryRet ItemRet = ItemNonInventoryRetList.GetAt(i);
+                    QBItem item = new QBItem();
+                    item.Number = ItemRet.Name.GetValue();
+                    item.Description = "";
+
+                    if (ItemRet.ORSalesPurchase.SalesOrPurchase != null)
+                    {
+                        if (ItemRet.ORSalesPurchase.SalesOrPurchase.Desc != null)
+                        {
+                            item.Description = ItemRet.ORSalesPurchase.SalesOrPurchase.Desc.GetValue();
+                        }
+                    }
+                    else if (ItemRet.ORSalesPurchase.SalesAndPurchase != null)
+                    {
+                        if (ItemRet.ORSalesPurchase.SalesAndPurchase.SalesDesc != null)
+                        {
+                            item.Description = ItemRet.ORSalesPurchase.SalesAndPurchase.SalesDesc.GetValue();
+                        }
+                    }
+                    retResponse.Data.Add(item);
+                }
+            }
+
+            return retResponse;
+        }
+
+    }
+} 

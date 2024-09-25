@@ -18,6 +18,9 @@ namespace QuickBooksIPCContracts
 
         [DataMember]
         public int Quantity { get; set; }
+
+        [DataMember]
+        public string AccountName { get; set; }
     }
 
     [DataContract]
@@ -44,6 +47,9 @@ namespace QuickBooksIPCContracts
 
         [DataMember]
         public string AccountNumber { get; set; }
+
+        [DataMember]
+        public string PO { get; set; }
     }
 
     [DataContract]

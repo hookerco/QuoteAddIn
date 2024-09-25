@@ -1,6 +1,4 @@
-﻿using QBRequestLibrary;
-
-namespace ExcelAddIn1
+﻿namespace ExcelAddIn1
 {
 	/** 
 	 * <summary>

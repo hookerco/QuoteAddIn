@@ -1,67 +1,52 @@
-﻿using System;
+﻿// QuickBooksIPCService/QuickBooksService.cs
+using System;
 using System.Collections.Generic;
+using QBRequestLibrary;
 using QuickBooksIPCContracts;
 
 namespace QuickBooksIPCService
 {
     public class QuickBooksService : IQuickBooksService
     {
-        public QBStatusResponse<QBOrder> AddOrder(QBOrder quote)
+        private readonly IRequestFactory _requestFactory;
+
+        public QuickBooksService(IRequestFactory requestFactory)
         {
-            // Convert the Quote data contract to QuickBooks SDK objects
-            // Example:
-            // var qbQuote = new QBQuote();
-            // qbQuote.QuoteNumber = quote.QuoteNumber;
-            // qbQuote.Customer = quote.Customer;
-            // foreach(var item in quote.Items)
-            // {
-            //     qbQuote.AddItem(item.Number, item.Description, item.Rate, item.Quantity);
-            // }
-
-            // Interact with QuickBooks using the SDK
-            // var result = QuickBooksSDK.AddQuote(qbQuote);
-            // return result;
-
-            // Placeholder implementation
-            Console.WriteLine($"Adding Quote: {quote.QuoteNumber}");
-            return "Quote Added Successfully";
+            _requestFactory = requestFactory ?? throw new ArgumentNullException(nameof(requestFactory));
         }
 
-        public QBOrder GetOrder(string quoteNumber)
+        public QuickBooksService()
         {
-            // Interact with QuickBooks to retrieve the quote
-            // var qbQuote = QuickBooksSDK.GetQuote(quoteNumber);
+            _requestFactory = new RequestFactory();
+        }
 
-            // Convert QuickBooks SDK objects to Quote data contract
-            // var quote = new Quote
-            // {
-            //     QuoteNumber = qbQuote.QuoteNumber,
-            //     Customer = qbQuote.Customer,
-            //     Items = qbQuote.Items.Select(qi => new QuoteItem
-            //     {
-            //         Number = qi.Number,
-            //         Description = qi.Description,
-            //         Rate = qi.Rate,
-            //         Quantity = qi.Quantity
-            //     }).ToList()
-            // };
+        public string Ping()
+        {
+            return "Pong";
+        }
 
-            // Placeholder implementation
-            return new QBOrder
-            {
-                QuoteNumber = quoteNumber,
-                Customer = "Sample Customer",
-                Items = new List<QBItem>
-                {
-                    new QBItem
-                    {
-                        Number = "001",
-                        Description = "Sample Item",
-                        Rate = 100.0,
-                        Quantity = 2
-                    }
-                }
-            };
+        public QBStatusResponse<string> AddOrder(QBOrder order)
+        {
+            var req = _requestFactory.CreateSalesOrderRequest(order);
+            return req.SendRequest();
+        }
+
+        public QBCustomer GetCustomer(string accountNumber)
+        {
+            var req = _requestFactory.CreateCustomerQueryRequest(accountNumber);
+            return req.SendRequest();
+        }
+
+        public QBStatusResponse<List<QBItem>> GetAllItems()
+        {
+            var req = _requestFactory.CreateAllItemNonInvQueryRequest();
+            return req.SendRequest();
+        }
+
+        public List<QBStatusResponse<string>> AddNonInvItem(List<QBItem> items)
+        {
+            var req = _requestFactory.CreateAddItemNonInventoryRequest(items);
+            return req.SendRequest();
         }
     }
 }

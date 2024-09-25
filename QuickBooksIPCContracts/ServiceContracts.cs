@@ -1,24 +1,24 @@
-﻿using System.ServiceModel;
-using QuickBooksIPCContracts;
+﻿using System.Collections.Generic;
+using System.ServiceModel;
 
-namespace QuickBooksIPCService
+namespace QuickBooksIPCContracts
 {
     [ServiceContract]
     public interface IQuickBooksService
     {
         [OperationContract]
-        QBStatusResponse<QBOrder> AddOrder(QBOrder order);
+        string Ping();
 
         [OperationContract]
-        QBOrder GetOrder(string order);
+        QBStatusResponse<string> AddOrder(QBOrder order);
 
         [OperationContract]
         QBCustomer GetCustomer(string accountNumber);
 
         [OperationContract]
-        QBStatusResponse<QBItem> GetItem(QBItem item);
+        QBStatusResponse<List<QBItem>> GetAllItems();
 
         [OperationContract]
-        QBStatusResponse<QBItem> AddItem(QBItem item);
+        List<QBStatusResponse<string>> AddNonInvItem(List<QBItem> item);
     }
 }

@@ -4,8 +4,8 @@ using System.Text.RegularExpressions;
 using Excel = Microsoft.Office.Interop.Excel;
 using Button = Microsoft.Office.Tools.Excel.Controls.Button;
 using Worksheet = Microsoft.Office.Tools.Excel.Worksheet;
-using QBRequestLibrary;
 using System.Windows.Forms;
+using QuickBooksIPCContracts;
 
 namespace ExcelAddIn1
 {
@@ -423,13 +423,13 @@ namespace ExcelAddIn1
 			internal static List<(string, string)> AddItems(List<(string, string)> items)
 			{
 				// Convert format from salesOrderList to NonInvItem List
-				List<NonInvItem> list = new List<NonInvItem>();
+				List<QBItem> list = new List<QBItem>();
 				foreach ((string num, string desc) in items)
 				{
-					NonInvItem item = new NonInvItem
-					{
-						Name = num,
-						Desc = desc,
+                    QBItem item = new QBItem
+                    {
+						Number = num,
+						Description = desc,
 						AccountName = "Sales Income"
 					};
 					list.Add(item);

@@ -6,7 +6,6 @@ using System.Threading.Tasks;
 using System.Windows.Forms;
 using Microsoft.Office.Tools.Excel;
 using Excel = Microsoft.Office.Interop.Excel;
-using QBRequestLibrary;
 using System.Text.RegularExpressions;
 
 namespace ExcelAddIn1

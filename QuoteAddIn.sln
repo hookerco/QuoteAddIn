@@ -20,10 +20,7 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "QBRequestLibrary", "QBReque
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "QuickBooksServiceHost", "QuickBooksServiceHost\QuickBooksServiceHost.csproj", "{D17752F4-945E-41B9-802F-24C799F97072}"
 EndProject
-Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "SharedConfig", "SharedConfig", "{F88C0E24-F485-4D20-8666-162430EDF49E}"
-	ProjectSection(SolutionItems) = preProject
-		WCFSharedConfig.config = WCFSharedConfig.config
-	EndProjectSection
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ScratchQuotebooktests", "ScratchQuotebooktests\ScratchQuotebooktests.csproj", "{E50E3548-E51A-42E0-9AEA-3919AA2EFA7F}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -59,6 +56,10 @@ Global
 		{D17752F4-945E-41B9-802F-24C799F97072}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{D17752F4-945E-41B9-802F-24C799F97072}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{D17752F4-945E-41B9-802F-24C799F97072}.Release|Any CPU.Build.0 = Release|Any CPU
+		{E50E3548-E51A-42E0-9AEA-3919AA2EFA7F}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{E50E3548-E51A-42E0-9AEA-3919AA2EFA7F}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{E50E3548-E51A-42E0-9AEA-3919AA2EFA7F}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{E50E3548-E51A-42E0-9AEA-3919AA2EFA7F}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

@@ -2,21 +2,34 @@
 using System;
 using System.ServiceModel;
 using System.Xml;
+using System.Threading; 
+using System.Configuration;
 
 namespace ExcelAddIn1.SendToQb
 {
     internal class QBConnector : IDisposable
     {
-        private const string ServiceBaseAddress = "net.pipe://localhost/QuickBooksService";
-        private readonly QBServiceHost _serviceHost;
-        private IQuickBooksService _client;
-        private ChannelFactory<IQuickBooksService> _channelFactory;
+        private readonly string ServiceBaseAddress = "net.pipe://localhost/QuickBooksService";
+         //private readonly QBServiceHost _serviceHost;
+        private readonly IQuickBooksService _client;
+        private readonly ChannelFactory<IQuickBooksService> _channelFactory;
 
-        public QBConnector(string serviceExecutablePath)
+        public QBConnector()
         {
-            // Initialize and start the service
-            _serviceHost = new QBServiceHost(serviceExecutablePath);
-            _serviceHost.StartService();
+            //// Initialize and start the service
+            //_serviceHost = new QBServiceHost();
+            //_serviceHost.StartService();
+
+            //// Wait for the service to start
+            //bool serviceStarted = WaitForServiceStart(TimeSpan.FromSeconds(3));
+            //if (serviceStarted)
+            //{
+            //    Console.WriteLine("Service started successfully.");
+            //}
+            //else
+            //{
+            //    Console.WriteLine("Service did not start within the specified timeout.");
+            //}
 
             // Set up the WCF client
             var binding = new NetNamedPipeBinding
@@ -36,6 +49,23 @@ namespace ExcelAddIn1.SendToQb
             _channelFactory = new ChannelFactory<IQuickBooksService>(binding, endpointAddress);
             _client = _channelFactory.CreateChannel();
         }
+
+        //private bool WaitForServiceStart(TimeSpan timeout)
+        //{
+        //    DateTime startTime = DateTime.Now;
+        //    while (!_serviceHost.IsServiceRunning())
+        //    {
+        //        if (DateTime.Now - startTime > timeout)
+        //        {
+        //            return false; // Timeout reached
+        //        }
+
+        //        // Wait for a short period before checking again
+        //        Thread.Sleep(500);
+        //    }
+
+        //    return true; // Service started within the timeout
+        //}
 
         /// <summary>
         /// Provides access to the WCF service client.
@@ -60,7 +90,7 @@ namespace ExcelAddIn1.SendToQb
                 _channelFactory.Abort();
             }
 
-            _serviceHost?.Dispose();
+            //_serviceHost?.Dispose();
         }
     }
 }

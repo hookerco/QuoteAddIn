@@ -1,14 +1,19 @@
 ﻿// QuickBooksIPCService/QuickBooksService.cs
 using System;
+using System.ServiceModel;
 using System.Collections.Generic;
 using QBRequestLibrary;
 using QuickBooksIPCContracts;
 
 namespace QuickBooksIPCService
 {
+    [ServiceBehavior(InstanceContextMode = InstanceContextMode.Single)]
     public class QuickBooksService : IQuickBooksService
     {
         private readonly IRequestFactory _requestFactory;
+        private static readonly Dictionary<string, QBStatusResponse<List<QBItem>>> _cache
+            = new Dictionary<string, QBStatusResponse<List<QBItem>>>();
+        private bool _cacheValid = false;
 
         public QuickBooksService(IRequestFactory requestFactory)
         {
@@ -39,8 +44,27 @@ namespace QuickBooksIPCService
 
         public QBStatusResponse<List<QBItem>> GetAllItems()
         {
+            // Check if cache is still valid
+            if (_cacheValid)
+            {
+                return _cache["AllItemInventory"];
+            }
+
+            // Perform the query (this is the long-running part)
             var req = _requestFactory.CreateAllItemNonInvQueryRequest();
-            return req.SendRequest();
+            var result = req.SendRequest();
+
+            // Update cache
+            _cache["AllItemInventory"] = result;
+            _cacheValid = true;
+
+            return result;
+        }
+
+        public int InvalidateAllItemsCache()
+        {
+            _cacheValid = false;
+            return 0;
         }
 
         public List<QBStatusResponse<string>> AddNonInvItem(List<QBItem> items)

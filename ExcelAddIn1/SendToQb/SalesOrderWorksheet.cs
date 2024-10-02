@@ -6,6 +6,7 @@ using Button = Microsoft.Office.Tools.Excel.Controls.Button;
 using Worksheet = Microsoft.Office.Tools.Excel.Worksheet;
 using System.Windows.Forms;
 using QuickBooksIPCContracts;
+using ExcelAddIn1.SendToQb;
 
 namespace ExcelAddIn1
 {
@@ -17,22 +18,22 @@ namespace ExcelAddIn1
 	// Represents the little sheet that pops up after pressing "Prepare for Sales Order"
 	internal class SalesOrderWorksheet
 	{
-		private int firstRow = 5; // first row of items
+		private readonly int firstRow = 5; // first row of items
 		private int nextRow = 5; // next unused row
 		private readonly Excel.Worksheet oldSheet; // sheet that we're reading from
 		private readonly Excel.Worksheet soSheet; // underlying Excel sheet
 		private Button closeButton; 
 		private Button sendButton;
 		private bool sent = false;
-		private static int _numberColumn = 1;
-		private static int _overrideColumn = 2;
-		private static int _descriptionColumn = 3;
-		private static int _quantityColumn = 4;
-		private static int _rateColumn = 5;
-		private static int _customerRow = 1;
-		private static int _PORow = 2;
-		private static int _dueDateRow = 3;
-		private static int _labelRow = 4;
+		private readonly static int _numberColumn = 1;
+		private readonly static int _overrideColumn = 2;
+		private readonly static int _descriptionColumn = 3;
+		private readonly static int _quantityColumn = 4;
+		private readonly static int _rateColumn = 5;
+		private readonly static int _customerRow = 1;
+		private readonly static int _PORow = 2;
+		private readonly static int _dueDateRow = 3;
+		private readonly static int _labelRow = 4;
 
 		internal SalesOrderWorksheet(string customer, Excel.Worksheet oldSheet)
 		{
@@ -105,7 +106,7 @@ namespace ExcelAddIn1
 			int row = 15;
 			string rowNumber = oldSheet.Cells[row, 1].Text;
 
-			int weeks = findLeadTimeWeeks();
+			int weeks = FindLeadTimeWeeks();
 			string dueDate = CalculateDueDate.calculateDueDate(weeks);
 			soSheet.Cells[_dueDateRow, 1] = dueDate;
 			soSheet.Cells[_dueDateRow, 1].Locked = true;
@@ -139,7 +140,7 @@ namespace ExcelAddIn1
 			soSheet.Protect();
 		}
 
-		private int findLeadTimeWeeks()
+		private int FindLeadTimeWeeks()
 		{
 			int row = nextRow;
 			string title = oldSheet.Cells[row, 1].Text;
@@ -420,7 +421,7 @@ namespace ExcelAddIn1
 
 		private static class SendRequest
 		{
-			internal static List<(string, string)> AddItems(List<(string, string)> items)
+			internal static void AddItems(List<(string, string)> items)
 			{
 				// Convert format from salesOrderList to NonInvItem List
 				List<QBItem> list = new List<QBItem>();
@@ -435,69 +436,53 @@ namespace ExcelAddIn1
 					list.Add(item);
 				}
 
-				AddItemNonInventoryRequest rq = new AddItemNonInventoryRequest(list);
-				List<StatusResponse> rs = rq.SendRequest();
+				QBConnector qBConnector = new QBConnector();
+				var response = qBConnector.Client.AddNonInvItem(list);
 
-				// if item was succesfully added, return it in the salesOrderList. (So it can be changed from "isNew" = Y)
-				List<(string, string)> addedList = new List<(string, string)>();
-				int item_idx = 0;
-
-				bool success = true;
-				foreach (StatusResponse status in rs)
+				foreach (var status in response)
 				{
-					if (status._code == 0)
+					if (status.StatusCode != 0)
 					{
-						addedList.Add((list[item_idx].Name, list[item_idx].Desc));
+						throw new Exception("Error adding items to QuickBooks");
 					}
-					else                     {
-						success = false;
-					}	
-
-					item_idx++;
 				}
-
-				if (!success)
-				{
-					throw new Exception("Error adding items to QuickBooks");
-				}
-
-				return addedList;
 			}
 
-			internal static int SendSalesOrder(List<SOSheetQuoteItem> items, string customer, string po, DateTime dueDate)
+			internal static void SendSalesOrder(List<SOSheetQuoteItem> items, string customer, string po, DateTime dueDate)
 			{
-				SalesOrderRequest rq = new SalesOrderRequest(QuoteItemToSalesOrder(items, customer, po, dueDate));
-				StatusResponse rs = rq.SendRequest();
+                List<QBItem> qbItems = new List<QBItem>();
+				foreach (SOSheetQuoteItem item in items)
+				{
+					QBItem qbItem = new QBItem
+					{
+						Number = item.GetNumber(),
+						Description = item.GetDescription(),
+						Rate = item.GetRate(),
+						Quantity = item.GetQuantity()
+					};
+                    qbItems.Add(qbItem);
+                }
 
-				if (rs._code != 0)
+                QBCustomer cust = new QBCustomer
+                {
+                    Name = customer,
+                    PO = po
+                };
+
+                QBOrder order = new QBOrder
+                {
+                    Customer = cust,
+                    DueDate = dueDate,
+                    Items = qbItems
+                };
+
+                QBConnector qBConnector = new QBConnector();
+                var response = qBConnector.Client.AddOrder(order);
+
+                if (response.StatusCode != 0)
 				{
 					throw new Exception("Error sending sales order to QuickBooks");
 				}
-
-				return 0;
-			}
-
-			private static SalesOrder QuoteItemToSalesOrder(List<SOSheetQuoteItem> items, string customer, string po, DateTime dueDate)
-			{
-				List<NonInvItem> nonInvList = new List<NonInvItem>();
-
-				foreach (SOSheetQuoteItem item in items)
-				{
-					NonInvItem soItem = new NonInvItem
-					{
-						AccountName = "Sales Income",
-						Name = item.GetNumber(),
-						Desc = item.GetDescription(),
-						Quantity = item.GetQuantity(),
-						Rate = item.GetRate()
-					};
-
-					nonInvList.Add(soItem);
-				}
-
-				SalesOrder order = new SalesOrder(customer, po, dueDate, nonInvList);
-
-				return order;
 			}
 		}
 

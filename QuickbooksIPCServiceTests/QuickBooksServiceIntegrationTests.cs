@@ -72,6 +72,7 @@ namespace QuickBooksServiceLibrary.IntegrationTests
             //// Wait for the service to be ready
             //bool serviceReady = WaitForServiceReady(TimeSpan.FromSeconds(10));
             //Assert.IsTrue(serviceReady, "WCF Service did not become ready within the expected time.");
+
             // Create the WCF client
             NetNamedPipeBinding binding = new NetNamedPipeBinding
             {

@@ -11,8 +11,9 @@ namespace ExcelAddIn1.SendToQb
         private readonly string _serviceExecutablePath;
         private Process _serviceProcess;
 
-        public QBServiceHost(string serviceExecutablePath)
+        public QBServiceHost()
         {
+            string serviceExecutablePath = _getServiceExecutablePath();
             if (string.IsNullOrWhiteSpace(serviceExecutablePath))
                 throw new ArgumentException("Service executable path cannot be null or empty.", nameof(serviceExecutablePath));
 
@@ -20,6 +21,13 @@ namespace ExcelAddIn1.SendToQb
                 throw new FileNotFoundException("Service executable not found.", serviceExecutablePath);
 
             _serviceExecutablePath = serviceExecutablePath;
+        }
+
+        private string _getServiceExecutablePath()
+        {
+            var baseDirectory = AppDomain.CurrentDomain.BaseDirectory;
+            var projectDirectory = Directory.GetParent(baseDirectory).Parent.Parent.FullName;
+            return projectDirectory + "\\ServiceHost\\debug\\QuickBooksServiceHost.exe";
         }
 
         /// <summary>
@@ -40,6 +48,8 @@ namespace ExcelAddIn1.SendToQb
                     FileName = _serviceExecutablePath,
                     UseShellExecute = false,
                     CreateNoWindow = true,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true
                     // You can set additional properties like Arguments if needed
                 };
 
@@ -48,6 +58,25 @@ namespace ExcelAddIn1.SendToQb
                 {
                     throw new InvalidOperationException("Failed to start QuickBooksService process.");
                 }
+
+                // Read the output asynchronously
+                _serviceProcess.OutputDataReceived += (sender, e) =>
+                {
+                    if (!string.IsNullOrEmpty(e.Data))
+                    {
+                        Debug.WriteLine($"[Service Output]: {e.Data}");
+                    }
+                };
+                _serviceProcess.ErrorDataReceived += (sender, e) =>
+                {
+                    if (!string.IsNullOrEmpty(e.Data))
+                    {
+                        Debug.WriteLine($"[Service Error]: {e.Data}");
+                    }
+                };
+
+                _serviceProcess.BeginOutputReadLine();
+                _serviceProcess.BeginErrorReadLine();
 
                 // Optionally, wait for the service to initialize
                 // For example, wait until a specific endpoint is available

@@ -88,7 +88,7 @@ namespace QBRequestLibrary
             return ConvertResponse(response);
         }
 
-        public T2 SendRequest()
+        public virtual T2 SendRequest()
         {
             T2 response;
             Connect();
@@ -227,13 +227,13 @@ namespace QBRequestLibrary
         }
     }
 
-    public class AllItemNonInvQueryRequest : Request<Object, QBStatusResponse<List<QBItem>>>, IAllItemNonInvQueryRequest
+    public class AllItemNonInvQueryRequest : Request<object, QBStatusResponse<List<QBItem>>>, IAllItemNonInvQueryRequest
     {
+
         public AllItemNonInvQueryRequest()
         {
             Set(null);
         }
-
         protected override void BuildRequest()
         {
             _msgSetRequest = _connection.SessionManager.CreateMsgSetRequest("US", QBSDKMajorVersion, QBSDKMinorVersion);
@@ -244,47 +244,63 @@ namespace QBRequestLibrary
         protected override void BuildHelper()
         {
             IItemNonInventoryQuery ItemNonInventoryQueryRq = _msgSetRequest.AppendItemNonInventoryQueryRq();
+            // Specify only the necessary fields to retrieve
+            ItemNonInventoryQueryRq.IncludeRetElementList.Add("Name");
+            ItemNonInventoryQueryRq.IncludeRetElementList.Add("SalesOrPurchase");
+            ItemNonInventoryQueryRq.IncludeRetElementList.Add("SalesAndPurchase");
         }
 
         protected override QBStatusResponse<List<QBItem>> ConvertResponse(IMsgSetResponse responseSet)
         {
-
-            QBStatusResponse<List<QBItem>> retResponse = new QBStatusResponse<List<QBItem>>();
-            retResponse.Data = new List<QBItem>();
-            IResponseList iResponseList = (IResponseList)responseSet.ResponseList;
-            for (int i = 0; i < iResponseList.Count; ++i)
+            QBStatusResponse<List<QBItem>> retResponse = new QBStatusResponse<List<QBItem>>
             {
-                IResponse response = iResponseList.GetAt(i);
-                if ((ENResponseType)response.Type.GetValue() != ENResponseType.rtItemNonInventoryQueryRs) { throw new QBRequestLibraryRuntimeError("Not an ItemNonInventoryQueryRs Response"); }
-                IItemNonInventoryRetList ItemNonInventoryRetList = (IItemNonInventoryRetList)response.Detail;
+                Data = new List<QBItem>()
+            };
+
+            IResponseList responseList = responseSet.ResponseList;
+            if (responseList == null || responseList.Count == 0)
+            {
+                throw new InvalidResponseException("No responses received.");
+            }
+
+            for (int i = 0; i < responseList.Count; ++i)
+            {
+                IResponse response = responseList.GetAt(i);
+                if ((ENResponseType)response.Type.GetValue() != ENResponseType.rtItemNonInventoryQueryRs)
+                {
+                    throw new QBRequestLibraryRuntimeError("Unexpected response type.");
+                }
+
+                IItemNonInventoryRetList ItemNonInventoryRetList = response.Detail as IItemNonInventoryRetList;
+                if (ItemNonInventoryRetList == null)
+                {
+                    continue; // Or handle as needed
+                }
 
                 for (int j = 0; j < ItemNonInventoryRetList.Count; ++j)
                 {
-                    IItemNonInventoryRet ItemRet = ItemNonInventoryRetList.GetAt(i);
-                    QBItem item = new QBItem();
-                    item.Number = ItemRet.Name.GetValue();
-                    item.Description = "";
-
-                    if (ItemRet.ORSalesPurchase.SalesOrPurchase != null)
+                    IItemNonInventoryRet ItemRet = ItemNonInventoryRetList.GetAt(j);
+                    QBItem item = new QBItem
                     {
-                        if (ItemRet.ORSalesPurchase.SalesOrPurchase.Desc != null)
-                        {
-                            item.Description = ItemRet.ORSalesPurchase.SalesOrPurchase.Desc.GetValue();
-                        }
-                    }
-                    else if (ItemRet.ORSalesPurchase.SalesAndPurchase != null)
-                    {
-                        if (ItemRet.ORSalesPurchase.SalesAndPurchase.SalesDesc != null)
-                        {
-                            item.Description = ItemRet.ORSalesPurchase.SalesAndPurchase.SalesDesc.GetValue();
-                        }
-                    }
+                        Number = ItemRet.Name?.GetValue() ?? string.Empty,
+                        Description = ItemRet.ORSalesPurchase?.SalesOrPurchase?.Desc?.GetValue()
+                                      ?? ItemRet.ORSalesPurchase?.SalesAndPurchase?.SalesDesc?.GetValue()
+                                      ?? string.Empty
+                    };
                     retResponse.Data.Add(item);
                 }
             }
 
+            // Optionally, you can aggregate status codes and messages if needed
+            // For simplicity, we're assuming a single status code/message
+            if (responseList.Count > 0)
+            {
+                IResponse firstResponse = responseList.GetAt(0);
+                retResponse.StatusCode = firstResponse.StatusCode;
+                retResponse.StatusMessage = firstResponse.StatusMessage;
+            }
+
             return retResponse;
         }
-
     }
 } 

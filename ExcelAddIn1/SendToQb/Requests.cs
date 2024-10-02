@@ -1,25 +1,23 @@
-﻿namespace ExcelAddIn1
-{
-	/** 
-	 * <summary>
-	 * Class <c>QuoteUtility</c> drives the quote utility
-	 * </summary>
-	 */
-	internal static class Requests
-	{
+﻿using ExcelAddIn1.SendToQb;
+using System;
 
-		/**
-		 * <summary>
-		 * This method finds customer number from worksheet
-		 * </summary>
-		 * <remarks>Modifies requestMsgSet</remarks>
-		 * <returns>string as customer Name</returns>
-		 */
-		internal static string QueryCustomer(string name)
-		{
-			CustomerQueryRequest request = new CustomerQueryRequest(name);
-			CustomerQueryResponse response = request.SendRequest();
-			return response.Name;
-		}
-	}
+namespace ExcelAddIn1
+{
+    
+    /// <summary>
+    /// This class contains methods for making requests to QuickBooks.
+    /// </summary>
+    internal static class Requests
+    {
+        /// <summary>
+        /// This method queries the customer name from the worksheet.
+        /// </summary>
+        /// <param name="name">The name of the customer.</param>
+        /// <returns>The customer name as a string.</returns>
+        internal static string QueryCustomer(string name)
+        {
+            QBConnector qBConnector = new QBConnector();
+            return qBConnector.Client.GetCustomer(name).Name;
+        }
+    }
 }

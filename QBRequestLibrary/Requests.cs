@@ -99,6 +99,8 @@ namespace QBRequestLibrary
             catch (Exception e)
             {
                 Disconnect();
+                Logger _logger = new Logger();
+                _logger.LogError(e.Message);
                 throw e;
             }
             Disconnect();
@@ -144,7 +146,6 @@ namespace QBRequestLibrary
 
     public class SalesOrderRequest : Request<QBOrder, QBStatusResponse<string>>, ISalesOrderRequest
     {
-        private readonly QBOrder salesOrder;
         public SalesOrderRequest(QBOrder salesOrder)
         {
             Set(salesOrder);
@@ -154,12 +155,12 @@ namespace QBRequestLibrary
         {
             ISalesOrderAdd SalesOrderAddRq = _msgSetRequest.AppendSalesOrderAddRq();
 
-            SalesOrderAddRq.CustomerRef.FullName.SetValue(salesOrder.Customer.Name);
-            SalesOrderAddRq.PONumber.SetValue(salesOrder.Customer.PO);
-            SalesOrderAddRq.DueDate.SetValue(salesOrder.DueDate);
-            SalesOrderAddRq.ShipDate.SetValue(salesOrder.DueDate);
+            SalesOrderAddRq.CustomerRef.FullName.SetValue(_value.Customer.Name);
+            SalesOrderAddRq.PONumber.SetValue(_value.Customer.PO);
+            SalesOrderAddRq.DueDate.SetValue(_value.DueDate);
+            SalesOrderAddRq.ShipDate.SetValue(_value.DueDate);
 
-            foreach (var item in salesOrder.Items)
+            foreach (var item in _value.Items)
             {
                 ISalesOrderLineAdd SalesOrderLineAdd = SalesOrderAddRq.ORSalesOrderLineAddList.Append().SalesOrderLineAdd;
                 SalesOrderLineAdd.ItemRef.FullName.SetValue(item.Number);

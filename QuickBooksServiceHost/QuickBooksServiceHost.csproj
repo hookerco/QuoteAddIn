@@ -48,7 +48,7 @@
     <WarningLevel>4</WarningLevel>
   </PropertyGroup>
   <PropertyGroup>
-    <ApplicationIcon>BTIIncLogo.ico</ApplicationIcon>
+    <ApplicationIcon>DALL·E 2024-10-03 10.47.13 - A modern logo for a service console application that sends quotes from Excel to QuickBooks. The logo should feature a combination of elements from bot.ico</ApplicationIcon>
   </PropertyGroup>
   <ItemGroup>
     <Reference Include="System" />
@@ -105,6 +105,7 @@
   </ItemGroup>
   <ItemGroup>
     <Content Include="BTIIncLogo.ico" />
+    <Content Include="DALL·E 2024-10-03 10.47.13 - A modern logo for a service console application that sends quotes from Excel to QuickBooks. The logo should feature a combination of elements from bot.ico" />
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
   <PropertyGroup>

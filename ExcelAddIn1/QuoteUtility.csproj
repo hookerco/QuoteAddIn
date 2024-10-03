@@ -263,12 +263,6 @@
       <SubType>Code</SubType>
     </Compile>
     <None Include="QuoteUtility_TemporaryKey.pfx" />
-    <None Include="ServiceHost\debug\QuickBooksIPCService.dll.config">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-    <None Include="ServiceHost\debug\QuickBooksServiceHost.exe.config">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
     <None Include="ThisAddIn.Designer.xml">
       <DependentUpon>ThisAddIn.cs</DependentUpon>
     </None>
@@ -284,42 +278,6 @@
   </ItemGroup>
   <ItemGroup>
     <Content Include="notes.txt" />
-    <Content Include="ServiceHost\debug\QBRequestLibrary.dll">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </Content>
-    <Content Include="ServiceHost\debug\QBRequestLibrary.pdb">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </Content>
-    <Content Include="ServiceHost\debug\QuickBooksIPCContracts.dll">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </Content>
-    <Content Include="ServiceHost\debug\QuickBooksIPCContracts.pdb">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </Content>
-    <Content Include="ServiceHost\debug\QuickBooksIPCService.dll">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </Content>
-    <Content Include="ServiceHost\debug\QuickBooksIPCService.pdb">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </Content>
-    <Content Include="ServiceHost\debug\QuickBooksServiceHost.exe">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </Content>
-    <Content Include="ServiceHost\debug\QuickBooksServiceHost.pdb">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </Content>
-    <Content Include="ServiceHost\debug\System.Configuration.ConfigurationManager.dll">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </Content>
-    <Content Include="ServiceHost\debug\System.Configuration.ConfigurationManager.xml">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </Content>
-    <Content Include="ServiceHost\debug\System.ServiceModel.Primitives.dll">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </Content>
-    <Content Include="ServiceHost\debug\System.ServiceModel.Primitives.pdb">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </Content>
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\QuickBooksIPCContracts\QuickBooksIPCContracts.csproj">

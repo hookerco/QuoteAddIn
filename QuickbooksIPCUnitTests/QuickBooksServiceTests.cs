@@ -122,8 +122,10 @@ namespace QuickBooksServiceLibrary.Tests
             Assert.AreEqual(expectedResponse.StatusCode, result.StatusCode);
             Assert.AreEqual(expectedResponse.StatusMessage, result.StatusMessage);
             Assert.AreEqual(2, result.Data.Count);
-            Assert.IsTrue(result.Data.Contains(new QBItem { Number = "Item1", Description = "Description1" }));
-            Assert.IsTrue(result.Data.Contains(new QBItem { Number = "Item2", Description = "Description2" }));
+            Assert.IsTrue(result.Data[0].Number == "Item1");
+            Assert.IsTrue(result.Data[0].Description == "Description1");
+            Assert.IsTrue(result.Data[1].Number == "Item2");
+            Assert.IsTrue(result.Data[1].Description == "Description2");
 
             _mockRequestFactory.Verify(f => f.CreateAllItemNonInvQueryRequest(), Times.Once);
             mockAllItemNonInvQueryRequest.Verify(r => r.SendRequest(), Times.Once);
@@ -135,8 +137,8 @@ namespace QuickBooksServiceLibrary.Tests
             // Arrange
             var items = new List<QBItem>
             {
-                new QBItem { Number = "Item1", Description = "Description1", AccountName = "Account1" },
-                new QBItem { Number = "Item2", Description = "Description2", AccountName = "Account2" }
+                new QBItem { Number = "Item1", Description = "Description1" },
+                new QBItem { Number = "Item2", Description = "Description2" }
             };
 
             var expectedResponses = new List<QBStatusResponse<string>>

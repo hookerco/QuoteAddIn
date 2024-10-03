@@ -38,13 +38,6 @@ namespace QuickBooksServiceHost
                     host.Open();
                     Console.WriteLine("WCF Service is running...");
 
-                    Stopwatch sw = new Stopwatch();
-                    Console.WriteLine("Preloading cache...");
-                    sw.Start();
-                    serviceInstance.GetAllItems(); // Preload the cache
-                    sw.Stop();
-                    Console.WriteLine($"Cache preloaded in {sw.ElapsedMilliseconds}ms");
-
                     // Use ManualResetEvent to keep the process alive
                     ManualResetEvent shutdownEvent = new ManualResetEvent(false);
                     Console.CancelKeyPress += (sender, eventArgs) =>
@@ -60,6 +53,8 @@ namespace QuickBooksServiceHost
                 catch (Exception ex)
                 {
                     Console.Error.WriteLine($"An exception occurred: {ex.Message}");
+                    //Console.WriteLine("Press enter to end the service");
+                    //Console.ReadLine();
                     host.Abort();
                 }
             }

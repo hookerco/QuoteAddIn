@@ -22,6 +22,13 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "QuickBooksServiceHost", "Qu
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ScratchQuotebooktests", "ScratchQuotebooktests\ScratchQuotebooktests.csproj", "{E50E3548-E51A-42E0-9AEA-3919AA2EFA7F}"
 EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution Items", "{B7A9BB2D-6F52-4AA7-9B58-7166264BCFC8}"
+	ProjectSection(SolutionItems) = preProject
+		deploy_servicehost.ps1 = deploy_servicehost.ps1
+		install_service_host.bat = install_service_host.bat
+		install_service_host.ps1 = install_service_host.ps1
+	EndProjectSection
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU

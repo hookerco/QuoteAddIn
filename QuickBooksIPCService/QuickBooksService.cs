@@ -7,6 +7,7 @@ using QuickBooksIPCContracts;
 using System.Data.SqlClient;
 using System.Threading.Tasks;
 using System.Threading;
+using System.Diagnostics;
 
 namespace QuickBooksIPCService
 {
@@ -18,21 +19,50 @@ namespace QuickBooksIPCService
             = new Dictionary<string, QBStatusResponse<List<QBItem>>>();
         private bool _cacheValid = false;
         private readonly Logger _logger = new Logger();
+        private bool _disposed = false;
 
         public QuickBooksService(IRequestFactory requestFactory)
         {
             _requestFactory = requestFactory ?? throw new ArgumentNullException(nameof(requestFactory));
-            Task.Run(() => UpdateCache());
-            _logger.LogInfo("Updated cache in background");
-            Task.Run(() => AutoUpdateCache(30));
+            _initialize();
         }
 
         public QuickBooksService()
         {
             _requestFactory = new RequestFactory();
-            Task.Run(() => UpdateCache());
-            _logger.LogInfo("Updated cache in background");
+            _initialize();
+        }
+
+        private void _initialize()
+        {
+            _logger.LogSessionStart();
+            Task.Run(() => UpdateCache(background: true, initial: true));
             Task.Run(() => AutoUpdateCache(30));
+        }
+
+        public void Dispose()
+        {
+            Dispose(true);
+            GC.SuppressFinalize(this);
+        }
+
+        protected virtual void Dispose(bool disposing)
+        {
+            if (!_disposed)
+            {
+                if (disposing)
+                {
+                    // Dispose managed resources
+                    _logger.LogSessionEnd();
+                }
+                // Dispose unmanaged resources if any
+                _disposed = true;
+            }
+        }
+
+        ~QuickBooksService()
+        {
+            Dispose(false);
         }
 
         public string Ping()
@@ -62,7 +92,7 @@ namespace QuickBooksIPCService
             if (!_cacheValid)
             {
                 // Perform the query (this is the long-running part)
-                UpdateCache();
+                UpdateCache(background: false);
                 _logger.LogInfo("Updated cache in main thread");
             }
 
@@ -70,15 +100,30 @@ namespace QuickBooksIPCService
             return _cache["AllItemInventory"];
         }
 
-        private void UpdateCache()
+        private void UpdateCache(bool background, bool initial = false)
         {
+            if (initial)
+            {
+                Console.WriteLine("Updating cache, service not ready");
+            }
             var req = _requestFactory.CreateAllItemNonInvQueryRequest();
+
+            Stopwatch sw = new Stopwatch();
+            sw.Start();
             var result = req.SendRequest();
+            sw.Stop();
+            var elapsedSeconds = (double)sw.ElapsedMilliseconds / 1000;
 
             lock (_cache)
             {
                 _cache["AllItemInventory"] = result;
                 _cacheValid = true;
+            }
+
+            _logger.LogInfo($"Updated cache in {(background ? "background" : "main thread")}: {elapsedSeconds} seconds");
+            if (initial)
+            {
+                Console.WriteLine($"WCF Service is running... {elapsedSeconds} second start-up");
             }
         }
 
@@ -88,7 +133,7 @@ namespace QuickBooksIPCService
             while (true)
             {
                 Thread.Sleep(ms_interval);
-                UpdateCache();
+                UpdateCache(background: true);
             }
         }
 
@@ -112,7 +157,7 @@ namespace QuickBooksIPCService
             }
 
             InvalidateAllItemsCache();
-            Task.Run(() => UpdateCache());
+            Task.Run(() => UpdateCache(background: true));
             _logger.LogInfo("Updated cache in background");
 
             return response;

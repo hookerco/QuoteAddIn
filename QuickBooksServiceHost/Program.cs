@@ -15,12 +15,9 @@ namespace QuickBooksServiceHost
     {
         static void Main(string[] args)
         {
-            // App setting comes from a shared config file in the solution directory, fyi
             string baseAddress = "net.pipe://localhost/QuickBooksService";
 
-            QuickBooksService serviceInstance = new QuickBooksService();
-
-            using (ServiceHost host = new ServiceHost(serviceInstance, new Uri(baseAddress)))
+            using (ServiceHost host = new ServiceHost(typeof(QuickBooksService), new Uri(baseAddress)))
             {
                 NetNamedPipeBinding binding = new NetNamedPipeBinding();
                 host.AddServiceEndpoint(typeof(IQuickBooksService), binding, "");
@@ -36,7 +33,6 @@ namespace QuickBooksServiceHost
                 try
                 {
                     host.Open();
-                    Console.WriteLine("WCF Service is running...");
 
                     // Use ManualResetEvent to keep the process alive
                     ManualResetEvent shutdownEvent = new ManualResetEvent(false);
@@ -46,7 +42,9 @@ namespace QuickBooksServiceHost
                         shutdownEvent.Set();
                     };
 
+                    
                     shutdownEvent.WaitOne();
+                    
 
                     host.Close();
                 }

@@ -58,6 +58,10 @@ namespace QBRequestLibrary
                 // Append the log message to the file
                 using (StreamWriter writer = new StreamWriter(_logFilePath, true))
                 {
+                    if (logType == "SESSION")
+                    {
+                        writer.WriteLine();
+                    }
                     writer.WriteLine(logMessage);
                 }
             }
@@ -66,6 +70,18 @@ namespace QBRequestLibrary
                 // If logging fails, write the error to the console as a fallback
                 Console.Error.WriteLine($"Logging failed: {ex.Message}");
             }
+        }
+
+        public void LogSessionStart()
+        {
+            string sessionStartMessage = "--- SESSION START ---";
+            Log("SESSION", sessionStartMessage);
+        }
+
+        public void LogSessionEnd()
+        {
+            string sessionEndMessage = "--- SESSION END ---";
+            Log("SESSION", sessionEndMessage);
         }
     }
 }

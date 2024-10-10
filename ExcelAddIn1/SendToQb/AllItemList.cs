@@ -39,8 +39,9 @@ namespace ExcelAddIn1
 			foreach (var item in response.Data)
 			{
 				IQuoteItem quoteItem = new BaseQuoteItem();
-				quoteItem.SetNumber(item.Number);
-				quoteItem.SetDescription(item.Description);
+				// Upper because some of the same item have different capitalizations in quickbooks
+				quoteItem.SetNumber(item.Number.ToUpper());
+				quoteItem.SetDescription(item.Description.ToUpper());
 				itemList.Add(quoteItem);
 			}
 
@@ -55,7 +56,8 @@ namespace ExcelAddIn1
 		 */
 		public string FindMPN(string part)
 		{
-			string foundNum = ""; // Part number (serial)
+			part = part.ToUpper(); // Upper because some of the same item have different capitalizations in quickbooks
+            string foundNum = ""; // Part number (serial)
 			string foundDesc = ""; // Description
 			bool found = false;
 
@@ -76,7 +78,8 @@ namespace ExcelAddIn1
 		// same as above but with Serialized number
 		public string FindSerialNumber(string part)
 		{
-			string foundNum = ""; // Part number (serial)
+			part = part.ToUpper(); // Upper because some of the same item have different capitalizations in quickbooks
+            string foundNum = ""; // Part number (serial)
 			string foundDesc = ""; // Description
 			bool found = false;
 
@@ -105,7 +108,7 @@ namespace ExcelAddIn1
             {
                 return true;
             }
-            if (part.ToLower().Contains("spec"))
+            if (part.ToUpper().Contains("SPEC"))
             {
                 return true;
             }

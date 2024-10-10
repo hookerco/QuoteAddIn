@@ -528,7 +528,7 @@ namespace ExcelAddIn1
 
 		internal string Generate()
 		{
-			int count = 0;
+			int count = 1;
 			foreach (int partNum in sortedNumberSet)
 			{
 				if (count != partNum)

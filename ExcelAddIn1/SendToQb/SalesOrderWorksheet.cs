@@ -148,7 +148,7 @@ namespace ExcelAddIn1
 			{
 				++row;
 				title = oldSheet.Cells[row, 1].Text;
-				if (row > 100)
+				if (row > 500)
 				{
 					throw new Exception("Lead Time not found"); // no unlimited loops
 				}

@@ -161,7 +161,11 @@ namespace ExcelAddIn1
 
 			for (int i = 0; i <= numItems; i++) // Loop is for formatting
 			{
-				newSheet.Cells.Range["B" + (iterator + i) + ":E" + (iterator + i)].Merge();
+				if (newSheet.Cells.Range["A" + (iterator + i)].Text.Contains("#")) // contains a number
+                {
+                    newSheet.Cells.Range["B" + (iterator + i) + ":E" + (iterator + i)].Merge();
+                }
+                
 
 				Excel.Range BRange = newSheet.Cells.Range["B" + (iterator + i)];
 

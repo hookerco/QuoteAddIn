@@ -12,12 +12,14 @@ namespace QBRequestLibrary
     {
         T2 SendRequest();
     }
+
     /**
 	 * <summary>Request class, abstract. Instantiate using concrete classes provided below.</summary>
 	 * <remarks><c>Connect()</c> to open a connection and session, <c>Send()</c> to send request and receive response.</remarks>
 	 */
     public abstract class Request<T1, T2> : IRequest<T1, T2>
     {
+        Logger Logger = new Logger();
         protected T1 _value;
         protected Connection _connection = new Connection();
         protected bool _open = false;
@@ -99,8 +101,7 @@ namespace QBRequestLibrary
             catch (Exception e)
             {
                 Disconnect();
-                Logger _logger = new Logger();
-                _logger.LogError(e.Message);
+                Logger.LogError(e.Message);
                 throw e;
             }
             Disconnect();
@@ -164,6 +165,7 @@ namespace QBRequestLibrary
             {
                 ISalesOrderLineAdd SalesOrderLineAdd = SalesOrderAddRq.ORSalesOrderLineAddList.Append().SalesOrderLineAdd;
                 SalesOrderLineAdd.ItemRef.FullName.SetValue(item.Number);
+                SalesOrderLineAdd.Desc.SetValue(item.Description);
                 SalesOrderLineAdd.Quantity.SetValue(item.Quantity);
                 SalesOrderLineAdd.ORRatePriceLevel.Rate.SetValue(item.Rate);
             }

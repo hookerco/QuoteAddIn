@@ -263,6 +263,12 @@ namespace QuickBooksServiceLibrary.IntegrationTests
             //Assert.AreEqual("Items Retrieved Successfully", response.StatusMessage, "StatusMessage should indicate success.");
             Assert.IsNotNull(response.Data, "Data should not be null.");
             Assert.IsNotEmpty(response.Data, "Data should contain at least one item.");
+            foreach (var item in response.Data)
+            {
+                Assert.IsNotNull(item.Number, "Item Number should not be null.");
+                Assert.IsNotNull(item.Description, "Item Description should not be null.");
+                Assert.IsNotNull(item.Active, "Item Active should not be null.");
+            }
         }
 
         [Test]

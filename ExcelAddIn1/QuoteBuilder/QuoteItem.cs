@@ -17,7 +17,9 @@ namespace ExcelAddIn1
 		void SetRate(double value);
 		int GetQuantity();
 		void SetQuantity(int value);
-	}
+		bool GetIsActive();
+        void SetIsActive(bool value);
+    }
 
 	public interface IQuote
 	{
@@ -35,8 +37,9 @@ namespace ExcelAddIn1
 		protected string _description;
 		protected double _rate;
 		protected int _quantity;
+        protected bool _isActive;
 
-		public string GetNumber() => _number;
+        public string GetNumber() => _number;
 		public void SetNumber(string value) => _number = value;
 		public string GetDescription() => _description;
 		public void SetDescription(string value) => _description = value;
@@ -44,7 +47,9 @@ namespace ExcelAddIn1
 		public void SetRate(double value) => _rate = value;
 		public int GetQuantity() => _quantity;
 		public void SetQuantity(int value) => _quantity = value;
-	}
+        public bool GetIsActive() => _isActive;
+        public void SetIsActive(bool value) => _isActive = value;
+    }
 
     public class BaseQuote : IQuote
     {

@@ -251,6 +251,8 @@ namespace QBRequestLibrary
             ItemNonInventoryQueryRq.IncludeRetElementList.Add("Name");
             ItemNonInventoryQueryRq.IncludeRetElementList.Add("SalesOrPurchase");
             ItemNonInventoryQueryRq.IncludeRetElementList.Add("SalesAndPurchase");
+            ItemNonInventoryQueryRq.IncludeRetElementList.Add("IsActive");
+            ItemNonInventoryQueryRq.ORListQueryWithOwnerIDAndClass.ListWithClassFilter.ActiveStatus.SetValue(ENActiveStatus.asAll);
         }
 
         protected override QBStatusResponse<List<QBItem>> ConvertResponse(IMsgSetResponse responseSet)
@@ -288,7 +290,8 @@ namespace QBRequestLibrary
                         Number = ItemRet.Name?.GetValue() ?? string.Empty,
                         Description = ItemRet.ORSalesPurchase?.SalesOrPurchase?.Desc?.GetValue()
                                       ?? ItemRet.ORSalesPurchase?.SalesAndPurchase?.SalesDesc?.GetValue()
-                                      ?? string.Empty
+                                      ?? string.Empty,
+                        Active = ItemRet.IsActive.GetValue(),
                     };
                     retResponse.Data.Add(item);
                 }

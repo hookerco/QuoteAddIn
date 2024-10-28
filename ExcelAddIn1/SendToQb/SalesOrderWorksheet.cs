@@ -513,7 +513,9 @@ namespace ExcelAddIn1
 			public void SetQuantity(int value) { internalQuote.SetQuantity(value); }
 			public string GetOverride() { return _override; }
 			public void SetOverride(string value ) { _override = value; }
-		}
+			public bool GetIsActive() { return internalQuote.GetIsActive(); }
+            public void SetIsActive(bool value) { internalQuote.SetIsActive(value); }
+        }
 	}
 
 	internal class NumberGenerator

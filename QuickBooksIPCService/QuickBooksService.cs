@@ -37,7 +37,7 @@ namespace QuickBooksIPCService
         {
             _logger.LogSessionStart();
             Task.Run(() => UpdateCache(background: true, initial: true));
-            Task.Run(() => AutoUpdateCache(30));
+            Task.Run(() => AutoUpdateCache(60));
         }
 
         public void Dispose()

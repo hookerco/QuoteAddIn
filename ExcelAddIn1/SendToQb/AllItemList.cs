@@ -42,7 +42,8 @@ namespace ExcelAddIn1
 				// Upper because some of the same item have different capitalizations in quickbooks
 				quoteItem.SetNumber(item.Number.ToUpper());
 				quoteItem.SetDescription(item.Description.ToUpper());
-				itemList.Add(quoteItem);
+				quoteItem.SetIsActive(item.Active);
+                itemList.Add(quoteItem);
 			}
 
 			return true;
@@ -65,7 +66,12 @@ namespace ExcelAddIn1
 			{
 				if (itemList[i].GetDescription().Contains(part) && IsOurPartNum(itemList[i].GetNumber()))
 				{
-					found = true;
+					if (itemList[i].GetIsActive() == false)
+                    {
+                        Debug.WriteLine("Inactive part #: " + itemList[i].GetNumber());
+						continue;
+                    }
+                    found = true;
 					foundNum = itemList[i].GetNumber();
 					foundDesc = itemList[i].GetDescription();
 				}
@@ -85,7 +91,12 @@ namespace ExcelAddIn1
 
 			for (int i = 0; i < itemList.Count; ++i)
 			{
-				if (itemList[i].GetNumber() == part && !IsOurPartNum(part)) 
+                if (itemList[i].GetIsActive() == false)
+                {
+                    Debug.WriteLine("Inactive part #: " + itemList[i].GetNumber());
+                    continue;
+                }
+                if (itemList[i].GetNumber() == part && !IsOurPartNum(part)) 
 				{
 					Debug.WriteLine("Not part #: " + part);
 				}

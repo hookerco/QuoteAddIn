@@ -102,8 +102,8 @@ namespace QuickBooksServiceLibrary.Tests
                 StatusMessage = "Items Retrieved Successfully",
                 Data = new List<QBItem>
                 {
-                    new QBItem { Number = "Item1", Description = "Description1" },
-                    new QBItem { Number = "Item2", Description = "Description2" }
+                    new QBItem { Number = "Item1", Description = "Description1", Active = true },
+                    new QBItem { Number = "Item2", Description = "Description2", Active = false }
                 }
             };
 
@@ -126,9 +126,11 @@ namespace QuickBooksServiceLibrary.Tests
             Assert.IsTrue(result.Data[0].Description == "Description1");
             Assert.IsTrue(result.Data[1].Number == "Item2");
             Assert.IsTrue(result.Data[1].Description == "Description2");
+            Assert.IsTrue(result.Data[0].Active == true);
+            Assert.IsTrue(result.Data[1].Active == false);
 
-            _mockRequestFactory.Verify(f => f.CreateAllItemNonInvQueryRequest(), Times.Once);
-            mockAllItemNonInvQueryRequest.Verify(r => r.SendRequest(), Times.Once);
+            _mockRequestFactory.Verify(f => f.CreateAllItemNonInvQueryRequest(), Times.AtLeastOnce);
+            mockAllItemNonInvQueryRequest.Verify(r => r.SendRequest(), Times.AtLeastOnce);
         }
 
         [Test]

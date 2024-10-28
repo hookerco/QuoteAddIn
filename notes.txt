@@ -1,0 +1,5 @@
+- deploy_servicehost.ps1 puts install_service_host.bat into install folder in Z:Colton_TEST/QB install folder and puts release build into z drive. user runs that, 
+which calls install_service_host.ps1, which puts files onto user computer and makes desktop shortcut.
+
+- to use: setup file in install folder installs the excel add in. QuickBooks Service Host is the server, which makes the calls to the quickbooks file. That needs
+to be running before using the excel add in.

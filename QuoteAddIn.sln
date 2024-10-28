@@ -27,6 +27,7 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution 
 		deploy_servicehost.ps1 = deploy_servicehost.ps1
 		install_service_host.bat = install_service_host.bat
 		install_service_host.ps1 = install_service_host.ps1
+		notes.txt = notes.txt
 	EndProjectSection
 EndProject
 Global

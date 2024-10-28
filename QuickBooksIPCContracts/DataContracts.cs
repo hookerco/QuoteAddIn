@@ -21,6 +21,9 @@ namespace QuickBooksIPCContracts
 
         [DataMember]
         public string AccountName { get; set; }
+
+        [DataMember]
+        public bool Active { get; set; }
     }
 
     [DataContract]

@@ -8,6 +8,8 @@ using System.ServiceModel.Description;
 using System.Threading;
 using System.Diagnostics;
 
+using QBRequestLibrary;
+
 
 namespace QuickBooksServiceHost
 {
@@ -29,11 +31,9 @@ namespace QuickBooksServiceHost
                 };
                 host.Description.Behaviors.Add(smb);
                 host.AddServiceEndpoint(typeof(IMetadataExchange), MetadataExchangeBindings.CreateMexNamedPipeBinding(), "mex");
-
                 try
                 {
                     host.Open();
-
                     // Use ManualResetEvent to keep the process alive
                     ManualResetEvent shutdownEvent = new ManualResetEvent(false);
                     Console.CancelKeyPress += (sender, eventArgs) =>
@@ -44,7 +44,6 @@ namespace QuickBooksServiceHost
 
                     
                     shutdownEvent.WaitOne();
-                    
 
                     host.Close();
                 }

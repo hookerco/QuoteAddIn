@@ -78,6 +78,14 @@ namespace QuickBooksIPCService
             return response;
         }
 
+        public QBStatusResponse<string> AddEstimate(QBOrder order)
+        {
+            var req = _requestFactory.CreateEstimateRequest(order);
+            var response = req.SendRequest();
+            _logger.LogTransaction($"Added estimate {order.QuoteNumber} for customer {order.Customer.Name}");
+            return response;
+        }
+
         public QBCustomer GetCustomer(string accountNumber)
         {
             var req = _requestFactory.CreateCustomerQueryRequest(accountNumber);

@@ -12,6 +12,8 @@ namespace QBRequestLibrary
 
     public interface ISalesOrderRequest : IRequest<QBOrder, QBStatusResponse<string>> { }
 
+    public interface IEstimateRequest : IRequest<QBOrder, QBStatusResponse<string>> { }
+
     public interface IAddItemNonInventoryRequest : IRequest<List<QBItem>, List<QBStatusResponse<string>>> { }
 
     public interface IAllItemNonInvQueryRequest : IRequest<object, QBStatusResponse<List<QBItem>>> { }

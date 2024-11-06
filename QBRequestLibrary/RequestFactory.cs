@@ -20,6 +20,11 @@ namespace QBRequestLibrary
             return new SalesOrderRequest(order);
         }
 
+        public IEstimateRequest CreateEstimateRequest(QBOrder order)
+        {
+            return new EstimateRequest(order);
+        }
+
         public IAddItemNonInventoryRequest CreateAddItemNonInventoryRequest(List<QBItem> items)
         {
             return new AddItemNonInventoryRequest(items);

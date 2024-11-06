@@ -193,6 +193,53 @@ namespace QBRequestLibrary
         }
     }
 
+    public class EstimateRequest : Request<QBOrder, QBStatusResponse<string>>, IEstimateRequest
+    {
+        public EstimateRequest(QBOrder estimate)
+        {
+            Set(estimate);
+        }
+
+        protected override void BuildHelper()
+        {
+            IEstimateAdd EstimateAddRq = _msgSetRequest.AppendEstimateAddRq();
+
+            EstimateAddRq.CustomerRef.FullName.SetValue(_value.Customer.Name);
+            EstimateAddRq.PONumber.SetValue(_value.Customer.PO);
+            EstimateAddRq.TxnDate.SetValue(DateTime.Today);
+
+            foreach (var item in _value.Items)
+            {
+                IEstimateLineAdd EstimateLineAdd = EstimateAddRq.OREstimateLineAddList.Append().EstimateLineAdd;
+                EstimateLineAdd.ItemRef.FullName.SetValue(item.Number);
+                EstimateLineAdd.Desc.SetValue(item.Description);
+                EstimateLineAdd.Quantity.SetValue(item.Quantity);
+                EstimateLineAdd.ORRate.Rate.SetValue(item.Rate);
+            }
+        }
+
+        protected override QBStatusResponse<string> ConvertResponse(IMsgSetResponse responseSet)
+        {
+            IResponse response;
+            try
+            {
+                response = GetFirstResponse(responseSet);
+            }
+            catch (InvalidResponseException e)
+            {
+                Debug.WriteLine(string.Format("Exception caught: {0}", e.Message));
+                response = responseSet.ResponseList.GetAt(0);
+            }
+            if ((ENResponseType)response.Type.GetValue() != ENResponseType.rtEstimateAddRs) { throw new QBRequestLibraryRuntimeError("Not an EstimateAddResponse"); }
+            return new QBStatusResponse<string>
+            {
+                StatusCode = response.StatusCode,
+                StatusMessage = response.StatusMessage
+
+            };
+        }
+    }
+
     public class AddItemNonInventoryRequest : Request<List<QBItem>, List<QBStatusResponse<string>>>, IAddItemNonInventoryRequest
     {
         public AddItemNonInventoryRequest(List<QBItem> nonInvItems)

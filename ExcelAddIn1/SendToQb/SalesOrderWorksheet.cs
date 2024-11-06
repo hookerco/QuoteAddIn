@@ -4,6 +4,7 @@ using System.Text.RegularExpressions;
 using Excel = Microsoft.Office.Interop.Excel;
 using Button = Microsoft.Office.Tools.Excel.Controls.Button;
 using Worksheet = Microsoft.Office.Tools.Excel.Worksheet;
+using Microsoft.Office.Tools.Excel;
 using System.Windows.Forms;
 using QuickBooksIPCContracts;
 using ExcelAddIn1.SendToQb;
@@ -182,7 +183,8 @@ namespace ExcelAddIn1
 		{
 			AddCloseButton();
 			AddSendButton();
-		}
+            AddSwitch_SO_EstimateButton();
+        }
 
 		internal void AddCloseButton()
 		{
@@ -220,7 +222,20 @@ namespace ExcelAddIn1
 			sheet.Controls.AddControl(sendButton, range, "sendButton");
 		}
 
-		private void Send()
+		internal void AddSwitch_SO_EstimateButton()
+        {
+			ComboBox typeBox = new ComboBox();
+            typeBox.Items.Add("Sales Order");
+            typeBox.Items.Add("Estimate");
+            typeBox.SelectedIndex = 0;
+
+            Worksheet sheet = Globals.Factory.GetVstoObject(soSheet);
+
+			Excel.Range range = soSheet.Range["C" + nextRow];
+			sheet.Controls.AddControl(typeBox, range, "typeBox");
+        }
+
+        private void Send()
 		{
 			try
 			{
@@ -250,7 +265,9 @@ namespace ExcelAddIn1
 
 				MarkNumbersOnSheet(salesOrderList);
 
-				SendRequest.SendSalesOrder(salesOrderList, customer, po, dueDate);
+				string type_of_txn = GetComboBoxSelection();
+
+                SendRequest.SendOrder(salesOrderList, customer, po, dueDate, type_of_txn);
 
 				sent = true;
 
@@ -263,8 +280,29 @@ namespace ExcelAddIn1
 			}
 		}
 
-		
-		private List<SOSheetQuoteItem> GetItemsOnSheet()
+        // Assuming 'selectionBox' is the name of your ComboBox control on the sheet
+        private string GetComboBoxSelection()
+        {
+            // Get the VSTO version of the worksheet
+            Worksheet vstoSheet = Globals.Factory.GetVstoObject(soSheet);
+
+            // Retrieve the ComboBox control from the worksheet
+            var control = vstoSheet.Controls["typeBox"];
+
+            ComboBox comboBox = control as ComboBox;
+
+            // Check if the ComboBox exists and has a selection
+            if (control != null && comboBox.SelectedItem != null)
+            {
+                return comboBox.SelectedItem.ToString(); // Return the selected value
+            }
+
+			throw new Exception("Please select a transaction type");
+        }
+
+
+
+        private List<SOSheetQuoteItem> GetItemsOnSheet()
 		{ 
 			List<SOSheetQuoteItem> itemList = new List<SOSheetQuoteItem>();
 
@@ -448,7 +486,7 @@ namespace ExcelAddIn1
 				}
 			}
 
-			internal static void SendSalesOrder(List<SOSheetQuoteItem> items, string customer, string po, DateTime dueDate)
+			internal static void SendOrder(List<SOSheetQuoteItem> items, string customer, string po, DateTime dueDate, string type)
 			{
                 List<QBItem> qbItems = new List<QBItem>();
 				foreach (SOSheetQuoteItem item in items)
@@ -477,7 +515,9 @@ namespace ExcelAddIn1
                 };
 
                 QBConnector qBConnector = new QBConnector();
-                var response = qBConnector.Client.AddOrder(order);
+
+
+				QBStatusResponse<string> response = type == "Sales Order" ? qBConnector.Client.AddOrder(order) : qBConnector.Client.AddEstimate(order);
 
                 if (response.StatusCode != 0)
 				{
@@ -530,7 +570,7 @@ namespace ExcelAddIn1
 
 		internal string Generate()
 		{
-			int count = 1;
+			int count = 0;
 			foreach (int partNum in sortedNumberSet)
 			{
 				if (count != partNum)

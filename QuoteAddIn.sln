@@ -1,7 +1,7 @@
 ﻿
 Microsoft Visual Studio Solution File, Format Version 12.00
-# Visual Studio Version 17
-VisualStudioVersion = 17.5.33627.172
+# Visual Studio Version 18
+VisualStudioVersion = 18.0.11205.157 d18.0
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "QuoteUtility", "ExcelAddIn1\QuoteUtility.csproj", "{A437A186-417B-444A-992F-863DD78E0B05}"
 	ProjectSection(ProjectDependencies) = postProject
@@ -10,7 +10,7 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "QuoteUtility", "ExcelAddIn1
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "QuickBooksIPCContracts", "QuickBooksIPCContracts\QuickBooksIPCContracts.csproj", "{500E69E0-4AB5-41AD-8468-1584E27725F6}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "QuickBooksIPCService", "QuickBooksIPCService\QuickBooksIPCService.csproj", "{51C6701D-F607-47FE-948D-1FC4421731A2}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "QuickBooksIPCServiceLibrary", "QuickBooksIPCService\QuickBooksIPCServiceLibrary.csproj", "{51C6701D-F607-47FE-948D-1FC4421731A2}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "QuickBooksServiceLibrary.IntegrationTests", "QuickbooksIPCServiceTests\QuickBooksServiceLibrary.IntegrationTests.csproj", "{B350DC09-FE19-49EE-8C8B-E06D767CC318}"
 EndProject
@@ -19,8 +19,6 @@ EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "QBRequestLibrary", "QBRequestLibrary\QBRequestLibrary.csproj", "{DFD1DEDB-99DB-4509-9C75-50D665A47810}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "QuickBooksServiceHost", "QuickBooksServiceHost\QuickBooksServiceHost.csproj", "{D17752F4-945E-41B9-802F-24C799F97072}"
-EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ScratchQuotebooktests", "ScratchQuotebooktests\ScratchQuotebooktests.csproj", "{E50E3548-E51A-42E0-9AEA-3919AA2EFA7F}"
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution Items", "{B7A9BB2D-6F52-4AA7-9B58-7166264BCFC8}"
 	ProjectSection(SolutionItems) = preProject
@@ -64,10 +62,6 @@ Global
 		{D17752F4-945E-41B9-802F-24C799F97072}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{D17752F4-945E-41B9-802F-24C799F97072}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{D17752F4-945E-41B9-802F-24C799F97072}.Release|Any CPU.Build.0 = Release|Any CPU
-		{E50E3548-E51A-42E0-9AEA-3919AA2EFA7F}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{E50E3548-E51A-42E0-9AEA-3919AA2EFA7F}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{E50E3548-E51A-42E0-9AEA-3919AA2EFA7F}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{E50E3548-E51A-42E0-9AEA-3919AA2EFA7F}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

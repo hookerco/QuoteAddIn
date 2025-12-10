@@ -23,57 +23,6 @@ namespace QuickBooksServiceLibrary.IntegrationTests
         [OneTimeSetUp]
         public void OneTimeSetUp()
         {
-            //// Determine the path to the service executable
-            //string serviceExecutablePath = Path.Combine(@"C:\Users\chooker\Documents\Projects\QuoteAddIn\QuickBooksServiceHost\bin\Debug", ServiceExecutableName);
-
-            //if (!File.Exists(serviceExecutablePath))
-            //{
-            //    Assert.Fail($"Service executable not found at path: {serviceExecutablePath}");
-            //}
-
-            //// Start the service host process
-            //_serviceProcess = new Process
-            //{
-            //    StartInfo = new ProcessStartInfo
-            //    {
-            //        FileName = serviceExecutablePath,
-            //        Arguments = "", // Add any necessary arguments here
-            //        UseShellExecute = false,
-            //        CreateNoWindow = true,
-            //        RedirectStandardOutput = true,
-            //        RedirectStandardError = true
-            //    },
-            //    EnableRaisingEvents = true
-            //};
-
-            //// Optional: Handle output and error data
-            //_serviceProcess.OutputDataReceived += (sender, args) =>
-            //{
-            //    if (!string.IsNullOrEmpty(args.Data))
-            //    {
-            //        Debug.WriteLine($"Service Output: {args.Data}");
-            //    }
-            //};
-            //_serviceProcess.ErrorDataReceived += (sender, args) =>
-            //{
-            //    if (!string.IsNullOrEmpty(args.Data))
-            //    {
-            //        Debug.WriteLine($"Service Error: {args.Data}");
-            //    }
-            //};
-
-            //// Start the process
-            //_serviceProcess.Start();
-
-            //// Begin reading output streams
-            //_serviceProcess.BeginOutputReadLine();
-            //_serviceProcess.BeginErrorReadLine();
-
-            //// Wait for the service to be ready
-            //bool serviceReady = WaitForServiceReady(TimeSpan.FromSeconds(10));
-            //Assert.IsTrue(serviceReady, "WCF Service did not become ready within the expected time.");
-
-            // Create the WCF client
             NetNamedPipeBinding binding = new NetNamedPipeBinding
             {
                 MaxReceivedMessageSize = 2147483647,
@@ -84,11 +33,21 @@ namespace QuickBooksServiceLibrary.IntegrationTests
                     MaxArrayLength = 2147483647,
                     MaxBytesPerRead = 4096,
                     MaxNameTableCharCount = 2147483647
-                }
+                },
+                // Optional: increase binding-level timeouts as well
+                OpenTimeout = TimeSpan.FromSeconds(30),
+                SendTimeout = TimeSpan.FromMinutes(5),
+                ReceiveTimeout = TimeSpan.FromMinutes(5),
+                CloseTimeout = TimeSpan.FromSeconds(30)
             };
+
             EndpointAddress endpointAddress = new EndpointAddress(ServiceBaseAddress);
             _channelFactory = new ChannelFactory<IQuickBooksService>(binding, endpointAddress);
-            _client = _channelFactory.CreateChannel();
+
+            // Create the channel and increase per-operation timeout
+            var clientChannel = (IClientChannel)_channelFactory.CreateChannel();
+            clientChannel.OperationTimeout = TimeSpan.FromMinutes(5); // or whatever is reasonable
+            _client = (IQuickBooksService)clientChannel;
         }
 
         [OneTimeTearDown]

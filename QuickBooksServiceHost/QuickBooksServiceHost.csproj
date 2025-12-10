@@ -56,10 +56,10 @@
     <ApplicationIcon>auto_generated_icon.ico</ApplicationIcon>
   </PropertyGroup>
   <PropertyGroup>
-    <ManifestCertificateThumbprint>19987521DAA9D94407722CE7E4E13CB0855EC72E</ManifestCertificateThumbprint>
+    <ManifestCertificateThumbprint>AEB910544E6A3914B6C28193A5D42DA7B8A41E8B</ManifestCertificateThumbprint>
   </PropertyGroup>
   <PropertyGroup>
-    <ManifestKeyFile>QuickBooksServiceHost_TemporaryKey.pfx</ManifestKeyFile>
+    <ManifestKeyFile>QuickBooksServiceHost_1_TemporaryKey.pfx</ManifestKeyFile>
   </PropertyGroup>
   <PropertyGroup>
     <GenerateManifests>true</GenerateManifests>
@@ -96,6 +96,7 @@
   <ItemGroup>
     <None Include="App.config" />
     <None Include="packages.config" />
+    <None Include="QuickBooksServiceHost_1_TemporaryKey.pfx" />
     <None Include="QuickBooksServiceHost_TemporaryKey.pfx" />
   </ItemGroup>
   <ItemGroup>
@@ -107,9 +108,9 @@
       <Project>{500e69e0-4ab5-41ad-8468-1584e27725f6}</Project>
       <Name>QuickBooksIPCContracts</Name>
     </ProjectReference>
-    <ProjectReference Include="..\QuickBooksIPCService\QuickBooksIPCService.csproj">
+    <ProjectReference Include="..\QuickBooksIPCService\QuickBooksIPCServiceLibrary.csproj">
       <Project>{51c6701d-f607-47fe-948d-1fc4421731a2}</Project>
-      <Name>QuickBooksIPCService</Name>
+      <Name>QuickBooksIPCServiceLibrary</Name>
     </ProjectReference>
   </ItemGroup>
   <ItemGroup>

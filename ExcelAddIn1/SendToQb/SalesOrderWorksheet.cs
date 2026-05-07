@@ -356,8 +356,9 @@ namespace ExcelAddIn1
 				else
 				{
 					string QuotePartNum = FindPNinDescription(item.GetDescription());
+					string lookupPartNum = ItemLookupKey.GetLookupPartNumber(item.GetDescription(), QuotePartNum);
 
-					if (CheckIfExists(ref item, QuotePartNum, ref allItemList)) 
+					if (CheckIfExists(ref item, lookupPartNum, ref allItemList)) 
 					{
 						continue;
 					}

@@ -140,7 +140,7 @@ namespace QuickBooksServiceLibrary.IntegrationTests
             // Arrange
             var order = new QBOrder
             {
-                Customer = new QBCustomer { Name = "DummyCustomer" },
+                Customer = new QBCustomer { Name = "INDTUBECOM12345", PO = "IntegrationTest" },
                 DueDate = DateTime.Now,
                 Items = new List<QBItem>
                 {
@@ -166,7 +166,7 @@ namespace QuickBooksServiceLibrary.IntegrationTests
 
             // Assert
             Assert.IsNotNull(response, "Response should not be null.");
-            Assert.AreEqual(0, response.StatusCode, "StatusCode should be 0 indicating success.");
+            Assert.AreEqual(0, response.StatusCode, response.StatusMessage);
         }
 
         [Test]
@@ -234,10 +234,11 @@ namespace QuickBooksServiceLibrary.IntegrationTests
         public void AddNonInvItem_ShouldReturnSuccessResponses()
         {
             // Arrange
+            string itemPrefix = "IT-" + DateTime.Now.ToString("yyyyMMddHHmmss");
             var items = new List<QBItem>
             {
-                new QBItem { Number = "Item1", Description = "Description1", AccountName = "Sales Income" },
-                new QBItem { Number = "Item2", Description = "Description2", AccountName = "Sales Income" }
+                new QBItem { Number = itemPrefix + "-1", Description = "Description1", AccountName = "Sales Income" },
+                new QBItem { Number = itemPrefix + "-2", Description = "Description2", AccountName = "Sales Income" }
             };
 
             // Act
@@ -258,9 +259,9 @@ namespace QuickBooksServiceLibrary.IntegrationTests
             // Assert
             Assert.IsNotNull(responses, "Responses should not be null.");
             Assert.AreEqual(2, responses.Count, "There should be two responses.");
-            Assert.AreEqual(0, responses[0].StatusCode, "First response StatusCode should be 0 indicating success.");
+            Assert.AreEqual(0, responses[0].StatusCode, responses[0].StatusMessage);
             Assert.AreEqual("Status OK", responses[0].StatusMessage, "First response StatusMessage should indicate success.");
-            Assert.AreEqual(0, responses[1].StatusCode, "Second response StatusCode should be 0 indicating success.");
+            Assert.AreEqual(0, responses[1].StatusCode, responses[1].StatusMessage);
             Assert.AreEqual("Status OK", responses[1].StatusMessage, "Second response StatusMessage should indicate success.");
 
             // remove items afterward?

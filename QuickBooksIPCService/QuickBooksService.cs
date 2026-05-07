@@ -18,19 +18,29 @@ namespace QuickBooksIPCService
         private static readonly Dictionary<string, QBStatusResponse<List<QBItem>>> _cache
             = new Dictionary<string, QBStatusResponse<List<QBItem>>>();
         private bool _cacheValid = false;
-        private readonly Logger _logger = new Logger();
+        private readonly Logger _logger;
         private bool _disposed = false;
 
         public QuickBooksService(IRequestFactory requestFactory)
         {
             _requestFactory = requestFactory ?? throw new ArgumentNullException(nameof(requestFactory));
+            _logger = new Logger();
             _initialize();
         }
 
-        public QuickBooksService()
+        public QuickBooksService(IRequestFactory requestFactory, Logger logger, bool initialize = true)
         {
-            _requestFactory = new RequestFactory();
-            _initialize();
+            _requestFactory = requestFactory ?? throw new ArgumentNullException(nameof(requestFactory));
+            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+            if (initialize)
+            {
+                _initialize();
+            }
+        }
+
+        public QuickBooksService()
+            : this(new RequestFactory(), new Logger())
+        {
         }
 
         private void _initialize()

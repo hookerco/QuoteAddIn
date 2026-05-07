@@ -284,6 +284,7 @@ namespace QBRequestLibrary
         {
             Set(null);
         }
+
         protected override void BuildRequest()
         {
             _msgSetRequest = _connection.SessionManager.CreateMsgSetRequest("US", QBSDKMajorVersion, QBSDKMinorVersion);
@@ -293,23 +294,39 @@ namespace QBRequestLibrary
 
         protected override void BuildHelper()
         {
-            IItemNonInventoryQuery ItemNonInventoryQueryRq = _msgSetRequest.AppendItemNonInventoryQueryRq();
-            // Specify only the necessary fields to retrieve
-            ItemNonInventoryQueryRq.IncludeRetElementList.Add("Name");
-            ItemNonInventoryQueryRq.IncludeRetElementList.Add("SalesOrPurchase");
-            ItemNonInventoryQueryRq.IncludeRetElementList.Add("SalesAndPurchase");
-            ItemNonInventoryQueryRq.IncludeRetElementList.Add("IsActive");
-            ItemNonInventoryQueryRq.ORListQueryWithOwnerIDAndClass.ListWithClassFilter.ActiveStatus.SetValue(ENActiveStatus.asAll);
+            AppendNonInventoryQuery();
+            AppendServiceQuery();
+        }
+
+        private void AppendNonInventoryQuery()
+        {
+            IItemNonInventoryQuery rq = _msgSetRequest.AppendItemNonInventoryQueryRq();
+            rq.IncludeRetElementList.Add("Name");
+            rq.IncludeRetElementList.Add("SalesOrPurchase");
+            rq.IncludeRetElementList.Add("SalesAndPurchase");
+            rq.IncludeRetElementList.Add("IsActive");
+            rq.ORListQueryWithOwnerIDAndClass.ListWithClassFilter.ActiveStatus.SetValue(ENActiveStatus.asAll);
+        }
+
+        private void AppendServiceQuery()
+        {
+            // Query ItemService as well so callers get a complete item lookup list.
+            IItemServiceQuery rq = _msgSetRequest.AppendItemServiceQueryRq();
+            rq.IncludeRetElementList.Add("Name");
+            rq.IncludeRetElementList.Add("SalesOrPurchase");
+            rq.IncludeRetElementList.Add("SalesAndPurchase");
+            rq.IncludeRetElementList.Add("IsActive");
+            rq.ORListQueryWithOwnerIDAndClass.ListWithClassFilter.ActiveStatus.SetValue(ENActiveStatus.asAll);
         }
 
         protected override QBStatusResponse<List<QBItem>> ConvertResponse(IMsgSetResponse responseSet)
         {
-            QBStatusResponse<List<QBItem>> retResponse = new QBStatusResponse<List<QBItem>>
+            var retResponse = new QBStatusResponse<List<QBItem>>
             {
                 Data = new List<QBItem>()
             };
 
-            IResponseList responseList = responseSet.ResponseList;
+            IResponseList responseList = responseSet?.ResponseList;
             if (responseList == null || responseList.Count == 0)
             {
                 throw new InvalidResponseException("No responses received.");
@@ -318,42 +335,68 @@ namespace QBRequestLibrary
             for (int i = 0; i < responseList.Count; ++i)
             {
                 IResponse response = responseList.GetAt(i);
-                if ((ENResponseType)response.Type.GetValue() != ENResponseType.rtItemNonInventoryQueryRs)
+                ENResponseType responseType = (ENResponseType)response.Type.GetValue();
+
+                switch (responseType)
                 {
-                    throw new QBRequestLibraryRuntimeError("Unexpected response type.");
+                    case ENResponseType.rtItemNonInventoryQueryRs:
+                        AppendNonInventoryResults(response.Detail as IItemNonInventoryRetList, retResponse.Data);
+                        break;
+
+                    case ENResponseType.rtItemServiceQueryRs:
+                        AppendServiceResults(response.Detail as IItemServiceRetList, retResponse.Data);
+                        break;
+
+                    default:
+                        // Other responses in the MsgSet are not expected.
+                        throw new QBRequestLibraryRuntimeError("Unexpected response type.");
                 }
 
-                IItemNonInventoryRetList ItemNonInventoryRetList = response.Detail as IItemNonInventoryRetList;
-                if (ItemNonInventoryRetList == null)
+                // Preserve the first response status unless a later query reports an issue.
+                if (i == 0 || response.StatusCode != 0)
                 {
-                    continue; // Or handle as needed
+                    retResponse.StatusCode = response.StatusCode;
+                    retResponse.StatusMessage = response.StatusMessage;
                 }
-
-                for (int j = 0; j < ItemNonInventoryRetList.Count; ++j)
-                {
-                    IItemNonInventoryRet ItemRet = ItemNonInventoryRetList.GetAt(j);
-                    QBItem item = new QBItem
-                    {
-                        Number = ItemRet.Name?.GetValue() ?? string.Empty,
-                        Description = ItemRet.ORSalesPurchase?.SalesOrPurchase?.Desc?.GetValue()
-                                      ?? ItemRet.ORSalesPurchase?.SalesAndPurchase?.SalesDesc?.GetValue()
-                                      ?? string.Empty,
-                        Active = ItemRet.IsActive.GetValue(),
-                    };
-                    retResponse.Data.Add(item);
-                }
-            }
-
-            // Optionally, you can aggregate status codes and messages if needed
-            // For simplicity, we're assuming a single status code/message
-            if (responseList.Count > 0)
-            {
-                IResponse firstResponse = responseList.GetAt(0);
-                retResponse.StatusCode = firstResponse.StatusCode;
-                retResponse.StatusMessage = firstResponse.StatusMessage;
             }
 
             return retResponse;
         }
+
+        private static void AppendNonInventoryResults(IItemNonInventoryRetList list, List<QBItem> dest)
+        {
+            if (list == null) return;
+
+            for (int i = 0; i < list.Count; ++i)
+            {
+                IItemNonInventoryRet itemRet = list.GetAt(i);
+                if (itemRet == null) continue;
+                dest.Add(MapItem(itemRet.Name, itemRet.ORSalesPurchase, itemRet.IsActive));
+            }
+        }
+
+        private static void AppendServiceResults(IItemServiceRetList list, List<QBItem> dest)
+        {
+            if (list == null) return;
+
+            for (int i = 0; i < list.Count; ++i)
+            {
+                IItemServiceRet itemRet = list.GetAt(i);
+                if (itemRet == null) continue;
+                dest.Add(MapItem(itemRet.Name, itemRet.ORSalesPurchase, itemRet.IsActive));
+            }
+        }
+
+        private static QBItem MapItem(IQBStringType name, IORSalesPurchase ors, IQBBoolType isActive)
+        {
+            return new QBItem
+            {
+                Number = name?.GetValue() ?? string.Empty,
+                Description = ors?.SalesOrPurchase?.Desc?.GetValue()
+                              ?? ors?.SalesAndPurchase?.SalesDesc?.GetValue()
+                              ?? string.Empty,
+                Active = isActive?.GetValue() ?? false,
+            };
+        }
     }
-} 
+}

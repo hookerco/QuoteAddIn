@@ -6,6 +6,7 @@ using QuickBooksIPCContracts;
 using QuickBooksIPCService;
 using System;
 using System.Collections.Generic;
+using System.IO;
 
 namespace QuickBooksServiceLibrary.Tests
 {
@@ -19,7 +20,8 @@ namespace QuickBooksServiceLibrary.Tests
         public void Setup()
         {
             _mockRequestFactory = new Mock<IRequestFactory>();
-            _service = new QuickBooksService(_mockRequestFactory.Object);
+            var logPath = Path.Combine(TestContext.CurrentContext.WorkDirectory, "logs", "QuickBooksServiceTests.log");
+            _service = new QuickBooksService(_mockRequestFactory.Object, new Logger(logPath), initialize: false);
         }
 
         [Test]
@@ -102,6 +104,7 @@ namespace QuickBooksServiceLibrary.Tests
                 StatusMessage = "Items Retrieved Successfully",
                 Data = new List<QBItem>
                 {
+                    // Could be non-inventory or service items; the service aggregates both.
                     new QBItem { Number = "Item1", Description = "Description1", Active = true },
                     new QBItem { Number = "Item2", Description = "Description2", Active = false }
                 }

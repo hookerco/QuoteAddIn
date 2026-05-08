@@ -61,5 +61,46 @@ namespace ExcelAddIn1.Tests
 
             Assert.AreEqual("1-100", selected);
         }
+
+        [Test]
+        public void SelectBestItemNumber_DoesNotAllowWiWorkbookItemToMatchWdCandidateWithSameEdp()
+        {
+            List<ItemLookupCandidate> candidates = new List<ItemLookupCandidate>
+            {
+                new ItemLookupCandidate("1-100", "RB-2500A-03000, Radius Block EDP#3819", 0),
+                new ItemLookupCandidate("1-5160", "WD-2500A-03000, inserted wiper die EDP#3819", 1)
+            };
+
+            string selected = ItemLookupCandidateSelector.SelectBestItemNumber(candidates, "3819", "WI-2500A-03000");
+
+            Assert.AreEqual("", selected);
+        }
+
+        [Test]
+        public void SelectBestItemNumber_AllowsWdWorkbookItemToMatchEquivalentWdCandidate()
+        {
+            List<ItemLookupCandidate> candidates = new List<ItemLookupCandidate>
+            {
+                new ItemLookupCandidate("1-5160", "WD-2500A-03000, inserted wiper die EDP#3819", 0)
+            };
+
+            string selected = ItemLookupCandidateSelector.SelectBestItemNumber(candidates, "3819", "WD-2500A-03000");
+
+            Assert.AreEqual("1-5160", selected);
+        }
+
+        [Test]
+        public void SelectBestItemNumber_ReturnsNoMatchForWiWorkbookItemWhenSameEdpHasNoWiOrWdCandidate()
+        {
+            List<ItemLookupCandidate> candidates = new List<ItemLookupCandidate>
+            {
+                new ItemLookupCandidate("1-100", "RB-2500A-03000, Radius Block EDP#3819", 0),
+                new ItemLookupCandidate("1-200", "PD-2500A-03000, Pressure Die EDP#3819", 1)
+            };
+
+            string selected = ItemLookupCandidateSelector.SelectBestItemNumber(candidates, "3819", "WI-2500A-03000");
+
+            Assert.AreEqual("", selected);
+        }
     }
 }

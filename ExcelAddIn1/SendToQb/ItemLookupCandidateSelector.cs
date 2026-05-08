@@ -30,11 +30,17 @@ namespace ExcelAddIn1
                 return "";
             }
 
+            List<ItemLookupCandidate> eligibleCandidates = GetEligibleCandidates(candidates, preferredDescriptionPartNumber);
+            if (eligibleCandidates.Count == 0)
+            {
+                return "";
+            }
+
             ItemLookupCandidate best = null;
             int bestDistance = int.MaxValue;
             bool bestNumberMatchesLookup = false;
 
-            foreach (ItemLookupCandidate candidate in candidates)
+            foreach (ItemLookupCandidate candidate in eligibleCandidates)
             {
                 int distance = GetDescriptionPartDistance(candidate.Description, preferredDescriptionPartNumber);
                 bool numberMatchesLookup = NormalizedToken(candidate.Number) == NormalizedToken(lookupPartNumber);
@@ -53,6 +59,39 @@ namespace ExcelAddIn1
             }
 
             return best.Number;
+        }
+
+        private static List<ItemLookupCandidate> GetEligibleCandidates(
+            List<ItemLookupCandidate> candidates,
+            string preferredDescriptionPartNumber)
+        {
+            string preferredWiperKind = GetWiperKind(preferredDescriptionPartNumber);
+            if (preferredWiperKind == "")
+            {
+                return candidates;
+            }
+
+            List<ItemLookupCandidate> eligibleCandidates = new List<ItemLookupCandidate>();
+            foreach (ItemLookupCandidate candidate in candidates)
+            {
+                if (GetWiperKind(FindDescriptionPartNumber(candidate.Description)) == preferredWiperKind)
+                {
+                    eligibleCandidates.Add(candidate);
+                }
+            }
+
+            return eligibleCandidates;
+        }
+
+        private static string GetWiperKind(string partNumber)
+        {
+            Match match = Regex.Match(partNumber ?? "", @"^\s*(?<kind>WI|WD)(?=$|[^A-Z])", RegexOptions.IgnoreCase);
+            if (!match.Success)
+            {
+                return "";
+            }
+
+            return match.Groups["kind"].Value.ToUpperInvariant();
         }
 
         private static int GetDescriptionPartDistance(string description, string preferredDescriptionPartNumber)

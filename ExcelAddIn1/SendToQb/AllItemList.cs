@@ -57,10 +57,13 @@ namespace ExcelAddIn1
 		 */
 		public string FindMPN(string part)
 		{
+			return FindMPN(part, "");
+		}
+
+		public string FindMPN(string part, string preferredDescriptionPartNumber)
+		{
 			part = part.ToUpper(); // Upper because some of the same item have different capitalizations in quickbooks
-            string foundNum = ""; // Part number (serial)
-			string foundDesc = ""; // Description
-			bool found = false;
+			List<ItemLookupCandidate> candidates = new List<ItemLookupCandidate>();
 
 			for (int i = 0; i < itemList.Count; ++i)
 			{
@@ -68,17 +71,14 @@ namespace ExcelAddIn1
 				{
 					if (itemList[i].GetIsActive() == false)
                     {
-                        Debug.WriteLine("Inactive part #: " + itemList[i].GetNumber());
+						Debug.WriteLine("Inactive part #: " + itemList[i].GetNumber());
 						continue;
                     }
-                    found = true;
-					foundNum = itemList[i].GetNumber();
-					foundDesc = itemList[i].GetDescription();
+					candidates.Add(new ItemLookupCandidate(itemList[i].GetNumber(), itemList[i].GetDescription(), i));
 				}
-				if (found == true) break;
 			}
 			
-			return foundNum;
+			return ItemLookupCandidateSelector.SelectBestItemNumber(candidates, part, preferredDescriptionPartNumber);
 		}
 
 		// same as above but with Serialized number

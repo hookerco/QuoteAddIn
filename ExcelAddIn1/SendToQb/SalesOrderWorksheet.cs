@@ -358,7 +358,7 @@ namespace ExcelAddIn1
 					string QuotePartNum = FindPNinDescription(item.GetDescription());
 					string lookupPartNum = ItemLookupKey.GetLookupPartNumber(item.GetDescription(), QuotePartNum);
 
-					if (CheckIfExists(ref item, lookupPartNum, ref allItemList)) 
+					if (CheckIfExists(ref item, lookupPartNum, QuotePartNum, ref allItemList)) 
 					{
 						continue;
 					}
@@ -399,9 +399,9 @@ namespace ExcelAddIn1
 		/// </summary>
 		/// <param name="item">The SOSheetQuoteItem to check</param>
 		/// <param name="allItemList">The list of all items</param>
-		private bool CheckIfExists(ref SOSheetQuoteItem item, string QuotePartNum, ref AllItemList allItemList)
+		private bool CheckIfExists(ref SOSheetQuoteItem item, string lookupPartNum, string QuotePartNum, ref AllItemList allItemList)
 		{
-			item.SetNumber(allItemList.FindMPN(QuotePartNum));
+			item.SetNumber(allItemList.FindMPN(lookupPartNum, QuotePartNum));
 
 			if (item.GetNumber() != "") // if new item isn't in allItemList from QB
 			{

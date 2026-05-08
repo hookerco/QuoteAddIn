@@ -219,6 +219,7 @@
     <Compile Include="QuoteBuilder\QuoteSheet.cs" />
     <Compile Include="SendToQb\AllItemList.cs" />
     <Compile Include="SendToQb\CalculateDueDate.cs" />
+    <Compile Include="SendToQb\ItemLookupCandidateSelector.cs" />
     <Compile Include="SendToQb\ItemLookupKey.cs" />
     <Compile Include="QBClient\QBConnector.cs" />
     <Compile Include="SendToQb\Driver.cs" />

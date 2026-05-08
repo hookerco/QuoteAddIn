@@ -86,9 +86,13 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="ControlTests.cs" />
+    <Compile Include="ItemLookupCandidateSelectorTests.cs" />
     <Compile Include="ItemLookupKeyTests.cs" />
     <Compile Include="QBRequestTests.cs" />
     <Compile Include="QuickBooksServiceTests.cs" />
+    <Compile Include="..\ExcelAddIn1\SendToQb\ItemLookupCandidateSelector.cs">
+      <Link>ItemLookupCandidateSelector.cs</Link>
+    </Compile>
     <Compile Include="..\ExcelAddIn1\SendToQb\ItemLookupKey.cs">
       <Link>ItemLookupKey.cs</Link>
     </Compile>

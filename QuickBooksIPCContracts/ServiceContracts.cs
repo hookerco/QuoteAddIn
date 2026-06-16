@@ -16,6 +16,9 @@ namespace QuickBooksIPCContracts
         QBStatusResponse<string> AddEstimate(QBOrder order);
 
         [OperationContract]
+        QBStatusResponse<QBQuoteUploadResult> SubmitQuote(QBQuoteUploadRequest request);
+
+        [OperationContract]
         QBCustomer GetCustomer(string accountNumber);
 
         [OperationContract]

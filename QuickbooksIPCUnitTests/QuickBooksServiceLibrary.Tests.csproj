@@ -89,6 +89,7 @@
     <Compile Include="ItemLookupCandidateSelectorTests.cs" />
     <Compile Include="ItemLookupKeyTests.cs" />
     <Compile Include="QBRequestTests.cs" />
+    <Compile Include="QuoteUploadItemResolverTests.cs" />
     <Compile Include="QuickBooksServiceTests.cs" />
     <Compile Include="..\ExcelAddIn1\SendToQb\ItemLookupCandidateSelector.cs">
       <Link>ItemLookupCandidateSelector.cs</Link>

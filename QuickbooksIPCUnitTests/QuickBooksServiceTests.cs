@@ -175,6 +175,101 @@ namespace QuickBooksServiceLibrary.Tests
         }
 
         [Test]
+        public void SubmitQuote_WithExistingItemCreatesSalesOrderAndReturnsResolvedLines()
+        {
+            _service.InvalidateAllItemsCache();
+            var request = new QBQuoteUploadRequest
+            {
+                TransactionType = QBQuoteTransactionType.SalesOrder,
+                QuoteNumber = "Q-100",
+                Customer = new QBCustomer { Name = "CustomerName" },
+                CustomerPO = "PO-100",
+                DueDate = new DateTime(2026, 6, 16),
+                Lines = new List<QBQuoteUploadLine>
+                {
+                    new QBQuoteUploadLine
+                    {
+                        Description = "RB-2500A-03000, Radius Block",
+                        Quantity = 2,
+                        Rate = 12.5
+                    }
+                }
+            };
+
+            var itemResponse = new QBStatusResponse<List<QBItem>>
+            {
+                StatusCode = 0,
+                StatusMessage = "OK",
+                Data = new List<QBItem>
+                {
+                    new QBItem { Number = "1-1000", Description = "RB-2500A-03000, Radius Block", Active = true }
+                }
+            };
+            var mockAllItemsRequest = new Mock<IAllItemNonInvQueryRequest>();
+            mockAllItemsRequest.Setup(r => r.SendRequest()).Returns(itemResponse);
+            _mockRequestFactory
+                .Setup(f => f.CreateAllItemNonInvQueryRequest())
+                .Returns(mockAllItemsRequest.Object);
+
+            var orderResponse = new QBStatusResponse<string> { StatusCode = 0, StatusMessage = "OK" };
+            var mockSalesOrderRequest = new Mock<ISalesOrderRequest>();
+            mockSalesOrderRequest.Setup(r => r.SendRequest()).Returns(orderResponse);
+            _mockRequestFactory
+                .Setup(f => f.CreateSalesOrderRequest(It.Is<QBOrder>(order =>
+                    order.QuoteNumber == "Q-100" &&
+                    order.Customer.Name == "CustomerName" &&
+                    order.Customer.PO == "PO-100" &&
+                    order.DueDate == new DateTime(2026, 6, 16) &&
+                    order.Items.Count == 1 &&
+                    order.Items[0].Number == "1-1000" &&
+                    order.Items[0].Description == "RB-2500A-03000, Radius Block" &&
+                    order.Items[0].Quantity == 2 &&
+                    order.Items[0].Rate == 12.5)))
+                .Returns(mockSalesOrderRequest.Object);
+
+            QBStatusResponse<QBQuoteUploadResult> result = _service.SubmitQuote(request);
+
+            Assert.AreEqual(0, result.StatusCode);
+            Assert.AreEqual("OK", result.StatusMessage);
+            Assert.AreEqual(QBQuoteTransactionType.SalesOrder, result.Data.TransactionType);
+            Assert.AreEqual("CustomerName", result.Data.CustomerName);
+            Assert.AreEqual("Q-100", result.Data.QuoteNumber);
+            Assert.AreEqual("1-1000", result.Data.Lines[0].Number);
+            Assert.IsFalse(result.Data.Lines[0].CreatedItem);
+            _mockRequestFactory.Verify(f => f.CreateSalesOrderRequest(It.IsAny<QBOrder>()), Times.Once);
+            _mockRequestFactory.Verify(f => f.CreateAddItemNonInventoryRequest(It.IsAny<List<QBItem>>()), Times.Never);
+        }
+
+        [Test]
+        public void SubmitQuote_WhenCustomerLookupFailsReturnsFailureWithoutCreatingTransaction()
+        {
+            var request = new QBQuoteUploadRequest
+            {
+                TransactionType = QBQuoteTransactionType.Estimate,
+                QuoteNumber = "Q-404",
+                CustomerAccountNumber = "404",
+                Lines = new List<QBQuoteUploadLine>
+                {
+                    new QBQuoteUploadLine { Description = "RB-2500A-03000, Radius Block", Quantity = 1, Rate = 1 }
+                }
+            };
+
+            var mockCustomerRequest = new Mock<ICustomerQueryRequest>();
+            mockCustomerRequest.Setup(r => r.SendRequest()).Returns((QBCustomer)null);
+            _mockRequestFactory
+                .Setup(f => f.CreateCustomerQueryRequest("404"))
+                .Returns(mockCustomerRequest.Object);
+
+            QBStatusResponse<QBQuoteUploadResult> result = _service.SubmitQuote(request);
+
+            Assert.AreNotEqual(0, result.StatusCode);
+            StringAssert.Contains("Customer not found", result.StatusMessage);
+            Assert.IsNull(result.Data);
+            _mockRequestFactory.Verify(f => f.CreateEstimateRequest(It.IsAny<QBOrder>()), Times.Never);
+            _mockRequestFactory.Verify(f => f.CreateSalesOrderRequest(It.IsAny<QBOrder>()), Times.Never);
+        }
+
+        [Test]
         public void Constructor_WithNullRequestFactory_ShouldThrowArgumentNullException()
         {
             // Arrange, Act & Assert

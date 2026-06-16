@@ -43,6 +43,95 @@ namespace QuickBooksIPCContracts
     }
 
     [DataContract]
+    public enum QBQuoteTransactionType
+    {
+        [EnumMember]
+        Estimate,
+
+        [EnumMember]
+        SalesOrder
+    }
+
+    [DataContract]
+    public class QBQuoteUploadLine
+    {
+        [DataMember]
+        public string Description { get; set; }
+
+        [DataMember]
+        public int Quantity { get; set; }
+
+        [DataMember]
+        public double Rate { get; set; }
+
+        [DataMember]
+        public string OverrideNumber { get; set; }
+    }
+
+    [DataContract]
+    public class QBQuoteUploadRequest
+    {
+        [DataMember]
+        public QBQuoteTransactionType TransactionType { get; set; }
+
+        [DataMember]
+        public string QuoteNumber { get; set; }
+
+        [DataMember]
+        public string CustomerAccountNumber { get; set; }
+
+        [DataMember]
+        public string CustomerName { get; set; }
+
+        [DataMember]
+        public QBCustomer Customer { get; set; }
+
+        [DataMember]
+        public string CustomerPO { get; set; }
+
+        [DataMember]
+        public DateTime DueDate { get; set; }
+
+        [DataMember]
+        public List<QBQuoteUploadLine> Lines { get; set; }
+    }
+
+    [DataContract]
+    public class QBQuoteUploadResolvedLine
+    {
+        [DataMember]
+        public string Number { get; set; }
+
+        [DataMember]
+        public string Description { get; set; }
+
+        [DataMember]
+        public int Quantity { get; set; }
+
+        [DataMember]
+        public double Rate { get; set; }
+
+        [DataMember]
+        public bool CreatedItem { get; set; }
+    }
+
+    [DataContract]
+    public class QBQuoteUploadResult
+    {
+        [DataMember]
+        public QBQuoteTransactionType TransactionType { get; set; }
+
+        [DataMember]
+        public string CustomerName { get; set; }
+
+        [DataMember]
+        public string QuoteNumber { get; set; }
+
+        [DataMember]
+        public List<QBQuoteUploadResolvedLine> Lines { get; set; }
+    }
+
+    [DataContract]
     public class QBCustomer
     {
         [DataMember]

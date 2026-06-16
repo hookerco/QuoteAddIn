@@ -270,6 +270,58 @@ namespace QuickBooksServiceLibrary.Tests
         }
 
         [Test]
+        public void SubmitQuote_WithInvalidTransactionTypeReturnsFailureBeforeQuickBooksRequests()
+        {
+            var request = new QBQuoteUploadRequest
+            {
+                TransactionType = (QBQuoteTransactionType)999,
+                QuoteNumber = "Q-999",
+                Customer = new QBCustomer { Name = "CustomerName" },
+                DueDate = new DateTime(2026, 6, 16),
+                Lines = new List<QBQuoteUploadLine>
+                {
+                    new QBQuoteUploadLine { Description = "RB-2500A-03000, Radius Block", Quantity = 1, Rate = 1 }
+                }
+            };
+
+            QBStatusResponse<QBQuoteUploadResult> result = _service.SubmitQuote(request);
+
+            Assert.AreNotEqual(0, result.StatusCode);
+            StringAssert.Contains("TransactionType", result.StatusMessage);
+            Assert.IsNull(result.Data);
+            _mockRequestFactory.Verify(f => f.CreateAllItemNonInvQueryRequest(), Times.Never);
+            _mockRequestFactory.Verify(f => f.CreateAddItemNonInventoryRequest(It.IsAny<List<QBItem>>()), Times.Never);
+            _mockRequestFactory.Verify(f => f.CreateEstimateRequest(It.IsAny<QBOrder>()), Times.Never);
+            _mockRequestFactory.Verify(f => f.CreateSalesOrderRequest(It.IsAny<QBOrder>()), Times.Never);
+        }
+
+        [Test]
+        public void SubmitQuote_SalesOrderWithMinDueDateReturnsFailureBeforeQuickBooksRequests()
+        {
+            var request = new QBQuoteUploadRequest
+            {
+                TransactionType = QBQuoteTransactionType.SalesOrder,
+                QuoteNumber = "Q-NODATE",
+                Customer = new QBCustomer { Name = "CustomerName" },
+                DueDate = DateTime.MinValue,
+                Lines = new List<QBQuoteUploadLine>
+                {
+                    new QBQuoteUploadLine { Description = "RB-2500A-03000, Radius Block", Quantity = 1, Rate = 1 }
+                }
+            };
+
+            QBStatusResponse<QBQuoteUploadResult> result = _service.SubmitQuote(request);
+
+            Assert.AreNotEqual(0, result.StatusCode);
+            StringAssert.Contains("DueDate", result.StatusMessage);
+            Assert.IsNull(result.Data);
+            _mockRequestFactory.Verify(f => f.CreateAllItemNonInvQueryRequest(), Times.Never);
+            _mockRequestFactory.Verify(f => f.CreateAddItemNonInventoryRequest(It.IsAny<List<QBItem>>()), Times.Never);
+            _mockRequestFactory.Verify(f => f.CreateEstimateRequest(It.IsAny<QBOrder>()), Times.Never);
+            _mockRequestFactory.Verify(f => f.CreateSalesOrderRequest(It.IsAny<QBOrder>()), Times.Never);
+        }
+
+        [Test]
         public void Constructor_WithNullRequestFactory_ShouldThrowArgumentNullException()
         {
             // Arrange, Act & Assert

@@ -36,7 +36,9 @@ namespace QuickBooksIPCService
                     if (!ContainsActiveNumber(activeCatalog, overrideNumber) && numbersToCreate.Add(overrideNumber))
                     {
                         ReserveOneDashNumber(reservedNumbers, overrideNumber);
-                        result.ItemsToCreate.Add(CreateNonInventoryItem(overrideNumber, line.Description));
+                        QBItem item = CreateNonInventoryItem(overrideNumber, line.Description);
+                        result.ItemsToCreate.Add(item);
+                        activeCatalog.Add(item);
                         createdItem = true;
                     }
                     else
@@ -59,7 +61,9 @@ namespace QuickBooksIPCService
                     {
                         number = GenerateNumber(reservedNumbers);
                         numbersToCreate.Add(number);
-                        result.ItemsToCreate.Add(CreateNonInventoryItem(number, line.Description));
+                        QBItem item = CreateNonInventoryItem(number, line.Description);
+                        result.ItemsToCreate.Add(item);
+                        activeCatalog.Add(item);
                         createdItem = true;
                     }
                 }

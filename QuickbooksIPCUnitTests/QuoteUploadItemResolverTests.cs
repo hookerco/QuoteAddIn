@@ -126,6 +126,25 @@ namespace QuickBooksServiceLibrary.Tests
         }
 
         [Test]
+        public void Resolve_ReusesGeneratedItemForRepeatedMissingDescriptionInSamePass()
+        {
+            var result = QuoteUploadItemResolver.Resolve(
+                new[]
+                {
+                    new QBQuoteUploadLine { Description = "NEW-1, First New Item", Quantity = 1, Rate = 1 },
+                    new QBQuoteUploadLine { Description = "NEW-1, First New Item", Quantity = 2, Rate = 3 }
+                },
+                new List<QBItem>());
+
+            Assert.AreEqual("1-0000", result.ResolvedLines[0].Number);
+            Assert.AreEqual("1-0000", result.ResolvedLines[1].Number);
+            Assert.IsTrue(result.ResolvedLines[0].CreatedItem);
+            Assert.IsFalse(result.ResolvedLines[1].CreatedItem);
+            Assert.AreEqual(1, result.ItemsToCreate.Count);
+            Assert.AreEqual("1-0000", result.ItemsToCreate[0].Number);
+        }
+
+        [Test]
         public void Resolve_GeneratedNumbersSkipMissingOverrideNumbersReservedInSamePass()
         {
             var result = QuoteUploadItemResolver.Resolve(

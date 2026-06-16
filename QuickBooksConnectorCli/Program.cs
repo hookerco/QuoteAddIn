@@ -45,21 +45,13 @@ namespace QuickBooksConnectorCli
             catch (CliUsageException ex)
             {
                 Console.Error.WriteLine(ex.Message);
-                WriteJson(new Dictionary<string, object>
-                {
-                    { "status", "error" },
-                    { "message", ex.Message }
-                });
+                WriteErrorJson(2, ex.Message);
                 return 2;
             }
             catch (Exception ex)
             {
-                Console.Error.WriteLine(ex);
-                WriteJson(new Dictionary<string, object>
-                {
-                    { "status", "error" },
-                    { "message", ex.Message }
-                });
+                Console.Error.WriteLine(ex.Message);
+                WriteErrorJson(1, ex.Message);
                 return 1;
             }
         }
@@ -340,6 +332,16 @@ namespace QuickBooksConnectorCli
         private static void WriteJson(object value)
         {
             Console.Out.WriteLine(JsonSerializer.Serialize(value));
+        }
+
+        private static void WriteErrorJson(int statusCode, string statusMessage)
+        {
+            WriteJson(new Dictionary<string, object>
+            {
+                { "StatusCode", statusCode == 0 ? 1 : statusCode },
+                { "StatusMessage", statusMessage },
+                { "Data", null }
+            });
         }
 
         private sealed class QuickBooksServiceConnection : IDisposable

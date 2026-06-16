@@ -194,6 +194,18 @@ namespace QuickBooksIPCService
                 return "Quote upload request is required";
             }
 
+            if (request.TransactionType != QBQuoteTransactionType.Estimate &&
+                request.TransactionType != QBQuoteTransactionType.SalesOrder)
+            {
+                return "Quote upload request TransactionType must be Estimate or SalesOrder";
+            }
+
+            if (request.TransactionType == QBQuoteTransactionType.SalesOrder &&
+                request.DueDate == DateTime.MinValue)
+            {
+                return "SalesOrder quote upload request requires a DueDate";
+            }
+
             if (request.Lines == null || request.Lines.Count == 0)
             {
                 return "Quote upload request must include at least one line";

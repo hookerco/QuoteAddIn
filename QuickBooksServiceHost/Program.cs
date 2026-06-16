@@ -15,13 +15,21 @@ namespace QuickBooksServiceHost
 {
     class Program
     {
+        private static readonly TimeSpan ServiceOperationTimeout = TimeSpan.FromMinutes(5);
+
         static void Main(string[] args)
         {
             string baseAddress = "net.pipe://localhost/QuickBooksService";
 
             using (ServiceHost host = new ServiceHost(typeof(QuickBooksService), new Uri(baseAddress)))
             {
-                NetNamedPipeBinding binding = new NetNamedPipeBinding();
+                NetNamedPipeBinding binding = new NetNamedPipeBinding
+                {
+                    OpenTimeout = TimeSpan.FromSeconds(30),
+                    CloseTimeout = TimeSpan.FromSeconds(30),
+                    SendTimeout = ServiceOperationTimeout,
+                    ReceiveTimeout = ServiceOperationTimeout
+                };
                 host.AddServiceEndpoint(typeof(IQuickBooksService), binding, "");
 
                 // Optional: Enable metadata exchange (for client proxies)

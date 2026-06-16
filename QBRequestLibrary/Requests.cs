@@ -158,6 +158,10 @@ namespace QBRequestLibrary
 
             SalesOrderAddRq.CustomerRef.FullName.SetValue(_value.Customer.Name);
             SalesOrderAddRq.PONumber.SetValue(_value.Customer.PO);
+            if (!string.IsNullOrWhiteSpace(_value.QuoteNumber))
+            {
+                SalesOrderAddRq.RefNumber.SetValue(_value.QuoteNumber);
+            }
             SalesOrderAddRq.DueDate.SetValue(_value.DueDate);
             SalesOrderAddRq.ShipDate.SetValue(_value.DueDate);
 
@@ -206,6 +210,10 @@ namespace QBRequestLibrary
 
             EstimateAddRq.CustomerRef.FullName.SetValue(_value.Customer.Name);
             EstimateAddRq.PONumber.SetValue(_value.Customer.PO);
+            if (!string.IsNullOrWhiteSpace(_value.QuoteNumber))
+            {
+                EstimateAddRq.RefNumber.SetValue(_value.QuoteNumber);
+            }
             EstimateAddRq.TxnDate.SetValue(DateTime.Today);
 
             foreach (var item in _value.Items)

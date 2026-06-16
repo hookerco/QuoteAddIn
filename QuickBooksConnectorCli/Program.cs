@@ -346,12 +346,17 @@ namespace QuickBooksConnectorCli
 
         private sealed class QuickBooksServiceConnection : IDisposable
         {
+            private static readonly TimeSpan ServiceOperationTimeout = TimeSpan.FromMinutes(5);
             private readonly ChannelFactory<IQuickBooksService> _channelFactory;
 
             internal QuickBooksServiceConnection()
             {
                 var binding = new NetNamedPipeBinding
                 {
+                    OpenTimeout = TimeSpan.FromSeconds(30),
+                    CloseTimeout = TimeSpan.FromSeconds(30),
+                    SendTimeout = ServiceOperationTimeout,
+                    ReceiveTimeout = ServiceOperationTimeout,
                     MaxReceivedMessageSize = int.MaxValue,
                     ReaderQuotas = new XmlDictionaryReaderQuotas
                     {
@@ -365,6 +370,7 @@ namespace QuickBooksConnectorCli
 
                 _channelFactory = new ChannelFactory<IQuickBooksService>(binding, new EndpointAddress(ServiceBaseAddress));
                 Client = _channelFactory.CreateChannel();
+                ((IContextChannel)Client).OperationTimeout = ServiceOperationTimeout;
             }
 
             internal IQuickBooksService Client { get; private set; }

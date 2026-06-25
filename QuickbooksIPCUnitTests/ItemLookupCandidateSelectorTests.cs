@@ -102,5 +102,50 @@ namespace ExcelAddIn1.Tests
 
             Assert.AreEqual("", selected);
         }
+
+        [Test]
+        public void SelectBestItemNumber_DoesNotAllowWiWorkbookItemToMatchDieCandidateWhoseDescriptionLeadsWithWiToken()
+        {
+            // A wiper die is frequently labeled in QuickBooks with the paired insert's "WI-" part
+            // number as its leading token, so the kind must be judged from the "DIE" wording, not the
+            // leading token alone. Otherwise a WI insert line resolves to the WD die that shares its EDP.
+            List<ItemLookupCandidate> candidates = new List<ItemLookupCandidate>
+            {
+                new ItemLookupCandidate("1-5160", "WI-2500A-03000, INSERTED WIPER DIE EDP#3819", 0)
+            };
+
+            string selected = ItemLookupCandidateSelector.SelectBestItemNumber(candidates, "3819", "WI-2500A-03000");
+
+            Assert.AreEqual("", selected);
+        }
+
+        [Test]
+        public void SelectBestItemNumber_PrefersTrueInsertOverDieThatSharesEdpAndLeadsWithWiToken()
+        {
+            List<ItemLookupCandidate> candidates = new List<ItemLookupCandidate>
+            {
+                new ItemLookupCandidate("1-5160", "WI-2500A-03000, INSERTED WIPER DIE EDP#3819", 0),
+                new ItemLookupCandidate("1-5159", "WI-2500A-03000, INSERTED WIPER EDP#3819", 1)
+            };
+
+            string selected = ItemLookupCandidateSelector.SelectBestItemNumber(candidates, "3819", "WI-2500A-03000");
+
+            Assert.AreEqual("1-5159", selected);
+        }
+
+        [Test]
+        public void SelectBestItemNumber_MatchesWiInsertWhoseDescriptionMentionsDieButIsNotAWiperDie()
+        {
+            // An insert that merely references a die ("for die set") must still match its own item.
+            // Only the product-type phrase "wiper die" marks a die, not the bare word "die".
+            List<ItemLookupCandidate> candidates = new List<ItemLookupCandidate>
+            {
+                new ItemLookupCandidate("1-5159", "WI-2500A-03000, WIPER INSERT FOR DIE SET EDP#3819", 0)
+            };
+
+            string selected = ItemLookupCandidateSelector.SelectBestItemNumber(candidates, "3819", "WI-2500A-03000");
+
+            Assert.AreEqual("1-5159", selected);
+        }
     }
 }

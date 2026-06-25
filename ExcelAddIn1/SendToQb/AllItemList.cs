@@ -67,7 +67,7 @@ namespace ExcelAddIn1
 
 			for (int i = 0; i < itemList.Count; ++i)
 			{
-				if (itemList[i].GetDescription().Contains(part) && IsOurPartNum(itemList[i].GetNumber()))
+				if (DescriptionContainsLookup(itemList[i].GetDescription(), part) && IsOurPartNum(itemList[i].GetNumber()))
 				{
 					if (itemList[i].GetIsActive() == false)
                     {
@@ -110,6 +110,24 @@ namespace ExcelAddIn1
 			}
 
 			return foundNum;
+		}
+
+		// Wiper lookups collapse the key to a bare EDP number, which is then matched against item
+		// descriptions. Match a numeric key as a whole number so EDP "3819" does not match inside a
+		// longer run of digits such as "38190" or another item's "EDP#13819".
+		private static bool DescriptionContainsLookup(string description, string lookup)
+		{
+			if (string.IsNullOrEmpty(lookup))
+			{
+				return false;
+			}
+
+			if (Regex.IsMatch(lookup, @"^\d+$"))
+			{
+				return Regex.IsMatch(description ?? "", @"(?<!\d)" + Regex.Escape(lookup) + @"(?!\d)");
+			}
+
+			return (description ?? "").Contains(lookup);
 		}
 
 		private bool IsOurPartNum(string part)

@@ -194,5 +194,74 @@ namespace QuickBooksServiceLibrary.Tests
             Assert.IsTrue(result.ResolvedLines[0].CreatedItem);
             Assert.AreEqual(1, result.ItemsToCreate.Count);
         }
+
+        [Test]
+        public void Resolve_DoesNotMatchWiLineToDieCatalogItemWhoseDescriptionLeadsWithWiToken()
+        {
+            var result = QuoteUploadItemResolver.Resolve(
+                new[]
+                {
+                    new QBQuoteUploadLine
+                    {
+                        Description = "WI-2500A-03000, Inserted Wiper EDP#3819",
+                        Quantity = 1,
+                        Rate = 7
+                    }
+                },
+                new[]
+                {
+                    new QBItem { Number = "1-5160", Description = "WI-2500A-03000, Inserted Wiper Die EDP#3819", Active = true }
+                });
+
+            Assert.AreNotEqual("1-5160", result.ResolvedLines[0].Number);
+            Assert.IsTrue(result.ResolvedLines[0].CreatedItem);
+            Assert.AreEqual(1, result.ItemsToCreate.Count);
+        }
+
+        [Test]
+        public void Resolve_EdpLookupMatchesWholeNumberNotDigitSubstring()
+        {
+            var result = QuoteUploadItemResolver.Resolve(
+                new[]
+                {
+                    new QBQuoteUploadLine
+                    {
+                        Description = "WI-2500A-03000, Inserted Wiper EDP#3819",
+                        Quantity = 1,
+                        Rate = 7
+                    }
+                },
+                new[]
+                {
+                    new QBItem { Number = "1-1000", Description = "WI-9999X-00000, Inserted Wiper EDP#38190", Active = true }
+                });
+
+            Assert.AreNotEqual("1-1000", result.ResolvedLines[0].Number);
+            Assert.IsTrue(result.ResolvedLines[0].CreatedItem);
+            Assert.AreEqual(1, result.ItemsToCreate.Count);
+        }
+
+        [Test]
+        public void Resolve_MatchesWiLineToInsertWhoseDescriptionMentionsDieButIsNotAWiperDie()
+        {
+            var result = QuoteUploadItemResolver.Resolve(
+                new[]
+                {
+                    new QBQuoteUploadLine
+                    {
+                        Description = "WI-2500A-03000, Wiper Insert for Die Set EDP#3819",
+                        Quantity = 1,
+                        Rate = 7
+                    }
+                },
+                new[]
+                {
+                    new QBItem { Number = "1-5159", Description = "WI-2500A-03000, Wiper Insert for Die Set EDP#3819", Active = true }
+                });
+
+            Assert.AreEqual("1-5159", result.ResolvedLines[0].Number);
+            Assert.IsFalse(result.ResolvedLines[0].CreatedItem);
+            Assert.AreEqual(0, result.ItemsToCreate.Count);
+        }
     }
 }

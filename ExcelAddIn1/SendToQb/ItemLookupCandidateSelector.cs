@@ -74,7 +74,7 @@ namespace ExcelAddIn1
             List<ItemLookupCandidate> eligibleCandidates = new List<ItemLookupCandidate>();
             foreach (ItemLookupCandidate candidate in candidates)
             {
-                if (GetWiperKind(FindDescriptionPartNumber(candidate.Description)) == preferredWiperKind)
+                if (GetCandidateWiperKind(candidate.Description) == preferredWiperKind)
                 {
                     eligibleCandidates.Add(candidate);
                 }
@@ -92,6 +92,32 @@ namespace ExcelAddIn1
             }
 
             return match.Groups["kind"].Value.ToUpperInvariant();
+        }
+
+        // Classifies a catalog candidate as a wiper insert ("WI") or wiper die ("WD").
+        // A die is routinely entered in QuickBooks with the paired insert's "WI-" part number as its
+        // leading token, so the leading token alone is unreliable. The product-type phrase "wiper die"
+        // marks a die regardless of the prefix it leads with; the bare word "die" is not enough,
+        // because an insert description may merely reference one (e.g. "wiper insert for die set").
+        private static string GetCandidateWiperKind(string description)
+        {
+            string leadKind = GetWiperKind(FindDescriptionPartNumber(description));
+            if (leadKind == "")
+            {
+                return "";
+            }
+
+            if (DescribesWiperDie(description))
+            {
+                return "WD";
+            }
+
+            return leadKind;
+        }
+
+        private static bool DescribesWiperDie(string description)
+        {
+            return Regex.IsMatch(description ?? "", @"\bWIPER\s+DIES?\b", RegexOptions.IgnoreCase);
         }
 
         private static int GetDescriptionPartDistance(string description, string preferredDescriptionPartNumber)

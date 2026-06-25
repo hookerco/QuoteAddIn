@@ -157,7 +157,7 @@ namespace QuickBooksIPCService
                 string description = (item.Description ?? string.Empty).ToUpperInvariant();
                 string number = (item.Number ?? string.Empty).ToUpperInvariant();
 
-                if (description.Contains(lookup) && IsOurPartNumber(number))
+                if (DescriptionContainsLookup(description, lookup) && IsOurPartNumber(number))
                 {
                     candidates.Add(new ItemLookupCandidate(number, description, i));
                 }
@@ -305,7 +305,7 @@ namespace QuickBooksIPCService
             var eligibleCandidates = new List<ItemLookupCandidate>();
             foreach (ItemLookupCandidate candidate in candidates)
             {
-                if (GetWiperKind(FindDescriptionPartNumber(candidate.Description)) == preferredWiperKind)
+                if (GetCandidateWiperKind(candidate.Description) == preferredWiperKind)
                 {
                     eligibleCandidates.Add(candidate);
                 }
@@ -318,6 +318,50 @@ namespace QuickBooksIPCService
         {
             Match match = Regex.Match(partNumber ?? string.Empty, @"^\s*(?<kind>WI|WD)(?=$|[^A-Z])", RegexOptions.IgnoreCase);
             return match.Success ? match.Groups["kind"].Value.ToUpperInvariant() : string.Empty;
+        }
+
+        // Classifies a catalog candidate as a wiper insert ("WI") or wiper die ("WD").
+        // A die is routinely entered in QuickBooks with the paired insert's "WI-" part number as its
+        // leading token, so the leading token alone is unreliable. The product-type phrase "wiper die"
+        // marks a die regardless of the prefix it leads with; the bare word "die" is not enough,
+        // because an insert description may merely reference one (e.g. "wiper insert for die set").
+        private static string GetCandidateWiperKind(string description)
+        {
+            string leadKind = GetWiperKind(FindDescriptionPartNumber(description));
+            if (leadKind == string.Empty)
+            {
+                return string.Empty;
+            }
+
+            if (DescribesWiperDie(description))
+            {
+                return "WD";
+            }
+
+            return leadKind;
+        }
+
+        private static bool DescribesWiperDie(string description)
+        {
+            return Regex.IsMatch(description ?? string.Empty, @"\bWIPER\s+DIES?\b", RegexOptions.IgnoreCase);
+        }
+
+        // Wiper lookups collapse the key to a bare EDP number, which is then matched against item
+        // descriptions. Match a numeric key as a whole number so EDP "3819" does not match inside a
+        // longer run of digits such as "38190" or another item's "EDP#13819".
+        private static bool DescriptionContainsLookup(string description, string lookup)
+        {
+            if (string.IsNullOrEmpty(lookup))
+            {
+                return false;
+            }
+
+            if (Regex.IsMatch(lookup, @"^\d+$"))
+            {
+                return Regex.IsMatch(description ?? string.Empty, @"(?<!\d)" + Regex.Escape(lookup) + @"(?!\d)");
+            }
+
+            return (description ?? string.Empty).Contains(lookup);
         }
 
         private static int GetDescriptionPartDistance(string description, string preferredDescriptionPartNumber)

@@ -22,6 +22,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "QuickBooksServiceHost", "Qu
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "QuickBooksConnectorCli", "QuickBooksConnectorCli\QuickBooksConnectorCli.csproj", "{79AFED73-60EE-449E-82A5-9A3EF6D11120}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "QuickBooksConnectorCore", "QuickBooksConnectorCore\QuickBooksConnectorCore.csproj", "{C7E3B5A1-2D4F-4A8B-9E6C-1F0A2B3C4D5E}"
+EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution Items", "{B7A9BB2D-6F52-4AA7-9B58-7166264BCFC8}"
 	ProjectSection(SolutionItems) = preProject
 		deploy_servicehost.ps1 = deploy_servicehost.ps1
@@ -68,6 +70,10 @@ Global
 		{79AFED73-60EE-449E-82A5-9A3EF6D11120}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{79AFED73-60EE-449E-82A5-9A3EF6D11120}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{79AFED73-60EE-449E-82A5-9A3EF6D11120}.Release|Any CPU.Build.0 = Release|Any CPU
+		{C7E3B5A1-2D4F-4A8B-9E6C-1F0A2B3C4D5E}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{C7E3B5A1-2D4F-4A8B-9E6C-1F0A2B3C4D5E}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{C7E3B5A1-2D4F-4A8B-9E6C-1F0A2B3C4D5E}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{C7E3B5A1-2D4F-4A8B-9E6C-1F0A2B3C4D5E}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

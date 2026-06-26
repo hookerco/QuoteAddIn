@@ -29,4 +29,17 @@ Copy-Item -Path $installPSScript -Destination $networkPath -Force
 $installBatScript = "install_service_host.bat"
 Copy-Item -Path $installBatScript -Destination $networkInstallPath -Force
 
+# Seed the bridge settings file on the share from the template, but never overwrite an
+# existing one - that file holds the real QB_BRIDGE_TOKEN and is maintained on the share,
+# not in source control.
+$bridgeSettingsTemplate = "$currentDirectory\bridge.settings.template.psd1"
+$bridgeSettingsTarget = "$networkPath\bridge.settings.psd1"
+if (-not (Test-Path -Path $bridgeSettingsTarget -PathType Leaf)) {
+    Copy-Item -Path $bridgeSettingsTemplate -Destination $bridgeSettingsTarget -Force
+    Write-Host "Seeded bridge.settings.psd1 on the share. Set QB_BRIDGE_TOKEN in it before users install."
+}
+else {
+    Write-Host "Existing bridge.settings.psd1 on the share left untouched."
+}
+
 Write-Host "Files and install script have been copied to the network folder."

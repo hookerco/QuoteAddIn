@@ -86,6 +86,7 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="ControlTests.cs" />
+    <Compile Include="QuoteBridgeRouterTests.cs" />
     <Compile Include="ItemLookupCandidateSelectorTests.cs" />
     <Compile Include="ItemLookupKeyTests.cs" />
     <Compile Include="QBRequestTests.cs" />
@@ -103,6 +104,10 @@
     <ProjectReference Include="..\QBRequestLibrary\QBRequestLibrary.csproj">
       <Project>{dfd1dedb-99db-4509-9c75-50d665a47810}</Project>
       <Name>QBRequestLibrary</Name>
+    </ProjectReference>
+    <ProjectReference Include="..\QuickBooksConnectorCore\QuickBooksConnectorCore.csproj">
+      <Project>{c7e3b5a1-2d4f-4a8b-9e6c-1f0a2b3c4d5e}</Project>
+      <Name>QuickBooksConnectorCore</Name>
     </ProjectReference>
     <ProjectReference Include="..\QuickBooksIPCContracts\QuickBooksIPCContracts.csproj">
       <Project>{500e69e0-4ab5-41ad-8468-1584e27725f6}</Project>

@@ -361,3 +361,6 @@ MigrationBackup/
 
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
+# QuickBooks bridge shared secret - the real settings file lives only on the install
+# share, never in source control. The committed template is bridge.settings.template.psd1.
+bridge.settings.psd1

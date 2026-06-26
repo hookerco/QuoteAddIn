@@ -71,6 +71,37 @@ if (-not (Test-Path -Path $connectorCliTargetPath -PathType Leaf)) {
     $connectorCliTargetPath,
     [EnvironmentVariableTarget]::Machine)
 
+# Provision the QuickBooks localhost bridge settings as machine env vars so the host
+# picks them up no matter which user launches it. The shared token comes from
+# bridge.settings.psd1 sitting next to this installer on the share (git-ignored, set
+# once for everyone). Defaults are used for anything missing.
+$bridgeDefaults = @{
+    QB_BRIDGE_TOKEN  = ''
+    QB_BRIDGE_ORIGIN = 'http://APPSRV01:8742'
+    QB_BRIDGE_PORT   = '8788'
+}
+$bridgeSettingsPath = Join-Path $sourcePath 'bridge.settings.psd1'
+$bridgeSettings = $bridgeDefaults.Clone()
+if (Test-Path -Path $bridgeSettingsPath -PathType Leaf) {
+    $loadedSettings = Import-PowerShellDataFile -Path $bridgeSettingsPath
+    foreach ($key in @('QB_BRIDGE_TOKEN', 'QB_BRIDGE_ORIGIN', 'QB_BRIDGE_PORT')) {
+        if ($loadedSettings.ContainsKey($key) -and -not [string]::IsNullOrWhiteSpace([string]$loadedSettings[$key])) {
+            $bridgeSettings[$key] = [string]$loadedSettings[$key]
+        }
+    }
+}
+else {
+    Write-Warning "bridge.settings.psd1 was not found next to the installer; using defaults (blank token)."
+}
+
+foreach ($key in @('QB_BRIDGE_TOKEN', 'QB_BRIDGE_ORIGIN', 'QB_BRIDGE_PORT')) {
+    [Environment]::SetEnvironmentVariable($key, $bridgeSettings[$key], [EnvironmentVariableTarget]::Machine)
+}
+
+if ([string]::IsNullOrWhiteSpace($bridgeSettings['QB_BRIDGE_TOKEN'])) {
+    Write-Warning 'QB_BRIDGE_TOKEN is blank - the QuickBooks bridge will reject all requests with 403 until it is set in bridge.settings.psd1 and the host is restarted.'
+}
+
 $shortcutName = 'QuickBooksServiceHost.lnk'
 $desktopPath = [Environment]::GetFolderPath('CommonDesktopDirectory')
 if ([string]::IsNullOrWhiteSpace($desktopPath)) {

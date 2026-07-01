@@ -154,7 +154,8 @@ namespace ExcelAddIn1.Audit
             Excel.Workbook auxBook, List<ProvenanceEntry> sources,
             IEnumerable<Dictionary<string, object>> sentLines,
             string customer, string po, string dueDate, string txnType,
-            string quoteReference, QBStatusResponse<string> response)
+            string quoteReference, QBStatusResponse<string> response,
+            string errorMessage)
         {
             try
             {
@@ -175,7 +176,8 @@ namespace ExcelAddIn1.Audit
                     sources, customer, po, dueDate, txnType, quoteReference, sentLines,
                     response == null ? (object)null : response.StatusCode,
                     response == null ? null : response.StatusMessage,
-                    response == null ? null : response.Data);
+                    response == null ? null : response.Data,
+                    errorMessage);
                 File.WriteAllText(Path.Combine(sendsDir, baseName + ".json"), json);
             }
             catch (Exception ex) { Trace.WriteLine("audit WriteSendRecord: " + ex); }

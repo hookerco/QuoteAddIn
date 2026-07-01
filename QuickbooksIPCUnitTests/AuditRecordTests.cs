@@ -80,13 +80,27 @@ namespace QuickbooksIPCUnitTests
                 "2026-07-01T18:32:10Z", "EST-PC", "chooker", "1.0.0",
                 "base.xlsx", "Q.xlsx", sources,
                 "Acme", "PO-7", "2026-07-15", "Estimate", "26-1042",
-                sentLines, 0, "OK", "E-10231");
+                sentLines, 0, "OK", "E-10231", null);
 
             StringAssert.Contains(json, "\"schema_version\":1");
             StringAssert.Contains(json, "\"sha256\":\"abc123\"");
             StringAssert.Contains(json, "\"origin\":\"create\"");
             StringAssert.Contains(json, "\"status_code\":0");
             StringAssert.Contains(json, "\"transaction_type\":\"Estimate\"");
+        }
+
+        [TestMethod]
+        public void BuildSidecarJson_RecordsErrorOnFailedSend()
+        {
+            string json = AuditRecord.BuildSidecarJson(
+                "2026-07-01T18:32:10Z", "EST-PC", "chooker", "1.0.0",
+                "", "Q.xlsx", new List<ProvenanceEntry>(),
+                "Acme", "", "2026-07-15", "Estimate", "",
+                new List<Dictionary<string, object>>(),
+                null, null, null, "QuickBooks not reachable");
+
+            StringAssert.Contains(json, "\"error\":\"QuickBooks not reachable\"");
+            StringAssert.Contains(json, "\"status_code\":null");
         }
     }
 }

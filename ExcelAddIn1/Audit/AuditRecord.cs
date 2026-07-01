@@ -97,7 +97,8 @@ namespace ExcelAddIn1.Audit
             string customerName, string customerPo, string dueDate,
             string transactionType, string quoteReference,
             IEnumerable<Dictionary<string, object>> sentLines,
-            object statusCode, string statusMessage, string reference)
+            object statusCode, string statusMessage, string reference,
+            string errorMessage)
         {
             var sourceList = new List<object>();
             foreach (var s in sources ?? new List<ProvenanceEntry>())
@@ -134,7 +135,8 @@ namespace ExcelAddIn1.Audit
                 { "sent_lines", sentList },
                 { "quickbooks_response", new Dictionary<string, object> {
                     { "status_code", statusCode }, { "status_message", statusMessage },
-                    { "reference", reference } } },
+                    { "reference", reference },
+                    { "error", string.IsNullOrEmpty(errorMessage) ? null : errorMessage } } },
             };
             return new JavaScriptSerializer().Serialize(root);
         }

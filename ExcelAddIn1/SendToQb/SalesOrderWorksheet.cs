@@ -237,12 +237,15 @@ namespace ExcelAddIn1
 
         private void Send()
 		{
+			List<SOSheetQuoteItem> salesOrderList = null;
+			string customer = "", po = "", type_of_txn = "";
+			DateTime dueDate = DateTime.Now;
 			try
 			{
 				soSheet.Unprotect();
-				string customer = soSheet.Cells[1, 1].Text;
-				string po = soSheet.Cells[2, 1].Text;
-				DateTime dueDate = DateTime.Parse(soSheet.Cells[3, 1].Text);
+				customer = soSheet.Cells[1, 1].Text;
+				po = soSheet.Cells[2, 1].Text;
+				dueDate = DateTime.Parse(soSheet.Cells[3, 1].Text);
 
 				if (customer == "" || customer == "Customer not found")
 				{
@@ -256,7 +259,7 @@ namespace ExcelAddIn1
 					return;
 				}
 
-				List<SOSheetQuoteItem> salesOrderList = GetItemsOnSheet();
+				salesOrderList = GetItemsOnSheet();
 
 				AllItemList allItemList = new AllItemList();
 				allItemList.QueryItems();
@@ -265,34 +268,12 @@ namespace ExcelAddIn1
 
 				MarkNumbersOnSheet(salesOrderList);
 
-				string type_of_txn = GetComboBoxSelection();
+				type_of_txn = GetComboBoxSelection();
 
 				QBStatusResponse<string> response =
 					SendRequest.SendOrder(salesOrderList, customer, po, dueDate, type_of_txn);
 
-				// AUDIT: record every send (success or failure), best-effort.
-				try
-				{
-					Excel.Workbook auxBook = oldSheet.Parent as Excel.Workbook;
-					var sources = ExcelAddIn1.Audit.QuoteAuditLog.ReadProvenance(auxBook);
-					if (ExcelAddIn1.Audit.QuoteAuditLog.IsFullRoundWorkbook(auxBook))
-					{
-						var direct = ExcelAddIn1.Audit.QuoteAuditLog.SnapshotWorkbook(auxBook, "send_active");
-						if (direct != null && !sources.Exists(s => s.Sha256 == direct.Sha256))
-							sources.Add(direct);
-					}
-					var sentLines = new List<Dictionary<string, object>>();
-					foreach (var it in salesOrderList)
-						sentLines.Add(new Dictionary<string, object> {
-							{ "number", it.GetInputNumber() }, { "description", it.GetDescription() },
-							{ "quantity", it.GetQuantity() }, { "rate", it.GetRate() },
-							{ "override_number", it.GetOverride() ?? "" }
-						});
-					ExcelAddIn1.Audit.QuoteAuditLog.WriteSendRecord(
-						auxBook, sources, sentLines, customer, po,
-						dueDate.ToString("yyyy-MM-dd"), type_of_txn, "", response);
-				}
-				catch { }
+				RecordSend(salesOrderList, customer, po, dueDate, type_of_txn, response, "");
 
 				if (response.StatusCode != 0)
 				{
@@ -307,8 +288,42 @@ namespace ExcelAddIn1
 			}
 			catch (Exception ex)
 			{
+				// AUDIT: capture the errored attempt too (best-effort) so a QB
+				// failure still records the source for replay.
+				RecordSend(salesOrderList, customer, po, dueDate, type_of_txn, null, ex.Message);
 				MessageBox.Show(ex.Message + "\n\n" + ex.StackTrace);
 			}
+		}
+
+		// AUDIT: build + drop the send record. Best-effort; never throws.
+		private void RecordSend(
+			List<SOSheetQuoteItem> salesOrderList, string customer, string po,
+			DateTime dueDate, string type_of_txn,
+			QBStatusResponse<string> response, string errorMessage)
+		{
+			try
+			{
+				Excel.Workbook auxBook = oldSheet.Parent as Excel.Workbook;
+				var sources = ExcelAddIn1.Audit.QuoteAuditLog.ReadProvenance(auxBook);
+				if (ExcelAddIn1.Audit.QuoteAuditLog.IsFullRoundWorkbook(auxBook))
+				{
+					var direct = ExcelAddIn1.Audit.QuoteAuditLog.SnapshotWorkbook(auxBook, "send_active");
+					if (direct != null && !sources.Exists(s => s.Sha256 == direct.Sha256))
+						sources.Add(direct);
+				}
+				var sentLines = new List<Dictionary<string, object>>();
+				if (salesOrderList != null)
+					foreach (var it in salesOrderList)
+						sentLines.Add(new Dictionary<string, object> {
+							{ "number", it.GetInputNumber() }, { "description", it.GetDescription() },
+							{ "quantity", it.GetQuantity() }, { "rate", it.GetRate() },
+							{ "override_number", it.GetOverride() ?? "" }
+						});
+				ExcelAddIn1.Audit.QuoteAuditLog.WriteSendRecord(
+					auxBook, sources, sentLines, customer, po,
+					dueDate.ToString("yyyy-MM-dd"), type_of_txn, "", response, errorMessage);
+			}
+			catch { }
 		}
 
         // Assuming 'selectionBox' is the name of your ComboBox control on the sheet

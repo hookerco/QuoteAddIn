@@ -20,6 +20,8 @@ namespace ExcelAddIn1
 		{
 			QuoteSheet oldSheet = new StandardQuoteSheet24(Globals.ThisAddIn.Application.ActiveSheet);
 			
+			Excel.Workbook sourceBook = oldSheet.sheet.Parent as Excel.Workbook;   // AUDIT: capture before copy
+
 			TrytoCopy(oldSheet.sheet);
 
 			QuoteSheet newSheet = new StandardQuoteSheet24(Globals.ThisAddIn.Application.ActiveSheet);
@@ -28,6 +30,16 @@ namespace ExcelAddIn1
 
 			CopyValues(oldSheet.sheet, newSheet.sheet, newSheet.lastRow);
 			RemoveZerosAndRenumber();
+
+			// AUDIT: snapshot the source and stamp provenance onto the new aux book.
+			try
+			{
+				var entry = ExcelAddIn1.Audit.QuoteAuditLog.SnapshotWorkbook(sourceBook, "create");
+				ExcelAddIn1.Audit.QuoteAuditLog.AppendProvenance(
+					newSheet.sheet.Parent as Excel.Workbook, entry);
+			}
+			catch { }
+
 			SaveAs();
 		}
 
@@ -93,6 +105,15 @@ namespace ExcelAddIn1
 			AddBackFormulas(newSheet, GetLastRow(newSheet));
 
 			RemoveZerosAndRenumber();
+
+			// AUDIT: snapshot the picked source file; stamp provenance on the aux book.
+			try
+			{
+				var entry = ExcelAddIn1.Audit.QuoteAuditLog.SnapshotFile(filePath);
+				ExcelAddIn1.Audit.QuoteAuditLog.AppendProvenance(
+					Globals.ThisAddIn.Application.ActiveWorkbook, entry);
+			}
+			catch { }
 		}
 
 		// Removes zeros from active sheet, and only works with "created" sheet

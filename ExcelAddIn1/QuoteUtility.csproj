@@ -33,7 +33,7 @@
     <PublishUrl>Z:\COLTON TEST\QBUtility Beta Install\</PublishUrl>
     <InstallUrl />
     <TargetCulture>en</TargetCulture>
-    <ApplicationVersion>1.0.0.20</ApplicationVersion>
+    <ApplicationVersion>1.0.0.22</ApplicationVersion>
     <AutoIncrementApplicationRevision>true</AutoIncrementApplicationRevision>
     <UpdateEnabled>true</UpdateEnabled>
     <UpdateInterval>7</UpdateInterval>
@@ -214,6 +214,8 @@
     can be found.
   -->
   <ItemGroup>
+    <Compile Include="Audit\AuditRecord.cs" />
+    <Compile Include="Audit\QuoteAuditLog.cs" />
     <Compile Include="QuoteBuilder\QuoteItem.cs" />
     <Compile Include="QuoteBuilder\QuoteBuilder_helpers.cs" />
     <Compile Include="QuoteBuilder\QuoteSheet.cs" />
@@ -264,6 +266,7 @@
     <Compile Include="ThisAddIn.cs">
       <SubType>Code</SubType>
     </Compile>
+    <None Include="QuoteUtility_TemporaryKey.pfx" />
     <None Include="ThisAddIn.Designer.xml">
       <DependentUpon>ThisAddIn.cs</DependentUpon>
     </None>
@@ -295,11 +298,10 @@
     <SignManifests>true</SignManifests>
   </PropertyGroup>
   <PropertyGroup>
-    <ManifestKeyFile>
-    </ManifestKeyFile>
+    <ManifestKeyFile>QuoteUtility_TemporaryKey.pfx</ManifestKeyFile>
   </PropertyGroup>
   <PropertyGroup>
-    <ManifestCertificateThumbprint>32DF7D675FB5ABF80DBC6C3484A3049D1FFCBFC3</ManifestCertificateThumbprint>
+    <ManifestCertificateThumbprint>780F80D1080173DC98965226A4ACBA361AF5D092</ManifestCertificateThumbprint>
   </PropertyGroup>
   <PropertyGroup>
     <SignAssembly>false</SignAssembly>

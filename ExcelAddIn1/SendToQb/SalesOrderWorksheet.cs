@@ -267,7 +267,38 @@ namespace ExcelAddIn1
 
 				string type_of_txn = GetComboBoxSelection();
 
-                SendRequest.SendOrder(salesOrderList, customer, po, dueDate, type_of_txn);
+				QBStatusResponse<string> response =
+					SendRequest.SendOrder(salesOrderList, customer, po, dueDate, type_of_txn);
+
+				// AUDIT: record every send (success or failure), best-effort.
+				try
+				{
+					Excel.Workbook auxBook = oldSheet.Parent as Excel.Workbook;
+					var sources = ExcelAddIn1.Audit.QuoteAuditLog.ReadProvenance(auxBook);
+					if (ExcelAddIn1.Audit.QuoteAuditLog.IsFullRoundWorkbook(auxBook))
+					{
+						var direct = ExcelAddIn1.Audit.QuoteAuditLog.SnapshotWorkbook(auxBook, "send_active");
+						if (direct != null && !sources.Exists(s => s.Sha256 == direct.Sha256))
+							sources.Add(direct);
+					}
+					var sentLines = new List<Dictionary<string, object>>();
+					foreach (var it in salesOrderList)
+						sentLines.Add(new Dictionary<string, object> {
+							{ "number", it.GetInputNumber() }, { "description", it.GetDescription() },
+							{ "quantity", it.GetQuantity() }, { "rate", it.GetRate() },
+							{ "override_number", it.GetOverride() ?? "" }
+						});
+					ExcelAddIn1.Audit.QuoteAuditLog.WriteSendRecord(
+						auxBook, sources, sentLines, customer, po,
+						dueDate.ToString("yyyy-MM-dd"), type_of_txn, "", response);
+				}
+				catch { }
+
+				if (response.StatusCode != 0)
+				{
+					MessageBox.Show("Error sending sales order to QuickBooks");
+					return;
+				}
 
 				sent = true;
 
@@ -487,7 +518,7 @@ namespace ExcelAddIn1
 				}
 			}
 
-			internal static void SendOrder(List<SOSheetQuoteItem> items, string customer, string po, DateTime dueDate, string type)
+			internal static QBStatusResponse<string> SendOrder(List<SOSheetQuoteItem> items, string customer, string po, DateTime dueDate, string type)
 			{
                 List<QBItem> qbItems = new List<QBItem>();
 				foreach (SOSheetQuoteItem item in items)
@@ -520,10 +551,7 @@ namespace ExcelAddIn1
 
 				QBStatusResponse<string> response = type == "Sales Order" ? qBConnector.Client.AddOrder(order) : qBConnector.Client.AddEstimate(order);
 
-                if (response.StatusCode != 0)
-				{
-					throw new Exception("Error sending sales order to QuickBooks");
-				}
+				return response;
 			}
 		}
 

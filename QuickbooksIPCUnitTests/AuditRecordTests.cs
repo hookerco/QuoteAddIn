@@ -47,6 +47,22 @@ namespace QuickbooksIPCUnitTests
         }
 
         [TestMethod]
+        public void ProvenanceEntry_ParsesExcelCoercedBooleans()
+        {
+            // Excel turns the written "TRUE"/"FALSE" strings into real booleans,
+            // so ReadProvenance hands FromRow ".NET" casing ("True"/"False").
+            ProvenanceEntry back = ProvenanceEntry.FromRow(
+                new[] { "abc", "", "2026-07-01T00:00:00Z", "True", "True", "create" });
+            Assert.IsTrue(back.SavedAtCapture);
+            Assert.IsTrue(back.Recalced);
+
+            ProvenanceEntry off = ProvenanceEntry.FromRow(
+                new[] { "abc", "", "2026-07-01T00:00:00Z", "False", "False", "add" });
+            Assert.IsFalse(off.SavedAtCapture);
+            Assert.IsFalse(off.Recalced);
+        }
+
+        [TestMethod]
         public void BuildSidecarJson_EmitsSchemaAndSources()
         {
             var sources = new List<ProvenanceEntry>

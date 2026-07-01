@@ -38,8 +38,8 @@ namespace ExcelAddIn1.Audit
                 Sha256 = Get(row, 0),
                 OriginalPath = Get(row, 1),
                 CapturedAtUtc = Get(row, 2),
-                SavedAtCapture = Get(row, 3) == "TRUE",
-                Recalced = Get(row, 4) == "TRUE",
+                SavedAtCapture = AsBool(Get(row, 3)),
+                Recalced = AsBool(Get(row, 4)),
                 Origin = Get(row, 5)
             };
         }
@@ -47,6 +47,15 @@ namespace ExcelAddIn1.Audit
         private static string Get(string[] row, int i)
         {
             return (row != null && i < row.Length && row[i] != null) ? row[i] : "";
+        }
+
+        // Excel coerces a "TRUE"/"FALSE" string written to a cell into a real
+        // boolean, so ReadProvenance reads it back as ".NET" casing ("True").
+        // Parse tolerantly so the round-trip survives that coercion.
+        private static bool AsBool(string s)
+        {
+            bool b;
+            return bool.TryParse(s, out b) && b;
         }
     }
 

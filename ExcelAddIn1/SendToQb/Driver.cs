@@ -35,6 +35,24 @@ namespace ExcelAddIn1
 					customer = "Customer not found";
 				}
 
+				// AUDIT: capture the source quote at "Prepare for Sales Order" -- the
+				// reliable point of send-intent, independent of QuickBooks and the
+				// customer-name / Send-button path. Writes to the shared audit folder.
+				try
+				{
+					Excel.Workbook sourceBook = worksheet.Parent as Excel.Workbook;
+					var auditSources = ExcelAddIn1.Audit.QuoteAuditLog.ReadProvenance(sourceBook);
+					if (ExcelAddIn1.Audit.QuoteAuditLog.IsFullRoundWorkbook(sourceBook))
+					{
+						var entry = ExcelAddIn1.Audit.QuoteAuditLog.SnapshotWorkbook(sourceBook, "prepare");
+						if (entry != null && !auditSources.Exists(s => s.Sha256 == entry.Sha256))
+							auditSources.Add(entry);
+					}
+					ExcelAddIn1.Audit.QuoteAuditLog.WriteSendRecord(
+						sourceBook, auditSources, null, customer, "", "", "", "", null, "");
+				}
+				catch { }
+
 				try
 				{
 					SalesOrderWorksheet sendSheet = new SalesOrderWorksheet(customer, worksheet);

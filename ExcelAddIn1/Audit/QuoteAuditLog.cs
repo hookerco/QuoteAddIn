@@ -165,14 +165,13 @@ namespace ExcelAddIn1.Audit
                 string baseName = UniqueBaseName(sendsDir,
                     AuditRecord.BuildBaseName(now, customer, Environment.UserName));
 
-                string auxCopy = baseName + ".xlsx";
-                try { auxBook.SaveCopyAs(Path.Combine(sendsDir, auxCopy)); }
-                catch (Exception ex) { Trace.WriteLine("audit aux SaveCopyAs: " + ex); auxCopy = ""; }
-
+                // sends/ holds only the JSON record; the workbook lives once in
+                // sources/ (referenced by the source hashes below). No duplicate
+                // .xlsx copy here.
                 string json = AuditRecord.BuildSidecarJson(
                     DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ"),
                     Environment.MachineName, Environment.UserName, AddinVersion,
-                    auxCopy, SafeName(auxBook),
+                    "", SafeName(auxBook),
                     sources, customer, po, dueDate, txnType, quoteReference, sentLines,
                     response == null ? (object)null : response.StatusCode,
                     response == null ? null : response.StatusMessage,

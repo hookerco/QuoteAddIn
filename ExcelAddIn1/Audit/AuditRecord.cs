@@ -77,6 +77,19 @@ namespace ExcelAddIn1.Audit
             }
         }
 
+        // OLE2 compound-document magic: legacy binary .xls (BIFF). Modern
+        // .xlsx/.xlsm are zip packages ("PK\x03\x04") and won't match.
+        private static readonly byte[] Ole2Magic =
+            { 0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1 };
+
+        public static bool IsLegacyBiff(byte[] data)
+        {
+            if (data == null || data.Length < Ole2Magic.Length) return false;
+            for (int i = 0; i < Ole2Magic.Length; i++)
+                if (data[i] != Ole2Magic[i]) return false;
+            return true;
+        }
+
         public static string BuildBaseName(DateTime whenLocal, string customer, string winUser)
         {
             string ts = whenLocal.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture);

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using Excel = Microsoft.Office.Interop.Excel;
+using Office = Microsoft.Office.Core;
 using QuickBooksIPCContracts;
 
 namespace ExcelAddIn1.Audit
@@ -43,6 +44,11 @@ namespace ExcelAddIn1.Audit
                 wb.SaveCopyAs(temp);
                 byte[] bytes = File.ReadAllBytes(temp);
                 try { File.Delete(temp); } catch { }
+                // SaveCopyAs preserves the source's native format, so a legacy
+                // .xls comes back as BIFF bytes openpyxl can't replay. Export
+                // through Excel to a real .xlsm before pooling.
+                if (AuditRecord.IsLegacyBiff(bytes))
+                    bytes = ConvertLegacyToXlsm(wb.Application, bytes) ?? bytes;
                 bool saved = false;
                 string path = "";
                 try { path = wb.FullName; saved = wb.Saved && !string.IsNullOrEmpty(path); }
@@ -56,17 +62,70 @@ namespace ExcelAddIn1.Audit
             }
         }
 
-        internal static ProvenanceEntry SnapshotFile(string filePath)
+        internal static ProvenanceEntry SnapshotFile(string filePath, Excel.Application app)
         {
             try
             {
                 byte[] bytes = File.ReadAllBytes(filePath);
+                if (AuditRecord.IsLegacyBiff(bytes) && app != null)
+                    bytes = ConvertLegacyToXlsm(app, bytes) ?? bytes;
                 return PoolWrite(bytes, filePath, true, false, "add");
             }
             catch (Exception ex)
             {
                 Trace.WriteLine("audit SnapshotFile: " + ex);
                 return null;
+            }
+        }
+
+        // Export legacy BIFF (.xls) bytes to .xlsm via the running Excel:
+        // round-trip through temp files, open the copy with macros/events off,
+        // SaveAs xlOpenXMLWorkbookMacroEnabled. Cached values survive; the
+        // Python replay side stays openpyxl-only. Returns null on any failure
+        // (caller falls back to pooling the raw bytes).
+        private static byte[] ConvertLegacyToXlsm(Excel.Application app, byte[] biffBytes)
+        {
+            string tempXls = Path.Combine(Path.GetTempPath(),
+                "qa_" + Guid.NewGuid().ToString("N") + ".xls");
+            string tempXlsm = Path.ChangeExtension(tempXls, ".xlsm");
+            bool alerts = true, events = true;
+            Office.MsoAutomationSecurity security =
+                Office.MsoAutomationSecurity.msoAutomationSecurityByUI;
+            try
+            {
+                alerts = app.DisplayAlerts;
+                events = app.EnableEvents;
+                security = app.AutomationSecurity;
+                app.DisplayAlerts = false;
+                app.EnableEvents = false;
+                app.AutomationSecurity =
+                    Office.MsoAutomationSecurity.msoAutomationSecurityForceDisable;
+
+                File.WriteAllBytes(tempXls, biffBytes);
+                Excel.Workbook copy = app.Workbooks.Open(tempXls, UpdateLinks: 0);
+                try
+                {
+                    copy.SaveAs(tempXlsm,
+                        Excel.XlFileFormat.xlOpenXMLWorkbookMacroEnabled);
+                }
+                finally
+                {
+                    copy.Close(false);
+                }
+                return File.ReadAllBytes(tempXlsm);
+            }
+            catch (Exception ex)
+            {
+                Trace.WriteLine("audit ConvertLegacyToXlsm: " + ex);
+                return null;
+            }
+            finally
+            {
+                try { app.DisplayAlerts = alerts; } catch { }
+                try { app.EnableEvents = events; } catch { }
+                try { app.AutomationSecurity = security; } catch { }
+                try { if (File.Exists(tempXls)) File.Delete(tempXls); } catch { }
+                try { if (File.Exists(tempXlsm)) File.Delete(tempXlsm); } catch { }
             }
         }
 

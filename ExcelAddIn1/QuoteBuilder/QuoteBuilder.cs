@@ -109,7 +109,8 @@ namespace ExcelAddIn1
 			// AUDIT: snapshot the picked source file; stamp provenance on the aux book.
 			try
 			{
-				var entry = ExcelAddIn1.Audit.QuoteAuditLog.SnapshotFile(filePath);
+				var entry = ExcelAddIn1.Audit.QuoteAuditLog.SnapshotFile(
+					filePath, Globals.ThisAddIn.Application);
 				ExcelAddIn1.Audit.QuoteAuditLog.AppendProvenance(
 					Globals.ThisAddIn.Application.ActiveWorkbook, entry);
 			}

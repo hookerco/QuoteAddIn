@@ -102,5 +102,29 @@ namespace QuickbooksIPCUnitTests
             StringAssert.Contains(json, "\"error\":\"QuickBooks not reachable\"");
             StringAssert.Contains(json, "\"status_code\":null");
         }
+
+        [TestMethod]
+        public void IsLegacyBiff_TrueForOle2CompoundFile()
+        {
+            // .xls (BIFF8) files are OLE2 compound documents.
+            byte[] ole2 = { 0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1, 0x00, 0x00 };
+            Assert.IsTrue(AuditRecord.IsLegacyBiff(ole2));
+        }
+
+        [TestMethod]
+        public void IsLegacyBiff_FalseForZipPackage()
+        {
+            // .xlsx/.xlsm files are zip packages ("PK\x03\x04").
+            byte[] zip = { 0x50, 0x4B, 0x03, 0x04, 0x14, 0x00, 0x06, 0x00 };
+            Assert.IsFalse(AuditRecord.IsLegacyBiff(zip));
+        }
+
+        [TestMethod]
+        public void IsLegacyBiff_FalseForShortOrEmptyInput()
+        {
+            Assert.IsFalse(AuditRecord.IsLegacyBiff(null));
+            Assert.IsFalse(AuditRecord.IsLegacyBiff(new byte[0]));
+            Assert.IsFalse(AuditRecord.IsLegacyBiff(new byte[] { 0xD0, 0xCF, 0x11 }));
+        }
     }
 }

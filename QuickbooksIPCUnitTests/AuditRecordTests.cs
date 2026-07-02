@@ -104,6 +104,43 @@ namespace QuickbooksIPCUnitTests
         }
 
         [TestMethod]
+        public void AppendSourceCaptureJson_CreatesFirstEntry()
+        {
+            string json = AuditRecord.AppendSourceCaptureJson(
+                null, "2026-07-02T15:04:05Z", "EST-PC", "chooker",
+                "create", @"C:\quotes\q.xls");
+
+            StringAssert.Contains(json, "\"schema_version\":1");
+            StringAssert.Contains(json, "\"captured_at_utc\":\"2026-07-02T15:04:05Z\"");
+            StringAssert.Contains(json, "\"windows_user\":\"chooker\"");
+            StringAssert.Contains(json, "\"origin\":\"create\"");
+            StringAssert.Contains(json, "\"original_path\":\"C:\\\\quotes\\\\q.xls\"");
+        }
+
+        [TestMethod]
+        public void AppendSourceCaptureJson_AppendsWithoutLosingPriorCaptures()
+        {
+            string first = AuditRecord.AppendSourceCaptureJson(
+                null, "2026-07-02T15:04:05Z", "EST-PC", "chooker", "create", "");
+            string second = AuditRecord.AppendSourceCaptureJson(
+                first, "2026-07-02T16:20:00Z", "SALES-PC", "jsmith", "prepare", "");
+
+            StringAssert.Contains(second, "\"windows_user\":\"chooker\"");
+            StringAssert.Contains(second, "\"windows_user\":\"jsmith\"");
+            StringAssert.Contains(second, "\"origin\":\"prepare\"");
+        }
+
+        [TestMethod]
+        public void AppendSourceCaptureJson_SurvivesCorruptExisting()
+        {
+            string json = AuditRecord.AppendSourceCaptureJson(
+                "{not json", "2026-07-02T15:04:05Z", "EST-PC", "chooker", "add", "");
+
+            StringAssert.Contains(json, "\"windows_user\":\"chooker\"");
+            StringAssert.Contains(json, "\"origin\":\"add\"");
+        }
+
+        [TestMethod]
         public void IsLegacyBiff_TrueForOle2CompoundFile()
         {
             // .xls (BIFF8) files are OLE2 compound documents.

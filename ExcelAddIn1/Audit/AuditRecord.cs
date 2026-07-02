@@ -90,6 +90,43 @@ namespace ExcelAddIn1.Audit
             return true;
         }
 
+        // sources/{sha}.meta.json: who/when/why a pooled workbook was captured.
+        // The blob name must stay pure content-hash (dedupe + replay lookup),
+        // so user/time live in this sidecar; each capture appends an entry.
+        public static string AppendSourceCaptureJson(
+            string existingJson, string capturedAtUtc, string machine,
+            string winUser, string origin, string originalPath)
+        {
+            var serializer = new JavaScriptSerializer();
+            var captures = new List<object>();
+            try
+            {
+                if (!string.IsNullOrEmpty(existingJson))
+                {
+                    var root = serializer.Deserialize<Dictionary<string, object>>(existingJson);
+                    object prior;
+                    if (root != null && root.TryGetValue("captures", out prior)
+                        && prior is System.Collections.IEnumerable)
+                        foreach (object item in (System.Collections.IEnumerable)prior)
+                            captures.Add(item);
+                }
+            }
+            catch { /* corrupt meta: keep the new capture, drop the rest */ }
+            captures.Add(new Dictionary<string, object>
+            {
+                { "captured_at_utc", capturedAtUtc },
+                { "machine", machine },
+                { "windows_user", winUser },
+                { "origin", origin },
+                { "original_path", string.IsNullOrEmpty(originalPath) ? null : originalPath }
+            });
+            return serializer.Serialize(new Dictionary<string, object>
+            {
+                { "schema_version", 1 },
+                { "captures", captures }
+            });
+        }
+
         public static string BuildBaseName(DateTime whenLocal, string customer, string winUser)
         {
             string ts = whenLocal.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture);

@@ -134,13 +134,23 @@ namespace ExcelAddIn1.Audit
         {
             string root = ResolveAuditRoot();
             string sha = AuditRecord.ComputeSha256(bytes);
+            string capturedAt = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ");
             string blob = Path.Combine(root, "sources", sha + ".xlsm");
             if (!File.Exists(blob)) File.WriteAllBytes(blob, bytes);
+            try
+            {
+                string meta = Path.Combine(root, "sources", sha + ".meta.json");
+                string existing = File.Exists(meta) ? File.ReadAllText(meta) : null;
+                File.WriteAllText(meta, AuditRecord.AppendSourceCaptureJson(
+                    existing, capturedAt, Environment.MachineName,
+                    Environment.UserName, origin, originalPath));
+            }
+            catch (Exception ex) { Trace.WriteLine("audit PoolWrite meta: " + ex); }
             return new ProvenanceEntry
             {
                 Sha256 = sha,
                 OriginalPath = originalPath ?? "",
-                CapturedAtUtc = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ"),
+                CapturedAtUtc = capturedAt,
                 SavedAtCapture = saved,
                 Recalced = recalced,
                 Origin = origin

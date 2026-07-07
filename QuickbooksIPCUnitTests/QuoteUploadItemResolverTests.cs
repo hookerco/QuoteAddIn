@@ -102,6 +102,48 @@ namespace QuickBooksServiceLibrary.Tests
             Assert.AreEqual(0, result.ItemsToCreate.Count);
         }
 
+        // Contrast tests for the Excel-side divergences (see NumberGeneratorCharacterizationTests
+        // and DieSetItemCharacterizationTests): the server allocates the FIRST free 1-XXXX number
+        // even when the reserved numbers are dense from zero, and maps die-set prefixes
+        // case-insensitively.
+
+        [Test]
+        public void Resolve_DenseReservedNumbers_GeneratesFirstFreeNumber()
+        {
+            var result = QuoteUploadItemResolver.Resolve(
+                new[]
+                {
+                    new QBQuoteUploadLine { Description = "NEW-1, First New Item", Quantity = 1, Rate = 1 },
+                    new QBQuoteUploadLine { Description = "NEW-2, Second New Item", Quantity = 1, Rate = 1 }
+                },
+                new[]
+                {
+                    new QBItem { Number = "1-0000", Description = "Existing zero", Active = true },
+                    new QBItem { Number = "1-0001", Description = "Existing one", Active = true },
+                    new QBItem { Number = "1-0002", Description = "Existing two", Active = true }
+                });
+
+            Assert.AreEqual("1-0003", result.ResolvedLines[0].Number);
+            Assert.AreEqual("1-0004", result.ResolvedLines[1].Number);
+        }
+
+        [TestCase("bb/125, Bend Body", "1-4501")]
+        [TestCase("ci/125, Clamp Insert", "1-4502")]
+        [TestCase("cd125, Clamp Die", "1-4503")]
+        [TestCase("pd125, Pressure Die", "1-4504")]
+        public void Resolve_MapsDieSetFamiliesCaseInsensitively(string description, string expectedNumber)
+        {
+            var result = QuoteUploadItemResolver.Resolve(
+                new[]
+                {
+                    new QBQuoteUploadLine { Description = description, Quantity = 1, Rate = 1 }
+                },
+                new List<QBItem>());
+
+            Assert.AreEqual(expectedNumber, result.ResolvedLines[0].Number);
+            Assert.AreEqual(0, result.ItemsToCreate.Count);
+        }
+
         [Test]
         public void Resolve_GeneratesFirstAvailableOneDashNumberForNewItemsAndSkipsReservedNumbers()
         {

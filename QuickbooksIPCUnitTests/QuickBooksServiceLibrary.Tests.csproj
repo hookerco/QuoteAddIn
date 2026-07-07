@@ -99,6 +99,14 @@
     <Compile Include="..\ExcelAddIn1\SendToQb\ItemLookupKey.cs">
       <Link>ItemLookupKey.cs</Link>
     </Compile>
+    <Compile Include="NumberGeneratorCharacterizationTests.cs" />
+    <Compile Include="..\ExcelAddIn1\SendToQb\NumberGenerator.cs">
+      <Link>NumberGenerator.cs</Link>
+    </Compile>
+    <Compile Include="DieSetItemCharacterizationTests.cs" />
+    <Compile Include="..\ExcelAddIn1\SendToQb\DieSetItem.cs">
+      <Link>DieSetItem.cs</Link>
+    </Compile>
     <Compile Include="AuditRecordTests.cs" />
     <Compile Include="..\ExcelAddIn1\Audit\AuditRecord.cs">
       <Link>AuditRecord.cs</Link>

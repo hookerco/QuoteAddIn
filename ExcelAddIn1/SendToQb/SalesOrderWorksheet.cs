@@ -381,7 +381,9 @@ namespace ExcelAddIn1
 		private void AddUnknownItemsToQB(List<SOSheetQuoteItem> salesOrderItems, AllItemList allItemList)
 		{
 			List<(string, string)> newItems = new List<(string, string)>();
-			NumberGenerator generator = new NumberGenerator(allItemList);
+			SortedSet<int> reservedNumbers = new SortedSet<int>();
+			allItemList.GetNumberSet(ref reservedNumbers);
+			NumberGenerator generator = new NumberGenerator(reservedNumbers);
 
 			for (int i = 0; i < salesOrderItems.Count; ++i)
 			{
@@ -602,72 +604,4 @@ namespace ExcelAddIn1
         }
 	}
 
-	internal class NumberGenerator
-	{
-		private readonly SortedSet<int> sortedNumberSet = new SortedSet<int>();
-
-		internal NumberGenerator(AllItemList itemList)
-		{
-
-			itemList.GetNumberSet(ref sortedNumberSet);
-		}
-
-		internal string Generate()
-		{
-			int count = 0;
-			foreach (int partNum in sortedNumberSet)
-			{
-				if (count != partNum)
-				{
-					sortedNumberSet.Add(count);
-					return "1-" + count.ToString("D4");
-				}
-				count++;
-			}
-			sortedNumberSet.Add(sortedNumberSet.Count);
-
-			string num = "1-" + sortedNumberSet.Count.ToString("D4");
-			return num;
-		}
-	}
-
-	public class DieSetItem
-	{
-		string QBNum;
-
-
-		DieSetItem(string partNum)
-		{
-			if (partNum.StartsWith("BB/"))
-			{
-				QBNum = "1-4501";
-			}
-
-			else if (partNum.StartsWith("CI/"))
-			{
-				QBNum = "1-4502";
-			}
-
-			else if (partNum.StartsWith("CD")) // CD or CDX
-			{
-				QBNum = "1-4503";
-			}
-
-			else if (partNum.StartsWith("PD")) // PD or PDX
-			{
-				QBNum = "1-4504";
-			}
-
-			else
-			{
-				QBNum = "";
-			}
-		}
-
-		public static string GetPartNum(string partNumString)
-		{
-			DieSetItem item = new DieSetItem(partNumString);
-			return item.QBNum;
-		}
-	}
 }

@@ -23,6 +23,18 @@ namespace ExcelAddIn1
 			return !IsQuote(worksheet);
 		}
 
+		internal static Excel.Worksheet FirstVisibleWorksheet(Excel.Workbook workbook)
+		{
+			foreach (Excel.Worksheet sheet in workbook.Worksheets)
+			{
+				if (sheet.Visible == Excel.XlSheetVisibility.xlSheetVisible)
+				{
+					return sheet;
+				}
+			}
+			return null;
+		}
+
 		internal static int GetLastRow(Excel.Worksheet worksheet)
 		{
 			int row = ITEMS_START_ROW;

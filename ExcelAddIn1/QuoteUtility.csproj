@@ -219,12 +219,18 @@
     <Compile Include="QuoteBuilder\QuoteItem.cs" />
     <Compile Include="QuoteBuilder\QuoteBuilder_helpers.cs" />
     <Compile Include="QuoteBuilder\QuoteSheet.cs" />
-    <Compile Include="SendToQb\AllItemList.cs" />
     <Compile Include="SendToQb\CalculateDueDate.cs" />
-    <Compile Include="SendToQb\DieSetItem.cs" />
-    <Compile Include="SendToQb\NumberGenerator.cs" />
-    <Compile Include="SendToQb\ItemLookupCandidateSelector.cs" />
-    <Compile Include="SendToQb\ItemLookupKey.cs" />
+    <Compile Include="SendToQb\SalesOrderItemResolution.cs" />
+    <Compile Include="SendToQb\SOSheetQuoteItem.cs" />
+    <Compile Include="..\QuoteItemResolution\ItemLookupCandidateSelector.cs">
+      <Link>QuoteItemResolution\ItemLookupCandidateSelector.cs</Link>
+    </Compile>
+    <Compile Include="..\QuoteItemResolution\ItemLookupKey.cs">
+      <Link>QuoteItemResolution\ItemLookupKey.cs</Link>
+    </Compile>
+    <Compile Include="..\QuoteItemResolution\QuoteUploadItemResolver.cs">
+      <Link>QuoteItemResolution\QuoteUploadItemResolver.cs</Link>
+    </Compile>
     <Compile Include="QBClient\QBConnector.cs" />
     <Compile Include="SendToQb\Driver.cs" />
     <Compile Include="QuoteBuilder\QuoteBuilder.cs" />

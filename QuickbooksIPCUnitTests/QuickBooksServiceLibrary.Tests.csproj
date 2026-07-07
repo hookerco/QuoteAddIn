@@ -99,13 +99,15 @@
     <Compile Include="..\QuoteItemResolution\ItemLookupKey.cs">
       <Link>ItemLookupKey.cs</Link>
     </Compile>
-    <Compile Include="NumberGeneratorCharacterizationTests.cs" />
-    <Compile Include="..\ExcelAddIn1\SendToQb\NumberGenerator.cs">
-      <Link>NumberGenerator.cs</Link>
+    <Compile Include="SalesOrderItemResolutionTests.cs" />
+    <Compile Include="..\ExcelAddIn1\SendToQb\SalesOrderItemResolution.cs">
+      <Link>SalesOrderItemResolution.cs</Link>
     </Compile>
-    <Compile Include="DieSetItemCharacterizationTests.cs" />
-    <Compile Include="..\ExcelAddIn1\SendToQb\DieSetItem.cs">
-      <Link>DieSetItem.cs</Link>
+    <Compile Include="..\ExcelAddIn1\SendToQb\SOSheetQuoteItem.cs">
+      <Link>SOSheetQuoteItem.cs</Link>
+    </Compile>
+    <Compile Include="..\ExcelAddIn1\QuoteBuilder\QuoteItem.cs">
+      <Link>QuoteItem.cs</Link>
     </Compile>
     <Compile Include="AuditRecordTests.cs" />
     <Compile Include="..\ExcelAddIn1\Audit\AuditRecord.cs">

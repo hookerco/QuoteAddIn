@@ -56,7 +56,15 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="Properties\AssemblyInfo.cs" />
-    <Compile Include="QuoteUploadItemResolver.cs" />
+    <Compile Include="..\QuoteItemResolution\ItemLookupCandidateSelector.cs">
+      <Link>QuoteItemResolution\ItemLookupCandidateSelector.cs</Link>
+    </Compile>
+    <Compile Include="..\QuoteItemResolution\ItemLookupKey.cs">
+      <Link>QuoteItemResolution\ItemLookupKey.cs</Link>
+    </Compile>
+    <Compile Include="..\QuoteItemResolution\QuoteUploadItemResolver.cs">
+      <Link>QuoteItemResolution\QuoteUploadItemResolver.cs</Link>
+    </Compile>
     <Compile Include="QuickBooksService.cs" />
   </ItemGroup>
   <ItemGroup>

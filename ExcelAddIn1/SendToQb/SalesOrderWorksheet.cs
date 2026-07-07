@@ -11,11 +11,6 @@ using ExcelAddIn1.SendToQb;
 
 namespace ExcelAddIn1
 {
-	public class NotPartException : Exception
-	{
-		public NotPartException() { }
-	}
-
 	// Represents the little sheet that pops up after pressing "Prepare for Sales Order"
 	internal class SalesOrderWorksheet
 	{
@@ -116,21 +111,16 @@ namespace ExcelAddIn1
 			{
 				if (IsValidItem(row))
 				{
-					try
-					{
-						// make new baseQuote to pass into SOSheetQuoteItem
-						BaseQuoteItem newQuote = new BaseQuoteItem();
-						newQuote.SetNumber("");
-						newQuote.SetDescription(oldSheet.Range["B" + row].Value);
-						newQuote.SetQuantity((int)oldSheet.Range["F" + row].Value);
-						newQuote.SetRate((double)oldSheet.Range["G" + row].Value);
+					// make new baseQuote to pass into SOSheetQuoteItem
+					BaseQuoteItem newQuote = new BaseQuoteItem();
+					newQuote.SetNumber("");
+					newQuote.SetDescription(oldSheet.Range["B" + row].Value);
+					newQuote.SetQuantity((int)oldSheet.Range["F" + row].Value);
+					newQuote.SetRate((double)oldSheet.Range["G" + row].Value);
 
-						SOSheetQuoteItem newItem = new SOSheetQuoteItem(newQuote, nextRow);
+					SOSheetQuoteItem newItem = new SOSheetQuoteItem(newQuote, nextRow);
 
-						AddItem(newItem);
-					}
-					catch (NotPartException) { }
-
+					AddItem(newItem);
 				}
 
 				rowNumber = oldSheet.Cells[++row, 1].Text;
@@ -165,18 +155,6 @@ namespace ExcelAddIn1
 			int weeks = int.Parse(match.Groups["LeadTimeWeeks"].Value);
 
 			return weeks;
-		}
-
-		// Input is string, will find part number. Part number is the text before first comma.
-		internal static string FindPNinDescription(string desc)
-		{
-			string pattern = @"^(?<partNumber>.*?),";
-			Match match = Regex.Match(desc, pattern);
-			if (match.Success)
-			{
-				return match.Groups["partNumber"].Value;
-			}
-			throw new NotPartException();
 		}
 
 		internal void AddButtons()
@@ -261,10 +239,18 @@ namespace ExcelAddIn1
 
 				salesOrderList = GetItemsOnSheet();
 
-				AllItemList allItemList = new AllItemList();
-				allItemList.QueryItems();
+				QBStatusResponse<List<QBItem>> catalogResponse = new QBConnector().Client.GetAllItems();
+				if (catalogResponse.StatusCode != 0 || catalogResponse.Data == null)
+				{
+					MessageBox.Show("Error retrieving the item list from QuickBooks. The order was not sent.");
+					return;
+				}
 
-				AddUnknownItemsToQB(salesOrderList, allItemList);
+				List<QBItem> itemsToCreate = SalesOrderItemResolution.ResolveNumbers(salesOrderList, catalogResponse.Data);
+				if (itemsToCreate.Count > 0)
+				{
+					SendRequest.AddItems(itemsToCreate);
+				}
 
 				MarkNumbersOnSheet(salesOrderList);
 
@@ -373,129 +359,6 @@ namespace ExcelAddIn1
 			return itemList;
 		}
 
-		/// <summary>
-		/// Takes all items in salesOrderItems that do not appear in allItemList and adds them to QuickBooks
-		/// </summary>
-		/// <param name="salesOrderItems"></param>
-		/// <param name="allItemList"></param>
-		private void AddUnknownItemsToQB(List<SOSheetQuoteItem> salesOrderItems, AllItemList allItemList)
-		{
-			List<(string, string)> newItems = new List<(string, string)>();
-			NumberGenerator generator = new NumberGenerator(allItemList);
-
-			for (int i = 0; i < salesOrderItems.Count; ++i)
-			{
-				SOSheetQuoteItem item = salesOrderItems[i];
-				string overrideNum = item.GetOverride();
-
-				// if overridden, check if it's in allItemList
-				// if it isn't, add it to newItems
-				if (overrideNum != "" && overrideNum != null)
-				{
-					if (!CheckOverride(ref item, ref allItemList))
-					{
-						newItems.Add((item.GetNumber(), item.GetDescription()));
-					}
-				}
-				
-				// if not overridden, find the correct item number 
-				else
-				{
-					string QuotePartNum = FindPNinDescription(item.GetDescription());
-					string lookupPartNum = ItemLookupKey.GetLookupPartNumber(item.GetDescription(), QuotePartNum);
-
-					if (CheckIfExists(ref item, lookupPartNum, QuotePartNum, ref allItemList)) 
-					{
-						continue;
-					}
-
-					bool isDieSet = GetCorrectItemNumber(ref item, QuotePartNum, generator);
-
-					if (!isDieSet)
-					{
-						newItems.Add((item.GetNumber(), item.GetDescription()));
-						allItemList.Add(item);
-					}
-				}
-			}
-
-			if (newItems.Count > 0)
-			{
-				SendRequest.AddItems(newItems);
-			}
-		}
-
-		/// <summary>
-		/// Returns true if override is in AllItemsList. Also modifies item so that item.number = item.override
-		/// </summary>
-		/// <param name="item">SOSheetQuoteItem of item to check</param>
-		/// <param name="allItemList"></param>
-		/// <returns>a bool that indicates whether the item's override number is in allItemsList</returns>
-		private bool CheckOverride(ref SOSheetQuoteItem item, ref AllItemList allItemList)
-		{
-			string number = allItemList.FindSerialNumber(item.GetOverride());
-			item.SetNumber(item.GetOverride());
-			return number != "";
-		}
-
-
-
-		/// <summary>
-		/// Checks if the item exists in the allItemList and sets the item number accordingly.
-		/// </summary>
-		/// <param name="item">The SOSheetQuoteItem to check</param>
-		/// <param name="allItemList">The list of all items</param>
-		private bool CheckIfExists(ref SOSheetQuoteItem item, string lookupPartNum, string QuotePartNum, ref AllItemList allItemList)
-		{
-			item.SetNumber(allItemList.FindMPN(lookupPartNum, QuotePartNum));
-
-			if (item.GetNumber() != "") // if new item isn't in allItemList from QB
-			{
-				return true; // if item is die set item, should be in quickbooks as a variable item
-			}
-
-			return false;
-		}
-
-		/// <summary>
-		/// Gives the items the correct item number. Returns true if DieSetItem, false if generated number.
-		/// </summary>
-		/// <param name="item"></param>
-		/// <param name="QuotePartNum"></param>
-		/// <param name="numberGenerator"></param>
-		/// <returns></returns>
-		private bool GetCorrectItemNumber(ref SOSheetQuoteItem item, string QuotePartNum, NumberGenerator numberGenerator)
-		{
-
-
-			if (item.GetNumber() == "") // if new item isn't in allItemList from QB
-			{
-				item.SetNumber(DieSetItem.GetPartNum(QuotePartNum)); // if item is die set item, should be in quickbooks as a variable item
-
-				if (item.GetNumber() != "")
-				{
-					return true;
-				}
-			}
-
-			if (item.GetNumber() == "")
-			{
-				item.SetNumber(numberGenerator.Generate());
-			}
-
-			return false;
-		}
-
-		// iterate through items in soSheet, change isNew to F if in the "addedItems" salesOrderList
-		private void ChangeToAdded(string num, string desc, AllItemList allItemList)
-		{
-			BaseQuoteItem newItem = new BaseQuoteItem();
-			newItem.SetNumber(num);
-			newItem.SetDescription(desc);
-			allItemList.Add(newItem);
-			
-		}
-
 		private void MarkNumbersOnSheet(List<SOSheetQuoteItem> itemList)
 		{
 			for (int i = 0; i < itemList.Count; ++i)
@@ -506,23 +369,10 @@ namespace ExcelAddIn1
 
 		private static class SendRequest
 		{
-			internal static void AddItems(List<(string, string)> items)
+			internal static void AddItems(List<QBItem> items)
 			{
-				// Convert format from salesOrderList to NonInvItem List
-				List<QBItem> list = new List<QBItem>();
-				foreach ((string num, string desc) in items)
-				{
-                    QBItem item = new QBItem
-                    {
-						Number = num,
-						Description = desc,
-						AccountName = "Sales Income"
-					};
-					list.Add(item);
-				}
-
 				QBConnector qBConnector = new QBConnector();
-				var response = qBConnector.Client.AddNonInvItem(list);
+				var response = qBConnector.Client.AddNonInvItem(items);
 
 				foreach (var status in response)
 				{
@@ -570,104 +420,6 @@ namespace ExcelAddIn1
 			}
 		}
 
-		internal class SOSheetQuoteItem : IQuoteItem
-		{
-			IQuoteItem internalQuote;
-			string _override;
-
-			// Gives both Excel Interface and Data
-			public SOSheetQuoteItem(IQuoteItem quoteItem, int row)
-			{
-				internalQuote = quoteItem;
-				Row = row;
-			}
-
-			public int Row { get; set; }
-
-			public string GetInputNumber() => GetOverride() == "" ? GetNumber() : GetOverride();
-
-			// Sets Excel Interface
-			public string GetNumber() { return internalQuote.GetNumber(); }
-			public void SetNumber(string value) { internalQuote.SetNumber(value); }
-			public string GetDescription() { return internalQuote.GetDescription(); }
-			public void SetDescription(string value) { internalQuote.SetDescription(value); }
-			public double GetRate() { return internalQuote.GetRate(); }
-			public void SetRate(double value) { internalQuote.SetRate(value); }
-			public int GetQuantity() { return internalQuote.GetQuantity(); }
-			public void SetQuantity(int value) { internalQuote.SetQuantity(value); }
-			public string GetOverride() { return _override; }
-			public void SetOverride(string value ) { _override = value; }
-			public bool GetIsActive() { return internalQuote.GetIsActive(); }
-            public void SetIsActive(bool value) { internalQuote.SetIsActive(value); }
-        }
 	}
 
-	internal class NumberGenerator
-	{
-		private readonly SortedSet<int> sortedNumberSet = new SortedSet<int>();
-
-		internal NumberGenerator(AllItemList itemList)
-		{
-
-			itemList.GetNumberSet(ref sortedNumberSet);
-		}
-
-		internal string Generate()
-		{
-			int count = 0;
-			foreach (int partNum in sortedNumberSet)
-			{
-				if (count != partNum)
-				{
-					sortedNumberSet.Add(count);
-					return "1-" + count.ToString("D4");
-				}
-				count++;
-			}
-			sortedNumberSet.Add(sortedNumberSet.Count);
-
-			string num = "1-" + sortedNumberSet.Count.ToString("D4");
-			return num;
-		}
-	}
-
-	public class DieSetItem
-	{
-		string QBNum;
-
-
-		DieSetItem(string partNum)
-		{
-			if (partNum.StartsWith("BB/"))
-			{
-				QBNum = "1-4501";
-			}
-
-			else if (partNum.StartsWith("CI/"))
-			{
-				QBNum = "1-4502";
-			}
-
-			else if (partNum.StartsWith("CD")) // CD or CDX
-			{
-				QBNum = "1-4503";
-			}
-
-			else if (partNum.StartsWith("PD")) // PD or PDX
-			{
-				QBNum = "1-4504";
-			}
-
-			else
-			{
-				QBNum = "";
-			}
-		}
-
-		public static string GetPartNum(string partNumString)
-		{
-			DieSetItem item = new DieSetItem(partNumString);
-			return item.QBNum;
-		}
-	}
 }

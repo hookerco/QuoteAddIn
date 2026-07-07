@@ -1,6 +1,6 @@
 using System.Text.RegularExpressions;
 
-namespace ExcelAddIn1
+namespace QuoteItemResolution
 {
     internal static class ItemLookupKey
     {

@@ -93,11 +93,25 @@
     <Compile Include="QBRequestTests.cs" />
     <Compile Include="QuoteUploadItemResolverTests.cs" />
     <Compile Include="QuickBooksServiceTests.cs" />
-    <Compile Include="..\ExcelAddIn1\SendToQb\ItemLookupCandidateSelector.cs">
+    <!-- ItemLookupCandidateSelector/ItemLookupKey are internal, so their sources are compiled
+         INTO this test assembly for direct testing. QuoteUploadItemResolver itself is NOT
+         linked here: resolver tests bind to the public copy inside QuickBooksIPCService.dll,
+         which the service compiles from these same linked files. -->
+    <Compile Include="..\QuoteItemResolution\ItemLookupCandidateSelector.cs">
       <Link>ItemLookupCandidateSelector.cs</Link>
     </Compile>
-    <Compile Include="..\ExcelAddIn1\SendToQb\ItemLookupKey.cs">
+    <Compile Include="..\QuoteItemResolution\ItemLookupKey.cs">
       <Link>ItemLookupKey.cs</Link>
+    </Compile>
+    <Compile Include="SalesOrderItemResolutionTests.cs" />
+    <Compile Include="..\ExcelAddIn1\SendToQb\SalesOrderItemResolution.cs">
+      <Link>SalesOrderItemResolution.cs</Link>
+    </Compile>
+    <Compile Include="..\ExcelAddIn1\SendToQb\SOSheetQuoteItem.cs">
+      <Link>SOSheetQuoteItem.cs</Link>
+    </Compile>
+    <Compile Include="..\ExcelAddIn1\QuoteBuilder\QuoteItem.cs">
+      <Link>QuoteItem.cs</Link>
     </Compile>
     <Compile Include="AuditRecordTests.cs" />
     <Compile Include="..\ExcelAddIn1\Audit\AuditRecord.cs">

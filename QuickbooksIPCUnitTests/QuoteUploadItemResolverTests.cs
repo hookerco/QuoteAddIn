@@ -1,7 +1,7 @@
 using System.Collections.Generic;
 using NUnit.Framework;
 using QuickBooksIPCContracts;
-using QuickBooksIPCService;
+using QuoteItemResolution;
 
 namespace QuickBooksServiceLibrary.Tests
 {
@@ -102,6 +102,49 @@ namespace QuickBooksServiceLibrary.Tests
             Assert.AreEqual(0, result.ItemsToCreate.Count);
         }
 
+        // Contrast tests for the old Excel-side divergences: the resolver allocates the FIRST
+        // free 1-XXXX number even when the reserved numbers are dense from zero, and maps
+        // die-set prefixes case-insensitively. The add-in's old, diverging behavior is pinned
+        // by the characterization tests in commit 32eecf4 (deleted along with the code they
+        // characterized when the add-in switched to this resolver).
+
+        [Test]
+        public void Resolve_DenseReservedNumbers_GeneratesFirstFreeNumber()
+        {
+            var result = QuoteUploadItemResolver.Resolve(
+                new[]
+                {
+                    new QBQuoteUploadLine { Description = "NEW-1, First New Item", Quantity = 1, Rate = 1 },
+                    new QBQuoteUploadLine { Description = "NEW-2, Second New Item", Quantity = 1, Rate = 1 }
+                },
+                new[]
+                {
+                    new QBItem { Number = "1-0000", Description = "Existing zero", Active = true },
+                    new QBItem { Number = "1-0001", Description = "Existing one", Active = true },
+                    new QBItem { Number = "1-0002", Description = "Existing two", Active = true }
+                });
+
+            Assert.AreEqual("1-0003", result.ResolvedLines[0].Number);
+            Assert.AreEqual("1-0004", result.ResolvedLines[1].Number);
+        }
+
+        [TestCase("bb/125, Bend Body", "1-4501")]
+        [TestCase("ci/125, Clamp Insert", "1-4502")]
+        [TestCase("cd125, Clamp Die", "1-4503")]
+        [TestCase("pd125, Pressure Die", "1-4504")]
+        public void Resolve_MapsDieSetFamiliesCaseInsensitively(string description, string expectedNumber)
+        {
+            var result = QuoteUploadItemResolver.Resolve(
+                new[]
+                {
+                    new QBQuoteUploadLine { Description = description, Quantity = 1, Rate = 1 }
+                },
+                new List<QBItem>());
+
+            Assert.AreEqual(expectedNumber, result.ResolvedLines[0].Number);
+            Assert.AreEqual(0, result.ItemsToCreate.Count);
+        }
+
         [Test]
         public void Resolve_GeneratesFirstAvailableOneDashNumberForNewItemsAndSkipsReservedNumbers()
         {
@@ -170,6 +213,81 @@ namespace QuickBooksServiceLibrary.Tests
             Assert.AreEqual("1-0001", result.ResolvedLines[1].Number);
             Assert.AreEqual("1-0000", result.ItemsToCreate[0].Number);
             Assert.AreEqual("1-0001", result.ItemsToCreate[1].Number);
+        }
+
+        [Test]
+        public void Resolve_OverrideNumberIsTrimmedBeforeMatchingAndCreating()
+        {
+            var result = QuoteUploadItemResolver.Resolve(
+                new[]
+                {
+                    new QBQuoteUploadLine
+                    {
+                        Description = "NEW-1, New Item",
+                        Quantity = 1,
+                        Rate = 1,
+                        OverrideNumber = " 1-0005 "
+                    }
+                },
+                new List<QBItem>());
+
+            Assert.AreEqual("1-0005", result.ResolvedLines[0].Number);
+            Assert.AreEqual(1, result.ItemsToCreate.Count);
+            Assert.AreEqual("1-0005", result.ItemsToCreate[0].Number);
+        }
+
+        [Test]
+        public void Resolve_RepeatedMissingOverrideInSamePass_CreatesItemOnlyOnce()
+        {
+            var result = QuoteUploadItemResolver.Resolve(
+                new[]
+                {
+                    new QBQuoteUploadLine
+                    {
+                        Description = "NEW-1, First Line",
+                        Quantity = 1,
+                        Rate = 1,
+                        OverrideNumber = "SPECIAL-42"
+                    },
+                    new QBQuoteUploadLine
+                    {
+                        Description = "NEW-2, Second Line",
+                        Quantity = 1,
+                        Rate = 1,
+                        OverrideNumber = "SPECIAL-42"
+                    }
+                },
+                new List<QBItem>());
+
+            Assert.AreEqual("SPECIAL-42", result.ResolvedLines[0].Number);
+            Assert.AreEqual("SPECIAL-42", result.ResolvedLines[1].Number);
+            Assert.IsTrue(result.ResolvedLines[0].CreatedItem);
+            Assert.IsFalse(result.ResolvedLines[1].CreatedItem);
+            Assert.AreEqual(1, result.ItemsToCreate.Count);
+        }
+
+        [Test]
+        public void Resolve_OverrideMatchingExistingActiveItemCaseInsensitively_CreatesNothing()
+        {
+            var result = QuoteUploadItemResolver.Resolve(
+                new[]
+                {
+                    new QBQuoteUploadLine
+                    {
+                        Description = "NEW-1, New Item",
+                        Quantity = 1,
+                        Rate = 1,
+                        OverrideNumber = "SPEC-42"
+                    }
+                },
+                new[]
+                {
+                    new QBItem { Number = "spec-42", Description = "Existing special item", Active = true }
+                });
+
+            Assert.AreEqual("SPEC-42", result.ResolvedLines[0].Number);
+            Assert.IsFalse(result.ResolvedLines[0].CreatedItem);
+            Assert.AreEqual(0, result.ItemsToCreate.Count);
         }
 
         [Test]

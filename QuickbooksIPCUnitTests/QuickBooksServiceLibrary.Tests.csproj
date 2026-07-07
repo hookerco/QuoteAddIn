@@ -93,10 +93,10 @@
     <Compile Include="QBRequestTests.cs" />
     <Compile Include="QuoteUploadItemResolverTests.cs" />
     <Compile Include="QuickBooksServiceTests.cs" />
-    <Compile Include="..\ExcelAddIn1\SendToQb\ItemLookupCandidateSelector.cs">
+    <Compile Include="..\QuoteItemResolution\ItemLookupCandidateSelector.cs">
       <Link>ItemLookupCandidateSelector.cs</Link>
     </Compile>
-    <Compile Include="..\ExcelAddIn1\SendToQb\ItemLookupKey.cs">
+    <Compile Include="..\QuoteItemResolution\ItemLookupKey.cs">
       <Link>ItemLookupKey.cs</Link>
     </Compile>
     <Compile Include="NumberGeneratorCharacterizationTests.cs" />

@@ -4,6 +4,7 @@ using System.ServiceModel;
 using System.Collections.Generic;
 using QBRequestLibrary;
 using QuickBooksIPCContracts;
+using QuoteItemResolution;
 using System.Data.SqlClient;
 using System.Threading.Tasks;
 using System.Threading;

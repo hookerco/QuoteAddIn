@@ -1,6 +1,6 @@
 using NUnit.Framework;
 
-namespace ExcelAddIn1.Tests
+namespace QuoteItemResolution.Tests
 {
     [TestFixture]
     public class ItemLookupKeyTests

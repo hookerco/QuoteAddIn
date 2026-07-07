@@ -1,7 +1,7 @@
 using System.Collections.Generic;
 using NUnit.Framework;
 using QuickBooksIPCContracts;
-using QuickBooksIPCService;
+using QuoteItemResolution;
 
 namespace QuickBooksServiceLibrary.Tests
 {

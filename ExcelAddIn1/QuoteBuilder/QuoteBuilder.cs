@@ -82,8 +82,10 @@ namespace ExcelAddIn1
 			// To avoid weird COM error
 			Globals.ThisAddIn.Application.WindowState = Excel.XlWindowState.xlNormal;
 
-			Excel.Worksheet newSheet = newBook.Worksheets[1];
-			if (IsNotQuote(newSheet))
+			// The audit provenance sheet is veryHidden but still counts toward
+			// Worksheets[1], so index-based lookup can pick the wrong sheet.
+			Excel.Worksheet newSheet = FirstVisibleWorksheet(newBook);
+			if (newSheet == null || IsNotQuote(newSheet))
 			{
 				newBook.Close();
 				MessageBox.Show("File chosen is not a quote");

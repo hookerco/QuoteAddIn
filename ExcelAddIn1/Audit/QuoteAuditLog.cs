@@ -200,7 +200,10 @@ namespace ExcelAddIn1.Audit
 
         private static Excel.Worksheet CreateHiddenSheet(Excel.Workbook wb)
         {
-            Excel.Worksheet sheet = wb.Worksheets.Add();
+            // Parameterless Add() inserts before the active sheet, which would
+            // put this sheet at index 1 ahead of the quote sheet.
+            Excel.Worksheet sheet = wb.Worksheets.Add(
+                After: wb.Worksheets[wb.Worksheets.Count]);
             sheet.Name = ProvenanceSheet;
             sheet.Visible = Excel.XlSheetVisibility.xlSheetVeryHidden;
             return sheet;

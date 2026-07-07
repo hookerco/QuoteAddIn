@@ -15,6 +15,11 @@ namespace QuoteItemResolution
     // Compiled into both the IPC service and the Excel add-in via linked source, so
     // both upload paths allocate identical numbers. This is a financial write path:
     // any behavior change here changes which items get created in QuickBooks.
+    //
+    // Linked by: QuickBooksIPCService\QuickBooksIPCServiceLibrary.csproj,
+    // ExcelAddIn1\QuoteUtility.csproj, and
+    // QuickbooksIPCUnitTests\QuickBooksServiceLibrary.Tests.csproj (this folder has no
+    // csproj of its own - update all three if these files move or are renamed).
     public static class QuoteUploadItemResolver
     {
         public static QuoteUploadItemResolution Resolve(

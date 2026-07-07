@@ -14,7 +14,9 @@ namespace ExcelAddIn1
 
 		public int Row { get; set; }
 
-		public string GetInputNumber() => GetOverride() == "" ? GetNumber() : GetOverride();
+		// Mirrors the resolver's override semantics (trimmed; whitespace-only counts as no
+		// override) so the audit record's number matches what QuickBooks actually received.
+		public string GetInputNumber() => string.IsNullOrWhiteSpace(GetOverride()) ? GetNumber() : GetOverride().Trim();
 
 		// Sets Excel Interface
 		public string GetNumber() { return internalQuote.GetNumber(); }

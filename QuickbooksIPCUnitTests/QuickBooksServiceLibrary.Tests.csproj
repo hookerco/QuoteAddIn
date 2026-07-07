@@ -93,6 +93,10 @@
     <Compile Include="QBRequestTests.cs" />
     <Compile Include="QuoteUploadItemResolverTests.cs" />
     <Compile Include="QuickBooksServiceTests.cs" />
+    <!-- ItemLookupCandidateSelector/ItemLookupKey are internal, so their sources are compiled
+         INTO this test assembly for direct testing. QuoteUploadItemResolver itself is NOT
+         linked here: resolver tests bind to the public copy inside QuickBooksIPCService.dll,
+         which the service compiles from these same linked files. -->
     <Compile Include="..\QuoteItemResolution\ItemLookupCandidateSelector.cs">
       <Link>ItemLookupCandidateSelector.cs</Link>
     </Compile>

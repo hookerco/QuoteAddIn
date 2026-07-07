@@ -102,10 +102,11 @@ namespace QuickBooksServiceLibrary.Tests
             Assert.AreEqual(0, result.ItemsToCreate.Count);
         }
 
-        // Contrast tests for the Excel-side divergences (see NumberGeneratorCharacterizationTests
-        // and DieSetItemCharacterizationTests): the server allocates the FIRST free 1-XXXX number
-        // even when the reserved numbers are dense from zero, and maps die-set prefixes
-        // case-insensitively.
+        // Contrast tests for the old Excel-side divergences: the resolver allocates the FIRST
+        // free 1-XXXX number even when the reserved numbers are dense from zero, and maps
+        // die-set prefixes case-insensitively. The add-in's old, diverging behavior is pinned
+        // by the characterization tests in commit 32eecf4 (deleted along with the code they
+        // characterized when the add-in switched to this resolver).
 
         [Test]
         public void Resolve_DenseReservedNumbers_GeneratesFirstFreeNumber()
@@ -212,6 +213,81 @@ namespace QuickBooksServiceLibrary.Tests
             Assert.AreEqual("1-0001", result.ResolvedLines[1].Number);
             Assert.AreEqual("1-0000", result.ItemsToCreate[0].Number);
             Assert.AreEqual("1-0001", result.ItemsToCreate[1].Number);
+        }
+
+        [Test]
+        public void Resolve_OverrideNumberIsTrimmedBeforeMatchingAndCreating()
+        {
+            var result = QuoteUploadItemResolver.Resolve(
+                new[]
+                {
+                    new QBQuoteUploadLine
+                    {
+                        Description = "NEW-1, New Item",
+                        Quantity = 1,
+                        Rate = 1,
+                        OverrideNumber = " 1-0005 "
+                    }
+                },
+                new List<QBItem>());
+
+            Assert.AreEqual("1-0005", result.ResolvedLines[0].Number);
+            Assert.AreEqual(1, result.ItemsToCreate.Count);
+            Assert.AreEqual("1-0005", result.ItemsToCreate[0].Number);
+        }
+
+        [Test]
+        public void Resolve_RepeatedMissingOverrideInSamePass_CreatesItemOnlyOnce()
+        {
+            var result = QuoteUploadItemResolver.Resolve(
+                new[]
+                {
+                    new QBQuoteUploadLine
+                    {
+                        Description = "NEW-1, First Line",
+                        Quantity = 1,
+                        Rate = 1,
+                        OverrideNumber = "SPECIAL-42"
+                    },
+                    new QBQuoteUploadLine
+                    {
+                        Description = "NEW-2, Second Line",
+                        Quantity = 1,
+                        Rate = 1,
+                        OverrideNumber = "SPECIAL-42"
+                    }
+                },
+                new List<QBItem>());
+
+            Assert.AreEqual("SPECIAL-42", result.ResolvedLines[0].Number);
+            Assert.AreEqual("SPECIAL-42", result.ResolvedLines[1].Number);
+            Assert.IsTrue(result.ResolvedLines[0].CreatedItem);
+            Assert.IsFalse(result.ResolvedLines[1].CreatedItem);
+            Assert.AreEqual(1, result.ItemsToCreate.Count);
+        }
+
+        [Test]
+        public void Resolve_OverrideMatchingExistingActiveItemCaseInsensitively_CreatesNothing()
+        {
+            var result = QuoteUploadItemResolver.Resolve(
+                new[]
+                {
+                    new QBQuoteUploadLine
+                    {
+                        Description = "NEW-1, New Item",
+                        Quantity = 1,
+                        Rate = 1,
+                        OverrideNumber = "SPEC-42"
+                    }
+                },
+                new[]
+                {
+                    new QBItem { Number = "spec-42", Description = "Existing special item", Active = true }
+                });
+
+            Assert.AreEqual("SPEC-42", result.ResolvedLines[0].Number);
+            Assert.IsFalse(result.ResolvedLines[0].CreatedItem);
+            Assert.AreEqual(0, result.ItemsToCreate.Count);
         }
 
         [Test]

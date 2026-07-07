@@ -150,6 +150,50 @@ namespace QuickBooksServiceLibrary.Tests
         }
 
         [Test]
+        public void ResolveNumbers_PaddedOverrideFromSheetCell_IsTrimmedOntoItem()
+        {
+            var items = new List<SOSheetQuoteItem> { MakeItem("NEW-1, New Item", 5, " 1-0005 ") };
+
+            List<QBItem> itemsToCreate = SalesOrderItemResolution.ResolveNumbers(items, new List<QBItem>());
+
+            Assert.AreEqual("1-0005", items[0].GetNumber());
+            Assert.AreEqual(1, itemsToCreate.Count);
+            Assert.AreEqual("1-0005", itemsToCreate[0].Number);
+        }
+
+        // GetInputNumber feeds the audit record's "number" field; it must mirror the
+        // resolver's override semantics (trim; whitespace-only means no override) so the
+        // audit reflects the number QuickBooks actually received.
+
+        [Test]
+        public void GetInputNumber_PaddedOverride_ReturnsTrimmedOverride()
+        {
+            var item = MakeItem("NEW-1, New Item", 5, " 1-0005 ");
+
+            Assert.AreEqual("1-0005", item.GetInputNumber());
+        }
+
+        [Test]
+        public void GetInputNumber_WhitespaceOnlyOverride_ReturnsResolvedNumber()
+        {
+            var item = MakeItem("NEW-1, New Item", 5, "   ");
+            item.SetNumber("1-0000");
+
+            Assert.AreEqual("1-0000", item.GetInputNumber());
+        }
+
+        [Test]
+        public void GetInputNumber_NullOverride_ReturnsResolvedNumber()
+        {
+            var baseItem = new BaseQuoteItem();
+            baseItem.SetDescription("NEW-1, New Item");
+            var item = new SOSheetQuoteItem(baseItem, 5); // SetOverride never called
+            item.SetNumber("1-0000");
+
+            Assert.AreEqual("1-0000", item.GetInputNumber());
+        }
+
+        [Test]
         public void ResolveNumbers_DescriptionWithoutComma_ResolvesInsteadOfThrowing()
         {
             // The old Excel path threw NotPartException and aborted the send.

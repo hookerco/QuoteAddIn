@@ -47,5 +47,29 @@ namespace QuoteItemResolution.Tests
         {
             Assert.AreEqual(quotePartNumber, ItemLookupKey.GetLookupPartNumber(description, quotePartNumber));
         }
+
+        [TestCase("WI-2000A-04000, 2 x 4 wiper insert, alum-bronze, standard cut, EDP#3700", "WI-2000A-04000", "3700")]
+        [TestCase("wi-abc, wiper insert edp#1234", "wi-abc", "1234")]
+        [TestCase("WI123, Wiper Insert EDP # : 1234", "WI123", "1234")]
+        [TestCase("WI-2500A-03000, Wiper Insert for Die Set EDP#3819", "WI-2500A-03000", "3819")]
+        public void GetInsertEdpNumber_ReturnsEdpNumberForWiperInsertLines(
+            string description, string quotePartNumber, string expected)
+        {
+            Assert.AreEqual(expected, ItemLookupKey.GetInsertEdpNumber(description, quotePartNumber));
+        }
+
+        [TestCase("WI-2500A-03000, Inserted Wiper Die EDP#3819", "WI-2500A-03000")]
+        [TestCase("WI-2500A-03000, INSERTED WIPER DIES EDP#3819", "WI-2500A-03000")]
+        [TestCase("wd-2500a-03000, inserted wiper edp#3819", "wd-2500a-03000")]
+        [TestCase("WD987, Wiper Die EDP#5678", "WD987")]
+        [TestCase("WI-ABC, Wiper Insert without EDP", "WI-ABC")]
+        [TestCase("WI-ABC, Wiper Insert EDP# ", "WI-ABC")]
+        [TestCase("RB-ABC, Radius Block EDP#1234", "RB-ABC")]
+        [TestCase("WIPER-ABC, Wiper Insert EDP#1234", "WIPER-ABC")]
+        public void GetInsertEdpNumber_ReturnsEmptyWhenLineIsNotAnEdpWiperInsert(
+            string description, string quotePartNumber)
+        {
+            Assert.AreEqual("", ItemLookupKey.GetInsertEdpNumber(description, quotePartNumber));
+        }
     }
 }

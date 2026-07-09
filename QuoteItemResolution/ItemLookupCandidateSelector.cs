@@ -107,17 +107,12 @@ namespace QuoteItemResolution
                 return "";
             }
 
-            if (DescribesWiperDie(description))
+            if (ItemLookupKey.DescribesWiperDie(description))
             {
                 return "WD";
             }
 
             return leadKind;
-        }
-
-        private static bool DescribesWiperDie(string description)
-        {
-            return Regex.IsMatch(description ?? "", @"\bWIPER\s+DIES?\b", RegexOptions.IgnoreCase);
         }
 
         private static int GetDescriptionPartDistance(string description, string preferredDescriptionPartNumber)

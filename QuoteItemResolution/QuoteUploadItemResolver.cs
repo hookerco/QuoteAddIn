@@ -57,22 +57,28 @@ namespace QuoteItemResolution
                 else
                 {
                     string quotePartNumber = FindPartNumber(line.Description);
-                    string lookupPartNumber = ItemLookupKey.GetLookupPartNumber(line.Description, quotePartNumber);
-                    number = FindMatchingItemNumber(activeCatalog, lookupPartNumber, quotePartNumber);
+                    number = ResolveEdpNamedInsertItem(
+                        line, quotePartNumber, catalog, activeCatalog, numbersToCreate, result, out createdItem);
 
                     if (number == string.Empty)
                     {
-                        number = GetDieSetItemNumber(quotePartNumber);
-                    }
+                        string lookupPartNumber = ItemLookupKey.GetLookupPartNumber(line.Description, quotePartNumber);
+                        number = FindMatchingItemNumber(activeCatalog, lookupPartNumber, quotePartNumber);
 
-                    if (number == string.Empty)
-                    {
-                        number = GenerateNumber(reservedNumbers);
-                        numbersToCreate.Add(number);
-                        QBItem item = CreateNonInventoryItem(number, line.Description);
-                        result.ItemsToCreate.Add(item);
-                        activeCatalog.Add(item);
-                        createdItem = true;
+                        if (number == string.Empty)
+                        {
+                            number = GetDieSetItemNumber(quotePartNumber);
+                        }
+
+                        if (number == string.Empty)
+                        {
+                            number = GenerateNumber(reservedNumbers);
+                            numbersToCreate.Add(number);
+                            QBItem item = CreateNonInventoryItem(number, line.Description);
+                            result.ItemsToCreate.Add(item);
+                            activeCatalog.Add(item);
+                            createdItem = true;
+                        }
                     }
                 }
 
@@ -87,6 +93,59 @@ namespace QuoteItemResolution
             }
 
             return result;
+        }
+
+        // Strict rule for wiper-insert lines carrying a labeled EDP number: the EDP is the
+        // item's only QuickBooks identity. Match the item NAME (EDP-named items usually do
+        // not repeat the EDP in their description), otherwise create the EDP-named item.
+        // Description matching is deliberately skipped for these lines, so legacy 1-XXXX
+        // wiper items whose descriptions mention the EDP are superseded, not reused.
+        // Returns empty when the rule does not apply or the EDP name is unusable (held by
+        // an inactive or die-describing item) - the caller then runs the legacy path.
+        private static string ResolveEdpNamedInsertItem(
+            QBQuoteUploadLine line,
+            string quotePartNumber,
+            List<QBItem> catalog,
+            List<QBItem> activeCatalog,
+            HashSet<string> numbersToCreate,
+            QuoteUploadItemResolution result,
+            out bool createdItem)
+        {
+            createdItem = false;
+            string edpNumber = ItemLookupKey.GetInsertEdpNumber(line.Description, quotePartNumber);
+            if (edpNumber == string.Empty)
+            {
+                return string.Empty;
+            }
+
+            foreach (QBItem item in activeCatalog)
+            {
+                if (System.StringComparer.OrdinalIgnoreCase.Equals(item.Number ?? string.Empty, edpNumber))
+                {
+                    if (ItemLookupKey.DescribesWiperDie(item.Description))
+                    {
+                        return string.Empty;
+                    }
+
+                    return item.Number;
+                }
+            }
+
+            foreach (QBItem item in catalog)
+            {
+                if (item != null && !item.Active &&
+                    System.StringComparer.OrdinalIgnoreCase.Equals(item.Number ?? string.Empty, edpNumber))
+                {
+                    return string.Empty;
+                }
+            }
+
+            numbersToCreate.Add(edpNumber);
+            QBItem newItem = CreateNonInventoryItem(edpNumber, line.Description);
+            result.ItemsToCreate.Add(newItem);
+            activeCatalog.Add(newItem);
+            createdItem = true;
+            return edpNumber;
         }
 
         private static List<QBItem> GetActiveCatalog(List<QBItem> catalog)

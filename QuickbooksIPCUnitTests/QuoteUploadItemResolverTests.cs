@@ -58,21 +58,21 @@ namespace QuickBooksServiceLibrary.Tests
         }
 
         [Test]
-        public void Resolve_WiperDescriptionsUseEdpNumberAsLookupKey()
+        public void Resolve_WiperDieDescriptionsUseEdpNumberAsLookupKey()
         {
             var result = QuoteUploadItemResolver.Resolve(
                 new[]
                 {
                     new QBQuoteUploadLine
                     {
-                        Description = "WI-2500A-03000, Inserted Wiper EDP#3819",
+                        Description = "WD-2500A-03000, Inserted Wiper Die EDP#3819",
                         Quantity = 1,
                         Rate = 7
                     }
                 },
                 new[]
                 {
-                    new QBItem { Number = "1-5160", Description = "WI-2500A-03000, Inserted Wiper EDP#3819", Active = true }
+                    new QBItem { Number = "1-5160", Description = "WD-2500A-03000, Inserted Wiper Die EDP#3819", Active = true }
                 });
 
             Assert.AreEqual("1-5160", result.ResolvedLines[0].Number);
@@ -331,27 +331,28 @@ namespace QuickBooksServiceLibrary.Tests
                     new QBItem { Number = "1-5160", Description = "WI-2500A-03000, Inserted Wiper Die EDP#3819", Active = true }
                 });
 
-            Assert.AreNotEqual("1-5160", result.ResolvedLines[0].Number);
+            Assert.AreEqual("3819", result.ResolvedLines[0].Number);
             Assert.IsTrue(result.ResolvedLines[0].CreatedItem);
             Assert.AreEqual(1, result.ItemsToCreate.Count);
+            Assert.AreEqual("3819", result.ItemsToCreate[0].Number);
         }
 
         [Test]
-        public void Resolve_EdpLookupMatchesWholeNumberNotDigitSubstring()
+        public void Resolve_DieEdpLookupMatchesWholeNumberNotDigitSubstring()
         {
             var result = QuoteUploadItemResolver.Resolve(
                 new[]
                 {
                     new QBQuoteUploadLine
                     {
-                        Description = "WI-2500A-03000, Inserted Wiper EDP#3819",
+                        Description = "WI-2500A-03000, Inserted Wiper Die EDP#3819",
                         Quantity = 1,
                         Rate = 7
                     }
                 },
                 new[]
                 {
-                    new QBItem { Number = "1-1000", Description = "WI-9999X-00000, Inserted Wiper EDP#38190", Active = true }
+                    new QBItem { Number = "1-1000", Description = "WI-9999X-00000, Inserted Wiper Die EDP#38190", Active = true }
                 });
 
             Assert.AreNotEqual("1-1000", result.ResolvedLines[0].Number);
@@ -360,7 +361,7 @@ namespace QuickBooksServiceLibrary.Tests
         }
 
         [Test]
-        public void Resolve_MatchesWiLineToInsertWhoseDescriptionMentionsDieButIsNotAWiperDie()
+        public void Resolve_WiperInsertMentioningDieSetIsClassifiedAsInsertAndGetsEdpName()
         {
             var result = QuoteUploadItemResolver.Resolve(
                 new[]
@@ -377,9 +378,171 @@ namespace QuickBooksServiceLibrary.Tests
                     new QBItem { Number = "1-5159", Description = "WI-2500A-03000, Wiper Insert for Die Set EDP#3819", Active = true }
                 });
 
-            Assert.AreEqual("1-5159", result.ResolvedLines[0].Number);
+            Assert.AreEqual("3819", result.ResolvedLines[0].Number);
+            Assert.IsTrue(result.ResolvedLines[0].CreatedItem);
+            Assert.AreEqual(1, result.ItemsToCreate.Count);
+            Assert.AreEqual("3819", result.ItemsToCreate[0].Number);
+        }
+
+        [Test]
+        public void Resolve_WiperInsertWithEdp_MatchesItemNamedByEdpEvenWhenItsDescriptionOmitsTheEdp()
+        {
+            // Regression for the 1-1014 duplicate: item 3700 exists but its description
+            // never mentions the EDP, and an old auto-generated item matches by description.
+            // The EDP-named item must win; nothing is created.
+            var result = QuoteUploadItemResolver.Resolve(
+                new[]
+                {
+                    new QBQuoteUploadLine
+                    {
+                        Description = "WI-2000A-04000, 2 x 4 wiper insert, alum-bronze, standard cut, EDP#3700",
+                        Quantity = 1,
+                        Rate = 64
+                    }
+                },
+                new[]
+                {
+                    new QBItem { Number = "1-1014", Description = "WI-2000A-04000, 2 x 4 wiper insert, alum-bronze, standard cut, EDP#3700", Active = true },
+                    new QBItem { Number = "3700", Description = "WI-2000A-04000, 2 x 4 wiper insert, alum-bronze", Active = true }
+                });
+
+            Assert.AreEqual("3700", result.ResolvedLines[0].Number);
             Assert.IsFalse(result.ResolvedLines[0].CreatedItem);
             Assert.AreEqual(0, result.ItemsToCreate.Count);
+        }
+
+        [Test]
+        public void Resolve_WiperInsertWithEdp_CreatesItemNamedByEdpWhenNoneExists()
+        {
+            var result = QuoteUploadItemResolver.Resolve(
+                new[]
+                {
+                    new QBQuoteUploadLine
+                    {
+                        Description = "WI-2000A-04000, 2 x 4 wiper insert, alum-bronze, standard cut, EDP#3700",
+                        Quantity = 1,
+                        Rate = 64
+                    }
+                },
+                new[]
+                {
+                    new QBItem { Number = "1-1000", Description = "RB-2500A-03000, Radius Block", Active = true }
+                });
+
+            Assert.AreEqual("3700", result.ResolvedLines[0].Number);
+            Assert.IsTrue(result.ResolvedLines[0].CreatedItem);
+            Assert.AreEqual(1, result.ItemsToCreate.Count);
+            Assert.AreEqual("3700", result.ItemsToCreate[0].Number);
+            Assert.AreEqual("WI-2000A-04000, 2 x 4 wiper insert, alum-bronze, standard cut, EDP#3700", result.ItemsToCreate[0].Description);
+            Assert.AreEqual("Sales Income", result.ItemsToCreate[0].AccountName);
+        }
+
+        [Test]
+        public void Resolve_RepeatedEdpInSamePass_CreatesItemOnlyOnce()
+        {
+            var result = QuoteUploadItemResolver.Resolve(
+                new[]
+                {
+                    new QBQuoteUploadLine { Description = "WI-2000A-04000, 2 x 4 wiper insert, alum-bronze, EDP#3700", Quantity = 1, Rate = 64 },
+                    new QBQuoteUploadLine { Description = "WI-2000A-04000, 2 x 4 wiper insert, alum-bronze, EDP#3700", Quantity = 3, Rate = 60 }
+                },
+                new List<QBItem>());
+
+            Assert.AreEqual("3700", result.ResolvedLines[0].Number);
+            Assert.AreEqual("3700", result.ResolvedLines[1].Number);
+            Assert.IsTrue(result.ResolvedLines[0].CreatedItem);
+            Assert.IsFalse(result.ResolvedLines[1].CreatedItem);
+            Assert.AreEqual(1, result.ItemsToCreate.Count);
+        }
+
+        [TestCase("WI-2500A-03000, Inserted Wiper Die EDP#3819")]
+        [TestCase("WD-2500A-03000, Inserted Wiper EDP#3819")]
+        public void Resolve_WiperDieLinesKeepGeneratedNumbersAndNeverClaimTheEdpName(string description)
+        {
+            var result = QuoteUploadItemResolver.Resolve(
+                new[]
+                {
+                    new QBQuoteUploadLine { Description = description, Quantity = 1, Rate = 7 }
+                },
+                new List<QBItem>());
+
+            Assert.AreEqual("1-0000", result.ResolvedLines[0].Number);
+            Assert.IsTrue(result.ResolvedLines[0].CreatedItem);
+            Assert.AreEqual(1, result.ItemsToCreate.Count);
+            Assert.AreEqual("1-0000", result.ItemsToCreate[0].Number);
+        }
+
+        [Test]
+        public void Resolve_EdpNameHeldByDieDescribingItem_FallsBackToLegacyPath()
+        {
+            // Anomaly guard: the bare EDP name is already a die item. Do not resolve the
+            // insert line to it and do not queue a colliding item write - fall back to
+            // description matching (which excludes the die) and 1-XXXX generation.
+            var result = QuoteUploadItemResolver.Resolve(
+                new[]
+                {
+                    new QBQuoteUploadLine
+                    {
+                        Description = "WI-2500A-03000, Inserted Wiper EDP#3819",
+                        Quantity = 1,
+                        Rate = 7
+                    }
+                },
+                new[]
+                {
+                    new QBItem { Number = "3819", Description = "WI-2500A-03000, Inserted Wiper Die EDP#3819", Active = true }
+                });
+
+            Assert.AreEqual("1-0000", result.ResolvedLines[0].Number);
+            Assert.IsTrue(result.ResolvedLines[0].CreatedItem);
+            Assert.AreEqual(1, result.ItemsToCreate.Count);
+            Assert.AreEqual("1-0000", result.ItemsToCreate[0].Number);
+        }
+
+        [Test]
+        public void Resolve_EdpNameHeldByInactiveItem_FallsBackToLegacyPath()
+        {
+            var result = QuoteUploadItemResolver.Resolve(
+                new[]
+                {
+                    new QBQuoteUploadLine
+                    {
+                        Description = "WI-2000A-04000, 2 x 4 wiper insert, alum-bronze, EDP#3700",
+                        Quantity = 1,
+                        Rate = 64
+                    }
+                },
+                new[]
+                {
+                    new QBItem { Number = "3700", Description = "WI-2000A-04000, 2 x 4 wiper insert, alum-bronze", Active = false }
+                });
+
+            Assert.AreEqual("1-0000", result.ResolvedLines[0].Number);
+            Assert.IsTrue(result.ResolvedLines[0].CreatedItem);
+            Assert.AreEqual(1, result.ItemsToCreate.Count);
+            Assert.AreEqual("1-0000", result.ItemsToCreate[0].Number);
+        }
+
+        [Test]
+        public void Resolve_OverrideStillWinsForWiperInsertWithEdp()
+        {
+            var result = QuoteUploadItemResolver.Resolve(
+                new[]
+                {
+                    new QBQuoteUploadLine
+                    {
+                        Description = "WI-2000A-04000, 2 x 4 wiper insert, alum-bronze, EDP#3700",
+                        Quantity = 1,
+                        Rate = 64,
+                        OverrideNumber = "1-9999"
+                    }
+                },
+                new[]
+                {
+                    new QBItem { Number = "3700", Description = "WI-2000A-04000, 2 x 4 wiper insert, alum-bronze", Active = true }
+                });
+
+            Assert.AreEqual("1-9999", result.ResolvedLines[0].Number);
         }
     }
 }

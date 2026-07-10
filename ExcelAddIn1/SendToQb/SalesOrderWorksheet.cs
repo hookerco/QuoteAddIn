@@ -297,6 +297,14 @@ namespace ExcelAddIn1
 					if (direct != null && !sources.Exists(s => s.Sha256 == direct.Sha256))
 						sources.Add(direct);
 				}
+				else if (sources.Count == 0)
+				{
+					// AUDIT: aux books created before the audit feature carry no
+					// provenance sheet; snapshot the aux book itself so the send
+					// still captures what was actually sent.
+					var fallback = ExcelAddIn1.Audit.QuoteAuditLog.SnapshotWorkbook(auxBook, "send_aux");
+					if (fallback != null) sources.Add(fallback);
+				}
 				var sentLines = new List<Dictionary<string, object>>();
 				if (salesOrderList != null)
 					foreach (var it in salesOrderList)

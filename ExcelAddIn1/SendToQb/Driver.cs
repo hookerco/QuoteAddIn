@@ -48,6 +48,14 @@ namespace ExcelAddIn1
 						if (entry != null && !auditSources.Exists(s => s.Sha256 == entry.Sha256))
 							auditSources.Add(entry);
 					}
+					else if (auditSources.Count == 0)
+					{
+						// AUDIT: aux books created before the audit feature carry no
+						// provenance sheet; snapshot the aux book itself so the send
+						// still captures what was actually sent.
+						var entry = ExcelAddIn1.Audit.QuoteAuditLog.SnapshotWorkbook(sourceBook, "prepare_aux");
+						if (entry != null) auditSources.Add(entry);
+					}
 					ExcelAddIn1.Audit.QuoteAuditLog.WriteSendRecord(
 						sourceBook, auditSources, null, customer, "", "", "", "", null, "");
 				}

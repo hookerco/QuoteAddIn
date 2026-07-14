@@ -94,12 +94,39 @@ namespace QuickBooksServiceHost
         {
             try
             {
-                string body = ReadBody(ctx.Request);
+                string path = ctx.Request.Url.AbsolutePath;
                 string token = ctx.Request.Headers[QuoteBridgeRouter.TokenHeaderName];
+                if (path == "/save-file" && string.Equals(
+                    ctx.Request.HttpMethod, "POST", StringComparison.OrdinalIgnoreCase))
+                {
+                    BridgeHttpResponse authorization = _router.Route(
+                        ctx.Request.HttpMethod, path, token, null);
+                    if (authorization.StatusCode != 200)
+                    {
+                        Write(ctx.Response, authorization);
+                        return;
+                    }
+
+                    byte[] content = ReadBinaryBody(ctx.Request);
+                    WorkstationSaveResult saveResult = WorkstationSaveDialog.Save(
+                        content,
+                        ctx.Request.QueryString["filename"],
+                        ctx.Request.QueryString["extension"]);
+                    string resultBody = saveResult.Cancelled
+                        ? "{\"status\":\"cancelled\"}"
+                        : "{\"status\":\"saved\",\"filename\":\"" +
+                            Escape(saveResult.Filename) + "\"}";
+                    Write(
+                        ctx.Response,
+                        new BridgeHttpResponse(200, resultBody, authorization.Headers));
+                    return;
+                }
+
+                string body = ReadBody(ctx.Request);
 
                 BridgeHttpResponse response = _router.Route(
                     ctx.Request.HttpMethod,
-                    ctx.Request.Url.AbsolutePath,
+                    path,
                     token,
                     body);
 
@@ -110,6 +137,12 @@ namespace QuickBooksServiceHost
                 try
                 {
                     var res = ctx.Response;
+                    BridgeHttpResponse cors = _router.Route(
+                        "OPTIONS", ctx.Request.Url.AbsolutePath, null, null);
+                    foreach (var header in cors.Headers)
+                    {
+                        res.AddHeader(header.Key, header.Value);
+                    }
                     res.StatusCode = 502;
                     res.ContentType = "application/json";
                     byte[] bytes = Encoding.UTF8.GetBytes(
@@ -134,6 +167,35 @@ namespace QuickBooksServiceHost
             using (var reader = new StreamReader(request.InputStream, request.ContentEncoding ?? Encoding.UTF8))
             {
                 return reader.ReadToEnd();
+            }
+        }
+
+        private static byte[] ReadBinaryBody(HttpListenerRequest request)
+        {
+            if (!request.HasEntityBody)
+            {
+                throw new InvalidDataException("Quote file content is empty.");
+            }
+            if (request.ContentLength64 > WorkstationFileSave.MaxFileBytes)
+            {
+                throw new InvalidDataException("Quote file exceeds the 25 MB workstation-save limit.");
+            }
+
+            using (var output = new MemoryStream())
+            {
+                var buffer = new byte[81920];
+                int read;
+                while ((read = request.InputStream.Read(buffer, 0, buffer.Length)) > 0)
+                {
+                    if (output.Length + read > WorkstationFileSave.MaxFileBytes)
+                    {
+                        throw new InvalidDataException("Quote file exceeds the 25 MB workstation-save limit.");
+                    }
+                    output.Write(buffer, 0, read);
+                }
+                byte[] content = output.ToArray();
+                WorkstationFileSave.ValidateContent(content);
+                return content;
             }
         }
 

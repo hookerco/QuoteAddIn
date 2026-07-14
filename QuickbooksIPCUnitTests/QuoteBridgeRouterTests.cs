@@ -94,6 +94,23 @@ namespace QuickbooksIPCUnitTests
         }
 
         [Test]
+        public void SaveFile_WithoutValidToken_IsForbidden()
+        {
+            BridgeHttpResponse response = OkRouter().Route("POST", "/save-file", null, null);
+
+            Assert.AreEqual(403, response.StatusCode);
+        }
+
+        [Test]
+        public void SaveFile_WithValidToken_AuthorizesTransportHandler()
+        {
+            BridgeHttpResponse response = OkRouter().Route("POST", "/save-file", Token, null);
+
+            Assert.AreEqual(200, response.StatusCode);
+            Assert.AreEqual("{\"status\":\"authorized\"}", response.Body);
+        }
+
+        [Test]
         public void SubmitQuote_WithValidToken_WrapsConnectorResponse()
         {
             string capturedBody = null;

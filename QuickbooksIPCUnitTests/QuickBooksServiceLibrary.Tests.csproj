@@ -88,6 +88,7 @@
   <ItemGroup>
     <Compile Include="ControlTests.cs" />
     <Compile Include="QuoteBridgeRouterTests.cs" />
+    <Compile Include="WorkstationFileSaveTests.cs" />
     <Compile Include="ItemLookupCandidateSelectorTests.cs" />
     <Compile Include="ItemLookupKeyTests.cs" />
     <Compile Include="QBRequestTests.cs" />

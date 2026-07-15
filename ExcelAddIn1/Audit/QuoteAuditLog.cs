@@ -222,12 +222,59 @@ namespace ExcelAddIn1.Audit
                 && FindSheet(wb, "Calculations") != null;
         }
 
+        internal static string ReadQuoteReference(Excel.Workbook wb)
+        {
+            try
+            {
+                Excel.Worksheet rfq = FindSheet(wb, "RFQ Input");
+                if (rfq == null) return "";
+
+                Excel.Range referenceCell = rfq.Range["B4"];
+                string value = Convert.ToString(referenceCell.Text);
+                if (string.IsNullOrWhiteSpace(value))
+                    value = Convert.ToString(referenceCell.Value2);
+                return (value ?? "").Trim();
+            }
+            catch (Exception ex)
+            {
+                Trace.WriteLine("audit ReadQuoteReference: " + ex);
+                return "";
+            }
+        }
+
+        internal static string QuoteFamily(Excel.Worksheet sourceSheet)
+        {
+            try
+            {
+                string name = sourceSheet == null ? "" : sourceSheet.Name;
+                switch ((name ?? "").Trim().ToLowerInvariant())
+                {
+                    case "standard rfq":
+                    case "standard quote":
+                        return "standard";
+                    case "spares quote":
+                        return "spares";
+                    case "spares price breaks":
+                        return "price_breaks";
+                    case "cable mandrel spares":
+                        return "cable";
+                    default:
+                        return "";
+                }
+            }
+            catch (Exception ex)
+            {
+                Trace.WriteLine("audit QuoteFamily: " + ex);
+                return "";
+            }
+        }
+
         internal static void WriteSendRecord(
             Excel.Workbook auxBook, List<ProvenanceEntry> sources,
             IEnumerable<Dictionary<string, object>> sentLines,
             string customer, string po, string dueDate, string txnType,
-            string quoteReference, QBStatusResponse<string> response,
-            string errorMessage)
+            string quoteReference, string quoteFamily,
+            QBStatusResponse<string> response, string errorMessage)
         {
             try
             {
@@ -244,7 +291,7 @@ namespace ExcelAddIn1.Audit
                     DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ"),
                     Environment.MachineName, Environment.UserName, AddinVersion,
                     "", SafeName(auxBook),
-                    sources, customer, po, dueDate, txnType, quoteReference, sentLines,
+                    sources, customer, po, dueDate, txnType, quoteReference, quoteFamily, sentLines,
                     response == null ? (object)null : response.StatusCode,
                     response == null ? null : response.StatusMessage,
                     response == null ? null : response.Data,

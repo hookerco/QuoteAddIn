@@ -17,6 +17,8 @@ namespace ExcelAddIn1
 		private readonly int firstRow = 5; // first row of items
 		private int nextRow = 5; // next unused row
 		private readonly Excel.Worksheet oldSheet; // sheet that we're reading from
+		private readonly string quoteReference;
+		private readonly string quoteFamily;
 		private readonly Excel.Worksheet soSheet; // underlying Excel sheet
 		private Button closeButton; 
 		private Button sendButton;
@@ -54,6 +56,9 @@ namespace ExcelAddIn1
 
 
 			this.oldSheet = oldSheet;
+			Excel.Workbook sourceBook = oldSheet.Parent as Excel.Workbook;
+			quoteReference = ExcelAddIn1.Audit.QuoteAuditLog.ReadQuoteReference(sourceBook);
+			quoteFamily = ExcelAddIn1.Audit.QuoteAuditLog.QuoteFamily(oldSheet);
 		}
 
 		/// <summary>
@@ -257,7 +262,7 @@ namespace ExcelAddIn1
 				type_of_txn = GetComboBoxSelection();
 
 				QBStatusResponse<string> response =
-					SendRequest.SendOrder(salesOrderList, customer, po, dueDate, type_of_txn);
+					SendRequest.SendOrder(salesOrderList, customer, po, dueDate, type_of_txn, quoteReference);
 
 				RecordSend(salesOrderList, customer, po, dueDate, type_of_txn, response, "");
 
@@ -315,7 +320,8 @@ namespace ExcelAddIn1
 						});
 				ExcelAddIn1.Audit.QuoteAuditLog.WriteSendRecord(
 					auxBook, sources, sentLines, customer, po,
-					dueDate.ToString("yyyy-MM-dd"), type_of_txn, "", response, errorMessage);
+					dueDate.ToString("yyyy-MM-dd"), type_of_txn, quoteReference, quoteFamily,
+					response, errorMessage);
 			}
 			catch { }
 		}
@@ -391,7 +397,7 @@ namespace ExcelAddIn1
 				}
 			}
 
-			internal static QBStatusResponse<string> SendOrder(List<SOSheetQuoteItem> items, string customer, string po, DateTime dueDate, string type)
+			internal static QBStatusResponse<string> SendOrder(List<SOSheetQuoteItem> items, string customer, string po, DateTime dueDate, string type, string quoteReference)
 			{
                 List<QBItem> qbItems = new List<QBItem>();
 				foreach (SOSheetQuoteItem item in items)
@@ -414,6 +420,7 @@ namespace ExcelAddIn1
 
                 QBOrder order = new QBOrder
                 {
+                    QuoteNumber = quoteReference,
                     Customer = cust,
                     DueDate = dueDate,
                     Items = qbItems

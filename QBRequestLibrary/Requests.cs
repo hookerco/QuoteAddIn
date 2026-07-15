@@ -188,11 +188,14 @@ namespace QBRequestLibrary
                 response = responseSet.ResponseList.GetAt(0);
             }
             if ((ENResponseType)response.Type.GetValue() != ENResponseType.rtSalesOrderAddRs) { throw new QBRequestLibraryRuntimeError("Not a SalesOrderAddResponse"); }
+            ISalesOrderRet salesOrderRet = response.Detail as ISalesOrderRet;
+            string transactionId = salesOrderRet == null || salesOrderRet.TxnID == null
+                ? null : salesOrderRet.TxnID.GetValue();
             return new QBStatusResponse<string>
             {
                 StatusCode = response.StatusCode,
-                StatusMessage = response.StatusMessage
-
+                StatusMessage = response.StatusMessage,
+                Data = transactionId
             };
         }
     }
@@ -239,11 +242,14 @@ namespace QBRequestLibrary
                 response = responseSet.ResponseList.GetAt(0);
             }
             if ((ENResponseType)response.Type.GetValue() != ENResponseType.rtEstimateAddRs) { throw new QBRequestLibraryRuntimeError("Not an EstimateAddResponse"); }
+            IEstimateRet estimateRet = response.Detail as IEstimateRet;
+            string transactionId = estimateRet == null || estimateRet.TxnID == null
+                ? null : estimateRet.TxnID.GetValue();
             return new QBStatusResponse<string>
             {
                 StatusCode = response.StatusCode,
-                StatusMessage = response.StatusMessage
-
+                StatusMessage = response.StatusMessage,
+                Data = transactionId
             };
         }
     }

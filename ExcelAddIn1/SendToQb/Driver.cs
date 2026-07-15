@@ -41,6 +41,8 @@ namespace ExcelAddIn1
 				try
 				{
 					Excel.Workbook sourceBook = worksheet.Parent as Excel.Workbook;
+					string quoteReference = ExcelAddIn1.Audit.QuoteAuditLog.ReadQuoteReference(sourceBook);
+					string quoteFamily = ExcelAddIn1.Audit.QuoteAuditLog.QuoteFamily(worksheet);
 					var auditSources = ExcelAddIn1.Audit.QuoteAuditLog.ReadProvenance(sourceBook);
 					if (ExcelAddIn1.Audit.QuoteAuditLog.IsFullRoundWorkbook(sourceBook))
 					{
@@ -57,7 +59,8 @@ namespace ExcelAddIn1
 						if (entry != null) auditSources.Add(entry);
 					}
 					ExcelAddIn1.Audit.QuoteAuditLog.WriteSendRecord(
-						sourceBook, auditSources, null, customer, "", "", "", "", null, "");
+						sourceBook, auditSources, null, customer, "", "", "",
+						quoteReference, quoteFamily, null, "");
 				}
 				catch { }
 

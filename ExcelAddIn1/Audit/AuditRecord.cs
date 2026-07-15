@@ -145,9 +145,9 @@ namespace ExcelAddIn1.Audit
             string auxSavedCopy, string auxFileName,
             IEnumerable<ProvenanceEntry> sources,
             string customerName, string customerPo, string dueDate,
-            string transactionType, string quoteReference,
+            string transactionType, string quoteReference, string quoteFamily,
             IEnumerable<Dictionary<string, object>> sentLines,
-            object statusCode, string statusMessage, string reference,
+            object statusCode, string statusMessage, string transactionId,
             string errorMessage)
         {
             var sourceList = new List<object>();
@@ -170,7 +170,7 @@ namespace ExcelAddIn1.Audit
 
             var root = new Dictionary<string, object>
             {
-                { "schema_version", 1 },
+                { "schema_version", 2 },
                 { "captured_at_utc", capturedAtUtc },
                 { "source", new Dictionary<string, object> {
                     { "machine", machine }, { "windows_user", winUser },
@@ -181,11 +181,11 @@ namespace ExcelAddIn1.Audit
                 { "quote", new Dictionary<string, object> {
                     { "customer_name", customerName }, { "customer_po", customerPo },
                     { "due_date", dueDate }, { "transaction_type", transactionType },
-                    { "quote_reference", quoteReference } } },
+                    { "quote_reference", quoteReference }, { "quote_family", quoteFamily } } },
                 { "sent_lines", sentList },
                 { "quickbooks_response", new Dictionary<string, object> {
                     { "status_code", statusCode }, { "status_message", statusMessage },
-                    { "reference", reference },
+                    { "transaction_id", transactionId }, { "reference", transactionId },
                     { "error", string.IsNullOrEmpty(errorMessage) ? null : errorMessage } } },
             };
             return new JavaScriptSerializer().Serialize(root);

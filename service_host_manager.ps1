@@ -123,8 +123,10 @@ function Update-InstalledManager {
 
     if ($null -eq $Manifest.manager) { return }
     $source = Join-Path $SharePath ([string]$Manifest.manager.path)
-    $stage = Join-Path $StatePath 'service_host_manager.ps1.stage'
-    $target = Join-Path $StatePath 'service_host_manager.ps1'
+    $managerDirectory = Join-Path $StatePath 'Manager'
+    New-Item -ItemType Directory -Force -Path $managerDirectory | Out-Null
+    $stage = Join-Path $managerDirectory 'service_host_manager.ps1.stage'
+    $target = Join-Path $managerDirectory 'service_host_manager.ps1'
     Copy-Item -LiteralPath $source -Destination $stage -Force
     try {
         if ([long](Get-Item -LiteralPath $stage).Length -ne [long]$Manifest.manager.length) {
@@ -170,7 +172,7 @@ function Invoke-ReleaseTransaction {
     New-Item -ItemType Directory -Force -Path $StatePath | Out-Null
     $stagePath = Join-Path $StatePath 'Stage'
     $previousPath = Join-Path $StatePath 'Previous'
-    $manifestPath = Join-Path $StatePath 'installed.manifest.json'
+    $manifestPath = Join-Path $StatePath 'release.manifest.json'
     $previousManifest = $null
     $hadManifest = Test-Path -LiteralPath $manifestPath -PathType Leaf
     if ($hadManifest) {
@@ -355,7 +357,7 @@ function Invoke-ServiceHostManager {
         })
 
         $installedReleaseId = ''
-        $installedManifestPath = Join-Path $StatePath 'installed.manifest.json'
+        $installedManifestPath = Join-Path $StatePath 'release.manifest.json'
         if (Test-Path -LiteralPath $installedManifestPath -PathType Leaf) {
             try {
                 $installedManifest = Get-Content -Raw -LiteralPath $installedManifestPath | ConvertFrom-Json

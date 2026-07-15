@@ -111,14 +111,16 @@ function Write-InstalledRelease {
     param($Tree, [string]$ReleaseId = 'release-a', [string]$HostBytes = 'old-bytes')
 
     [IO.File]::WriteAllText((Join-Path $Tree.Install 'QuickBooksServiceHost.exe'), $HostBytes)
-    [IO.File]::WriteAllText((Join-Path $Tree.StatePath 'service_host_manager.ps1'), 'old-manager')
+    $managerDirectory = Join-Path $Tree.StatePath 'Manager'
+    New-Item -ItemType Directory -Force -Path $managerDirectory | Out-Null
+    [IO.File]::WriteAllText((Join-Path $managerDirectory 'service_host_manager.ps1'), 'old-manager')
     [pscustomobject]@{
         schema_version = 1
         release_id = $ReleaseId
         published_at_utc = '2026-07-14T10:00:00Z'
         files = @()
         manager = $null
-    } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $Tree.StatePath 'installed.manifest.json')
+    } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $Tree.StatePath 'release.manifest.json')
 }
 
 function New-OrchestrationActions {
@@ -256,7 +258,7 @@ function Run-Scenario {
                 Assert-Equal 1 $state.Starts 'new host started once'
                 Assert-Equal 'new-bytes' (Get-Content -Raw (Join-Path $tree.Install 'QuickBooksServiceHost.exe')) `
                     'new runtime installed'
-                Assert-Equal 'release-b' ((Get-Content -Raw (Join-Path $tree.StatePath 'installed.manifest.json') | ConvertFrom-Json).release_id) `
+                Assert-Equal 'release-b' ((Get-Content -Raw (Join-Path $tree.StatePath 'release.manifest.json') | ConvertFrom-Json).release_id) `
                     'installed release state updated'
             }
             finally { Remove-TestTree $tree }
@@ -283,9 +285,9 @@ function Run-Scenario {
                 Assert-Equal 2 $state.Starts 'rollback transaction starts new then previous host'
                 Assert-Equal 'old-bytes' (Get-Content -Raw (Join-Path $tree.Install 'QuickBooksServiceHost.exe')) `
                     'failed replacement restores old runtime bytes'
-                Assert-Equal 'release-a' ((Get-Content -Raw (Join-Path $tree.StatePath 'installed.manifest.json') | ConvertFrom-Json).release_id) `
+                Assert-Equal 'release-a' ((Get-Content -Raw (Join-Path $tree.StatePath 'release.manifest.json') | ConvertFrom-Json).release_id) `
                     'failed replacement restores old installed manifest'
-                Assert-Equal 'old-manager' (Get-Content -Raw (Join-Path $tree.StatePath 'service_host_manager.ps1')) `
+                Assert-Equal 'old-manager' (Get-Content -Raw (Join-Path $tree.StatePath 'Manager\service_host_manager.ps1')) `
                     'runtime transaction leaves manager reconciliation to orchestration'
             }
             finally { Remove-TestTree $tree }
@@ -323,7 +325,7 @@ function Run-Scenario {
                     -StatePath $tree.StatePath -GetProcessesAction $actions.GetProcesses `
                     -StopProcessAction $actions.StopProcess -StartHost $actions.StartHost `
                     -TestHost $actions.TestHost -MutexAction $actions.Mutex | Out-Null
-                Assert-Equal 'new-manager' (Get-Content -Raw (Join-Path $tree.StatePath 'service_host_manager.ps1')) `
+                Assert-Equal 'new-manager' (Get-Content -Raw (Join-Path $tree.StatePath 'Manager\service_host_manager.ps1')) `
                     'verified manager entry replaces local manager after runtime result is final'
             }
             finally { Remove-TestTree $tree }
@@ -517,7 +519,7 @@ function Run-Scenario {
                     'cleanup failure must not delete the still-good install'
                 Assert-Equal 'stale-previous' (Get-Content -Raw (Join-Path $previousPath 'QuickBooksServiceHost.exe')) `
                     'cleanup failure must not restore stale Previous over the install'
-                Assert-Equal 'release-a' ((Get-Content -Raw (Join-Path $tree.StatePath 'installed.manifest.json') | ConvertFrom-Json).release_id) `
+                Assert-Equal 'release-a' ((Get-Content -Raw (Join-Path $tree.StatePath 'release.manifest.json') | ConvertFrom-Json).release_id) `
                     'cleanup failure must preserve installed manifest'
             }
             finally { Remove-TestTree $tree }
@@ -554,7 +556,7 @@ function Run-Scenario {
                     'current move failure must not delete the still-good install'
                 Assert-True (-not (Test-Path -LiteralPath $previousPath)) `
                     'current move failure must not restore a stale Previous tree after cleanup'
-                Assert-Equal 'release-a' ((Get-Content -Raw (Join-Path $tree.StatePath 'installed.manifest.json') | ConvertFrom-Json).release_id) `
+                Assert-Equal 'release-a' ((Get-Content -Raw (Join-Path $tree.StatePath 'release.manifest.json') | ConvertFrom-Json).release_id) `
                     'current move failure must preserve installed manifest'
             }
             finally { Remove-TestTree $tree }
@@ -674,7 +676,7 @@ function Run-Scenario {
                     -TestHost $actions.TestHost -MutexAction $actions.Mutex | Out-Null
                 Assert-Equal 0 $state.Stopped.Count 'current runtime manager retry does not stop host'
                 Assert-Equal 0 $state.Starts 'current runtime manager retry does not start host'
-                Assert-Equal 'retried-manager' (Get-Content -Raw (Join-Path $tree.StatePath 'service_host_manager.ps1')) `
+                Assert-Equal 'retried-manager' (Get-Content -Raw (Join-Path $tree.StatePath 'Manager\service_host_manager.ps1')) `
                     'valid manifest retries manager replacement after an earlier manager failure'
             }
             finally { Remove-TestTree $tree }
@@ -712,7 +714,7 @@ function Run-Scenario {
                 Assert-Equal 1 $state.ManagerCalls 'manager reconciliation has one owner after runtime outcome is final'
                 Assert-Equal 'new-bytes' (Get-Content -Raw (Join-Path $tree.Install 'QuickBooksServiceHost.exe')) `
                     'completed runtime update remains installed after the share disappears'
-                Assert-Equal 'single-owner-manager' (Get-Content -Raw (Join-Path $tree.StatePath 'service_host_manager.ps1')) `
+                Assert-Equal 'single-owner-manager' (Get-Content -Raw (Join-Path $tree.StatePath 'Manager\service_host_manager.ps1')) `
                     'single manager reconciliation completes before the share disappears'
                 $record = Get-Content -Raw (Join-Path $tree.StatePath 'service-host-manager.log') | ConvertFrom-Json
                 Assert-Equal 'apply-update' $record.decision 'completed update retains its logged decision'

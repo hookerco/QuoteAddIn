@@ -103,6 +103,7 @@ function Invoke-ServiceHostInstall {
         [scriptblock]$ReadManifestAction = { param($path) Get-Content -Raw -LiteralPath $path | ConvertFrom-Json },
         [scriptblock]$EnsureDirectoryAction = { param($path) New-Item -ItemType Directory -Force -Path $path | Out-Null },
         [scriptblock]$CopyFileAction = { param($source, $destination) Copy-Item -LiteralPath $source -Destination $destination -Force },
+        [scriptblock]$RemovePathAction = { param($path, [bool]$recurse) Remove-Item -LiteralPath $path -Recurse:$recurse -Force -ErrorAction Stop },
         [scriptblock]$SetEnvironmentVariableAction = { param($name, $value) [Environment]::SetEnvironmentVariable($name, $value, [EnvironmentVariableTarget]::Machine) },
         [scriptblock]$CreateShortcutAction = {
             param($shortcutPath, $targetPath, $workingDirectory)
@@ -115,7 +116,8 @@ function Invoke-ServiceHostInstall {
         [scriptblock]$GetTaskAction = { param($taskName) Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue },
         [scriptblock]$GetProcessesAction = { Get-CimInstance Win32_Process -Filter "Name='QuickBooksServiceHost.exe'" },
         [scriptblock]$StopProcessAction = { param($process) Stop-Process -Id $process.ProcessId -Force -ErrorAction Stop },
-        [scriptblock]$WaitAction = { Start-Sleep -Milliseconds 250 }
+        [scriptblock]$WaitAction = { Start-Sleep -Milliseconds 250 },
+        [ValidateRange(1, 600)][int]$StopWaitAttempts = 40
     )
     Assert-ElevatedIdentityMatches -InteractiveSid $InteractiveSid -GetCurrentIdentityAction $GetCurrentIdentityAction -TestAdministratorAction $TestAdministratorAction
     if (-not (Test-Path -LiteralPath $SourcePath -PathType Container)) { throw "Source path does not exist: $SourcePath" }
@@ -126,12 +128,31 @@ function Invoke-ServiceHostInstall {
         if (-not (Test-SafeReleasePath -Path ([string]$entry.path))) { throw "Unsafe manifest path: $($entry.path)" }
     }
 
+    $managerSource = Join-Path $SourcePath ([string]$manifest.manager.path)
+    if (-not (Test-Path -LiteralPath $managerSource -PathType Leaf) -or
+        [long](Get-Item -LiteralPath $managerSource).Length -ne [long]$manifest.manager.length -or
+        (Get-FileHash -LiteralPath $managerSource -Algorithm SHA256).Hash -ne [string]$manifest.manager.sha256) {
+        throw "Manager source verification failed: $($manifest.manager.path)"
+    }
+
     $hostPath = Join-Path $InstallPath 'QuickBooksServiceHost.exe'
-    foreach ($process in @(& $GetProcessesAction)) {
-        if ((Get-ServiceHostProcessPath $process) -ieq $hostPath) { & $StopProcessAction $process }
+    $installedProcesses = @(& $GetProcessesAction | Where-Object { (Get-ServiceHostProcessPath $_) -ieq $hostPath })
+    foreach ($process in $installedProcesses) { & $StopProcessAction $process }
+    if ($installedProcesses.Count -gt 0) {
+        $hostExited = $false
+        foreach ($attempt in 1..$StopWaitAttempts) {
+            $stillRunning = @(& $GetProcessesAction | Where-Object { (Get-ServiceHostProcessPath $_) -ieq $hostPath })
+            if ($stillRunning.Count -eq 0) {
+                $hostExited = $true
+                break
+            }
+            & $WaitAction
+        }
+        if (-not $hostExited) { throw "Installed host process did not exit: $hostPath" }
     }
 
     $managerDirectory = Join-Path $StatePath 'Manager'
+    if (Test-Path -LiteralPath $InstallPath -PathType Container) { & $RemovePathAction $InstallPath $true }
     & $EnsureDirectoryAction $InstallPath
     & $EnsureDirectoryAction $managerDirectory
     foreach ($entry in @($manifest.files)) {
@@ -142,8 +163,8 @@ function Invoke-ServiceHostInstall {
         if ([long](Get-Item -LiteralPath $target).Length -ne [long]$entry.length -or (Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash -ne [string]$entry.sha256) { throw "Installed file verification failed: $($entry.path)" }
     }
     $managerTarget = Join-Path $managerDirectory 'service_host_manager.ps1'
-    & $CopyFileAction (Join-Path $SourcePath ([string]$manifest.manager.path)) $managerTarget
-    & $CopyFileAction $manifestPath (Join-Path $managerDirectory 'release.manifest.json')
+    & $CopyFileAction $managerSource $managerTarget
+    & $CopyFileAction $manifestPath (Join-Path $StatePath 'release.manifest.json')
 
     $connectorPath = Join-Path $InstallPath 'QuickBooksConnectorCli.exe'
     if (-not (Test-Path -LiteralPath $hostPath -PathType Leaf)) { throw "Installed executable was not found: $hostPath" }

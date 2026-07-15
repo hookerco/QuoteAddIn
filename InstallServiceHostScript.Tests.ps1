@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet('static', 'task-plan', 'state-security', 'identity-mismatch', 'identity-binding', 'task-neutralization', 'critical-state-revalidation', 'installer-mutex', 'manifest-install', 'corrupt-manager', 'corrupt-installed-manager', 'stale-cleanup', 'stop-race', 'stop-timeout', 'reinstall-idempotent', 'all')]
+    [ValidateSet('static', 'task-plan', 'state-security', 'native-takeown', 'identity-mismatch', 'identity-binding', 'task-neutralization', 'late-failure-neutralization', 'critical-state-revalidation', 'installer-mutex', 'manifest-install', 'corrupt-manager', 'corrupt-installed-manager', 'stale-cleanup', 'stop-race', 'stop-timeout', 'reinstall-idempotent', 'all')]
     [string]$Scenario = 'all'
 )
 
@@ -360,15 +360,37 @@ function Run-Scenario {
                 }.GetNewClosure()
                 $actions.RegisterTask = {
                     param($plan)
-                    Assert-Equal 6 $actions.State.SecurityPasses 'all critical state boundaries re-verified before task registration'
+                    Assert-Equal 7 $actions.State.SecurityPasses 'all critical state boundaries re-verified before task registration'
                     $events.Add('register')
                     $actions.State.RegisterCalls++
                     $actions.State.Tasks[$plan.TaskName] = $plan
                 }.GetNewClosure()
                 Invoke-FixtureInstall $fixture $actions
-                Assert-Equal 'secure:1|secure:2|secure:3|secure:4|secure:5|secure:6|register' ($events -join '|') 'security passes immediately guard critical ProgramData writes and task registration'
+                Assert-Equal 'secure:1|secure:2|secure:3|secure:4|secure:5|secure:6|secure:7|register' ($events -join '|') 'security passes immediately guard critical ProgramData writes, manager-stage cleanup, and task registration'
             }
             finally { Remove-InstallerFixture $fixture }
+        }
+        'native-takeown' {
+            $originalPreference = $ErrorActionPreference
+            try {
+                $ErrorActionPreference = 'Stop'
+                $simulated = Invoke-ServiceHostNativeCommand -FilePath 'simulated-takeown.exe' -Arguments @('/F', 'C:\ProgramData\Denied', '/A') `
+                    -InvokeNativeAction {
+                        param($filePath, $arguments)
+                        Write-Error 'simulated PS5.1 native stderr record'
+                        [pscustomobject]@{ ExitCode = 5; Output = 'Access is denied.' }
+                    }
+                Assert-Equal 5 $simulated.ExitCode 'PS5.1-style native stderr still returns an explicit exit code'
+                Assert-True ($simulated.Output -match 'Access is denied') 'native runner returns sanitized diagnostic output'
+                Assert-Equal 'Stop' $ErrorActionPreference 'native runner restores caller error policy'
+
+                $realProbe = Invoke-ServiceHostNativeCommand -FilePath $env:ComSpec `
+                    -Arguments @('/d', '/c', 'echo service-host-native-probe 1>&2 & exit /b 7')
+                Assert-Equal 7 $realProbe.ExitCode 'safe real native probe captures nonzero exit'
+                Assert-True ($realProbe.Output -match 'service-host-native-probe') 'safe real native probe captures stderr'
+                Assert-Equal 'Stop' $ErrorActionPreference 'real native probe restores caller error policy'
+            }
+            finally { $ErrorActionPreference = $originalPreference }
         }
         'identity-mismatch' {
             $fixture = New-InstallerFixture
@@ -460,6 +482,93 @@ function Run-Scenario {
             }
             finally { Remove-InstallerFixture $fixture }
         }
+        'late-failure-neutralization' {
+            $fixture = New-InstallerFixture
+            try {
+                $actions = New-InjectedActions $fixture
+                $actions.NeutralizeTask = {
+                    param($taskName)
+                    $actions.State.NeutralizeCalls++
+                    $actions.State.Events += "neutralize:$($actions.State.NeutralizeCalls)"
+                    if (-not $actions.State.Locked) { throw 'late task neutralization occurred outside installer mutex' }
+                    $actions.State.Tasks.Remove($taskName)
+                }.GetNewClosure()
+                $actions.StartTask = { param($taskName) $actions.State.StartCalls++; $actions.State.Events += 'start-failure'; throw 'late start failure' }.GetNewClosure()
+                Assert-ThrowsMessage { Invoke-FixtureInstall $fixture $actions } 'late start failure' 'task-start failure remains primary'
+                Assert-Equal 2 $actions.State.NeutralizeCalls 'task-start failure neutralizes the registered task'
+                Assert-Equal 0 $actions.State.Tasks.Count 'task remains absent after start failure'
+                $lockEvent = 'mutex:Global\QuickBooksServiceHostAutoUpdate'
+                Assert-Equal "$lockEvent|neutralize:1|release|start-failure|$lockEvent|neutralize:2|release" `
+                    ($actions.State.Events -join '|') 'late neutralization reacquires the shared mutex and releases it afterward'
+            }
+            finally { Remove-InstallerFixture $fixture }
+
+            $fixture = New-InstallerFixture
+            try {
+                $actions = New-InjectedActions $fixture
+                $actions.GetTask = { param($taskName) $null }
+                Assert-ThrowsMessage { Invoke-FixtureInstall $fixture $actions } `
+                    'Scheduled Task was not found after registration: QuickBooksServiceHost Auto Start and Update' `
+                    'task verification failure remains primary'
+                Assert-Equal 2 $actions.State.NeutralizeCalls 'task verification failure neutralizes the registered task'
+                Assert-Equal 0 $actions.State.Tasks.Count 'task remains absent after task verification failure'
+            }
+            finally { Remove-InstallerFixture $fixture }
+
+            $fixture = New-InstallerFixture
+            try {
+                $actions = New-InjectedActions $fixture
+                $actions.StartTask = { param($taskName) $actions.State.StartCalls++ }.GetNewClosure()
+                Assert-ThrowsMessage { Invoke-FixtureInstall $fixture $actions } `
+                    "Installed host process was not found: $($fixture.HostPath)" 'host verification failure remains primary'
+                Assert-Equal 2 $actions.State.NeutralizeCalls 'host verification failure neutralizes the registered task'
+                Assert-Equal 0 $actions.State.Tasks.Count 'task remains absent after host verification failure'
+            }
+            finally { Remove-InstallerFixture $fixture }
+
+            $fixture = New-InstallerFixture
+            try {
+                $actions = New-InjectedActions $fixture
+                $actions.NeutralizeTask = {
+                    param($taskName)
+                    $actions.State.NeutralizeCalls++
+                    if ($actions.State.NeutralizeCalls -gt 1) { throw 'late neutralization failure' }
+                    $actions.State.Tasks.Remove($taskName)
+                }.GetNewClosure()
+                $actions.StartTask = { param($taskName) $actions.State.StartCalls++; throw 'primary late start failure' }.GetNewClosure()
+                $caught = $null
+                try { Invoke-FixtureInstall $fixture $actions }
+                catch { $caught = $_ }
+                Assert-True ($null -ne $caught) 'failed late neutralization does not claim success'
+                Assert-Equal 'primary late start failure' $caught.Exception.Message 'neutralization failure does not replace the primary failure'
+                Assert-Equal 'late neutralization failure' $caught.Exception.Data['TaskNeutralizationFailure'] 'secondary neutralization failure is retained as diagnostic metadata'
+                Assert-Equal 1 $actions.State.Tasks.Count 'failed neutralization leaves the registered task visible as an unsafe residual'
+            }
+            finally { Remove-InstallerFixture $fixture }
+
+            $fixture = New-InstallerFixture
+            try {
+                $actions = New-InjectedActions $fixture
+                $originalMutex = $actions.Mutex
+                $mutexAttempts = [pscustomobject]@{ Count = 0 }
+                $actions.Mutex = {
+                    param($name, $waitMilliseconds, $action)
+                    $mutexAttempts.Count++
+                    if ($mutexAttempts.Count -gt 1) { throw 'late mutex reacquisition failure' }
+                    & $originalMutex $name $waitMilliseconds $action
+                }.GetNewClosure()
+                $actions.StartTask = { param($taskName) $actions.State.StartCalls++; throw 'primary start before mutex failure' }.GetNewClosure()
+                $caught = $null
+                try { Invoke-FixtureInstall $fixture $actions }
+                catch { $caught = $_ }
+                Assert-True ($null -ne $caught) 'failed late mutex reacquisition does not claim success'
+                Assert-Equal 'primary start before mutex failure' $caught.Exception.Message 'mutex reacquisition failure does not replace the primary failure'
+                Assert-Equal 'late mutex reacquisition failure' $caught.Exception.Data['TaskNeutralizationFailure'] 'mutex reacquisition failure is retained as diagnostic metadata'
+                Assert-Equal 1 $actions.State.NeutralizeCalls 'failed mutex reacquisition does not neutralize outside the lock'
+                Assert-Equal 1 $actions.State.Tasks.Count 'failed mutex reacquisition leaves the registered task visible as an unsafe residual'
+            }
+            finally { Remove-InstallerFixture $fixture }
+        }
         'critical-state-revalidation' {
             $fixture = New-InstallerFixture
             try {
@@ -482,6 +591,38 @@ function Run-Scenario {
                 Assert-ThrowsMessage { Invoke-FixtureInstall $fixture $actions } 'critical state substitution detected' 'substitution after initial pass is rejected'
                 Assert-Equal 0 $race.StateWrites 'substitution is detected before any Manager or root-state write'
                 Assert-Equal 0 $actions.State.RegisterCalls 'substitution prevents task registration'
+            }
+            finally { Remove-InstallerFixture $fixture }
+
+            $fixture = New-InstallerFixture
+            try {
+                $actions = New-InjectedActions $fixture
+                $managerStage = Join-Path $fixture.StatePath 'Manager\service_host_manager.ps1.stage'
+                $race = [pscustomobject]@{ Substituted = $false; PostSubstitutionChecks = 0; StageRemoveAttempts = 0 }
+                $actions.ProtectStateTree = {
+                    param($path)
+                    if ($race.Substituted) {
+                        $race.PostSubstitutionChecks++
+                        if ($race.PostSubstitutionChecks -eq 1) { throw 'original manager security failure' }
+                        throw 'cleanup manager security failure'
+                    }
+                    $actions.State.SecurityPasses++
+                }.GetNewClosure()
+                $originalCopy = $actions.CopyFile
+                $actions.CopyFile = {
+                    param($source, $destination)
+                    & $originalCopy $source $destination
+                    if ($destination -ieq $managerStage) { $race.Substituted = $true }
+                }.GetNewClosure()
+                $originalRemove = $actions.RemovePath
+                $actions.RemovePath = {
+                    param($path, [bool]$recurse)
+                    if ($path -ieq $managerStage) { $race.StageRemoveAttempts++ }
+                    & $originalRemove $path $recurse
+                }.GetNewClosure()
+                Assert-ThrowsMessage { Invoke-FixtureInstall $fixture $actions } 'original manager security failure' 'cleanup preserves the original manager-stage validation failure'
+                Assert-Equal 2 $race.PostSubstitutionChecks 'manager-stage cleanup performs a fresh security validation'
+                Assert-Equal 0 $race.StageRemoveAttempts 'hostile manager-stage target is never passed to removal'
             }
             finally { Remove-InstallerFixture $fixture }
 
@@ -677,7 +818,7 @@ function Run-Scenario {
     }
 }
 
-$allScenarios = @('static', 'task-plan', 'state-security', 'identity-mismatch', 'identity-binding', 'task-neutralization', 'critical-state-revalidation', 'installer-mutex', 'manifest-install', 'corrupt-manager', 'corrupt-installed-manager', 'stale-cleanup', 'stop-race', 'stop-timeout', 'reinstall-idempotent')
+$allScenarios = @('static', 'task-plan', 'state-security', 'native-takeown', 'identity-mismatch', 'identity-binding', 'task-neutralization', 'late-failure-neutralization', 'critical-state-revalidation', 'installer-mutex', 'manifest-install', 'corrupt-manager', 'corrupt-installed-manager', 'stale-cleanup', 'stop-race', 'stop-timeout', 'reinstall-idempotent')
 if ($Scenario -eq 'all') { foreach ($name in $allScenarios) { Run-Scenario $name } }
 else { Run-Scenario $Scenario }
 Write-Host 'Install service host script checks passed.'

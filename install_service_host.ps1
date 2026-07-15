@@ -111,15 +111,49 @@ function Assert-ServiceHostStateItemSafe {
     }
 }
 
+function Invoke-ServiceHostNativeCommand {
+    param(
+        [Parameter(Mandatory = $true)][string]$FilePath,
+        [Parameter(Mandatory = $true)][string[]]$Arguments,
+        [scriptblock]$InvokeNativeAction = {
+            param($nativeFilePath, $nativeArguments)
+            $nativeOutput = @(& $nativeFilePath @nativeArguments 2>&1)
+            [pscustomobject]@{ ExitCode = $LASTEXITCODE; Output = ($nativeOutput -join [Environment]::NewLine) }
+        }
+    )
+
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        $records = @(& $InvokeNativeAction $FilePath $Arguments 2>&1)
+        $result = @($records | Where-Object {
+            $null -ne $_ -and $null -ne $_.PSObject.Properties['ExitCode']
+        } | Select-Object -Last 1)
+        if ($result.Count -ne 1) {
+            throw "Native command did not return an exit code: $FilePath"
+        }
+
+        $diagnostics = New-Object Collections.Generic.List[string]
+        foreach ($record in $records) {
+            if ([object]::ReferenceEquals($record, $result[0])) { continue }
+            $text = if ($record -is [Management.Automation.ErrorRecord]) { $record.Exception.Message } else { [string]$record }
+            if (-not [string]::IsNullOrWhiteSpace($text)) { $diagnostics.Add($text) }
+        }
+        if (-not [string]::IsNullOrWhiteSpace([string]$result[0].Output)) { $diagnostics.Add([string]$result[0].Output) }
+        $output = (($diagnostics -join [Environment]::NewLine) -replace '[\x00-\x08\x0B\x0C\x0E-\x1F]', '').Trim()
+        if ($output.Length -gt 2048) { $output = $output.Substring(0, 2048) }
+        return [pscustomobject]@{ ExitCode = [int]$result[0].ExitCode; Output = $output }
+    }
+    finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
+}
+
 function Set-ServiceHostPathOwner {
     param(
         [Parameter(Mandatory = $true)][string]$Path,
         [Parameter(Mandatory = $true)][Security.Principal.SecurityIdentifier]$OwnerSid,
-        [scriptblock]$InvokeTakeOwnershipAction = {
-            param($filePath, $arguments)
-            $output = @(& $filePath @arguments 2>&1)
-            [pscustomobject]@{ ExitCode = $LASTEXITCODE; Output = ($output -join [Environment]::NewLine) }
-        }
+        [scriptblock]$InvokeTakeOwnershipAction = { param($filePath, $arguments) Invoke-ServiceHostNativeCommand -FilePath $filePath -Arguments $arguments }
     )
 
     if ($OwnerSid.Value -ne 'S-1-5-32-544') { throw 'Service host state owner must be BUILTIN\Administrators.' }
@@ -388,6 +422,7 @@ function Invoke-ServiceHostInstall {
     $managerStage = Join-Path $managerDirectory 'service_host_manager.ps1.stage'
     & $ProtectStateTreeAction $StatePath
     & $CopyFileAction $managerSource $managerStage
+    $managerInstallError = $null
     try {
         if ([long](Get-Item -LiteralPath $managerStage).Length -ne [long]$manifest.manager.length -or
             (Get-FileHash -LiteralPath $managerStage -Algorithm SHA256).Hash -ne [string]$manifest.manager.sha256) {
@@ -400,9 +435,19 @@ function Invoke-ServiceHostInstall {
             throw "Installed manager verification failed: $($manifest.manager.path)"
         }
     }
-    finally {
+    catch {
+        $managerInstallError = $_
+    }
+    $managerCleanupError = $null
+    try {
+        & $ProtectStateTreeAction $StatePath
         & $RemovePathAction $managerStage $false
     }
+    catch {
+        $managerCleanupError = $_
+    }
+    if ($null -ne $managerInstallError) { throw $managerInstallError }
+    if ($null -ne $managerCleanupError) { throw $managerCleanupError }
     & $ProtectStateTreeAction $StatePath
     & $CopyFileAction $manifestPath (Join-Path $StatePath 'release.manifest.json')
     & $ProtectStateTreeAction $StatePath
@@ -440,14 +485,29 @@ function Invoke-ServiceHostInstall {
 
     $plan = $installState.Plan
     $hostPath = $installState.HostPath
-    & $StartTaskAction $plan.TaskName
-    if ($null -eq (& $GetTaskAction $plan.TaskName)) { throw "Scheduled Task was not found after registration: $($plan.TaskName)" }
-    $running = $false
-    foreach ($attempt in 1..20) {
-        if (@(& $GetProcessesAction | Where-Object { (Get-ServiceHostProcessPath $_) -ieq $hostPath }).Count -gt 0) { $running = $true; break }
-        & $WaitAction
+    try {
+        & $StartTaskAction $plan.TaskName
+        if ($null -eq (& $GetTaskAction $plan.TaskName)) { throw "Scheduled Task was not found after registration: $($plan.TaskName)" }
+        $running = $false
+        foreach ($attempt in 1..20) {
+            if (@(& $GetProcessesAction | Where-Object { (Get-ServiceHostProcessPath $_) -ieq $hostPath }).Count -gt 0) { $running = $true; break }
+            & $WaitAction
+        }
+        if (-not $running) { throw "Installed host process was not found: $hostPath" }
     }
-    if (-not $running) { throw "Installed host process was not found: $hostPath" }
+    catch {
+        $lateFailure = $_
+        try {
+            $lateNeutralization = {
+                & $NeutralizeTaskAction $plan.TaskName
+            }.GetNewClosure()
+            & $MutexAction 'Global\QuickBooksServiceHostAutoUpdate' $MutexWaitMilliseconds $lateNeutralization | Out-Null
+        }
+        catch {
+            $lateFailure.Exception.Data['TaskNeutralizationFailure'] = $_.Exception.Message
+        }
+        throw $lateFailure
+    }
     return [pscustomobject]@{
         TaskName = $plan.TaskName
         HostPath = $installState.HostPath

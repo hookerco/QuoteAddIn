@@ -691,6 +691,52 @@ function Run-Scenario {
             }
             finally { Remove-TestTree $tree }
         }
+        'late-deferral-resnap-avoids-duplicate-host-start' {
+            $tree = New-TestTree
+            try {
+                Write-TestRelease -Tree $tree | Out-Null
+                Write-InstalledRelease -Tree $tree -ReleaseId 'release-a'
+                $expectedPath = Join-Path $tree.Install 'QuickBooksServiceHost.exe'
+                $expectedHost = [pscustomobject]@{
+                    ProcessName = 'QuickBooksServiceHost'
+                    Id = 72
+                    Path = $expectedPath
+                }
+                $quickBooks = [pscustomobject]@{ ProcessName = 'QBW32'; Id = 73; Path = 'C:\QuickBooks\QBW32.exe' }
+                $state = [pscustomobject]@{ Calls = 0; Stops = 0; Starts = 0; MutexName = '' }
+                $getProcesses = {
+                    $state.Calls++
+                    if ($state.Calls -eq 1) { return @() }
+                    return @($expectedHost, $quickBooks)
+                }.GetNewClosure()
+                $stopProcess = { param($process) $state.Stops++ }.GetNewClosure()
+                $startHost = { $state.Starts++ }.GetNewClosure()
+                $mutex = {
+                    param($name, $action)
+                    $state.MutexName = $name
+                    & $action
+                }.GetNewClosure()
+
+                Invoke-ServiceHostManager -SharePath $tree.Share -InstallPath $tree.Install `
+                    -StatePath $tree.StatePath -GetProcessesAction $getProcesses `
+                    -StopProcessAction $stopProcess -StartHost $startHost -TestHost { $true } `
+                    -MutexAction $mutex | Out-Null
+
+                Assert-Equal 0 $state.Stops 'late activity deferral does not stop the host that appeared during staging'
+                Assert-Equal 0 $state.Starts 'late activity deferral does not start a duplicate expected-path host'
+                Assert-True ($state.Calls -ge 4) 'deferred startup re-snapshots the expected-path host before deciding to start'
+                Assert-Equal 'old-bytes' (Get-Content -Raw (Join-Path $tree.Install 'QuickBooksServiceHost.exe')) `
+                    'late activity deferral does not promote the available runtime'
+                Assert-Equal 'release-a' ((Get-Content -Raw (Join-Path $tree.StatePath 'release.manifest.json') | ConvertFrom-Json).release_id) `
+                    'late activity deferral preserves the installed release manifest'
+                $record = Get-Content -Raw (Join-Path (Join-Path $tree.StatePath 'Logs') 'service-host-manager.log') | ConvertFrom-Json
+                Assert-Equal 'defer-update' $record.decision 'late activity retains the deferred decision'
+                Assert-Equal 'deferred' $record.result 'late activity retains the deferred result'
+                Assert-Equal 72 $record.host_pid 'the expected-path host remains available after deferral'
+                Assert-Equal $expectedPath $record.host_path 'logging observes the host that appeared during staging'
+            }
+            finally { Remove-TestTree $tree }
+        }
         'logs-refresh-host-after-action' {
             $tree = New-TestTree
             try {
@@ -834,6 +880,7 @@ $allScenarios = @(
     'partial-stop-failure-restarts-installed',
     'manager-retries-when-runtime-current',
     'activity-race-defers-after-staging',
+    'late-deferral-resnap-avoids-duplicate-host-start',
     'logs-refresh-host-after-action',
     'manager-reconciliation-owned-once-after-update'
 )

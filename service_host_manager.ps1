@@ -436,9 +436,16 @@ function Invoke-ServiceHostManager {
                 'defer-update' { $result = 'deferred' }
                 'keep-running' { $result = 'running' }
             }
-            if ($decision -eq 'defer-update' -and $currentHosts.Count -eq 0) {
-                & $StartHost | Out-Null
-                if (-not (& $TestHost)) { throw 'Installed host failed its health check.' }
+            if ($decision -eq 'defer-update') {
+                $deferredProcesses = @(& $GetProcessesAction)
+                $deferredHosts = @($deferredProcesses | Where-Object {
+                    $_.ProcessName -ieq 'QuickBooksServiceHost' -and
+                    (Get-ServiceHostProcessPath $_) -ieq $expectedHostPath
+                })
+                if ($deferredHosts.Count -eq 0) {
+                    & $StartHost | Out-Null
+                    if (-not (& $TestHost)) { throw 'Installed host failed its health check.' }
+                }
             }
         }
         catch {

@@ -338,6 +338,7 @@ function Invoke-ServiceHostInstall {
         [scriptblock]$ReadManifestAction = { param($path) Get-Content -Raw -LiteralPath $path | ConvertFrom-Json },
         [scriptblock]$EnsureDirectoryAction = { param($path) New-Item -ItemType Directory -Force -Path $path | Out-Null },
         [scriptblock]$CopyFileAction = { param($source, $destination) Copy-Item -LiteralPath $source -Destination $destination -Force },
+        [scriptblock]$MovePathAction = { param($source, $destination) Move-Item -LiteralPath $source -Destination $destination -Force -ErrorAction Stop },
         [scriptblock]$RemovePathAction = { param($path, [bool]$recurse) Remove-Item -LiteralPath $path -Recurse:$recurse -Force -ErrorAction Stop },
         [scriptblock]$SetEnvironmentVariableAction = { param($name, $value) [Environment]::SetEnvironmentVariable($name, $value, [EnvironmentVariableTarget]::Machine) },
         [scriptblock]$CreateShortcutAction = {
@@ -363,157 +364,354 @@ function Invoke-ServiceHostInstall {
         [ValidateRange(1, 300000)][int]$MutexWaitMilliseconds = 30000,
         [ValidateRange(1, 600)][int]$StopWaitAttempts = 40
     )
+
     Assert-ElevatedIdentityMatches -InteractiveUser $InteractiveUser -InteractiveSid $InteractiveSid `
         -GetCurrentIdentityAction $GetCurrentIdentityAction -ResolveInteractiveUserSidAction $ResolveInteractiveUserSidAction `
         -TestAdministratorAction $TestAdministratorAction
-    if (-not (Test-Path -LiteralPath $SourcePath -PathType Container)) { throw "Source path does not exist: $SourcePath" }
-    $manifestPath = Join-Path $SourcePath 'release.manifest.json'
-    $manifest = & $ReadManifestAction $manifestPath
-    if ([int]$manifest.schema_version -ne 1 -or $null -eq $manifest.manager) { throw 'Unsupported release manifest.' }
-    foreach ($entry in @($manifest.files) + @($manifest.manager)) {
-        if (-not (Test-SafeReleasePath -Path ([string]$entry.path))) { throw "Unsafe manifest path: $($entry.path)" }
-    }
 
-    $managerSource = Join-Path $SourcePath ([string]$manifest.manager.path)
-    if (-not (Test-Path -LiteralPath $managerSource -PathType Leaf) -or
-        [long](Get-Item -LiteralPath $managerSource).Length -ne [long]$manifest.manager.length -or
-        (Get-FileHash -LiteralPath $managerSource -Algorithm SHA256).Hash -ne [string]$manifest.manager.sha256) {
-        throw "Manager source verification failed: $($manifest.manager.path)"
-    }
+    $taskName = 'QuickBooksServiceHost Auto Start and Update'
+    $hostPath = Join-Path $InstallPath 'QuickBooksServiceHost.exe'
+    $connectorPath = Join-Path $InstallPath 'QuickBooksConnectorCli.exe'
+    $managerDirectory = Join-Path $StatePath 'Manager'
+    $managerTarget = Join-Path $managerDirectory 'service_host_manager.ps1'
+    $installedManifestTarget = Join-Path $StatePath 'release.manifest.json'
+    $previousPath = Join-Path $StatePath 'Previous'
+    $previousPayloadPath = Join-Path $previousPath 'Payload'
+    $previousManagerDirectory = Join-Path $previousPath 'Manager'
+    $previousManagerPath = Join-Path $previousManagerDirectory 'service_host_manager.ps1'
+    $previousManifestPath = Join-Path $previousPath 'release.manifest.json'
+    $plan = New-ServiceHostTaskPlan -InteractiveUser $InteractiveUser -ManagerPath $managerTarget
 
     $installState = [pscustomobject]@{
-        Plan = $null
-        HostPath = Join-Path $InstallPath 'QuickBooksServiceHost.exe'
-        ConnectorPath = ''
-        ManagerPath = ''
-        ShortcutPath = ''
+        Phase = 'Initialized'
+        StageRoot = ''
+        StagePayloadPath = ''
+        StageManagerPath = ''
+        StageManifestPath = ''
+        Manifest = $null
+        Bridge = $null
+        HadCurrentInstall = $false
+        HadPreviousRuntime = $false
+        HadPreviousManager = $false
+        HadPreviousManifest = $false
+        Stopped = $false
+        CurrentMoved = $false
+        PromotionHappened = $false
+        ManagerPromoted = $false
+        ManifestPromoted = $false
+        RollbackPrepared = $false
+        Plan = $plan
     }
-    $mutation = {
-    & $NeutralizeTaskAction 'QuickBooksServiceHost Auto Start and Update'
-    $hostPath = $installState.HostPath
-    $installedProcesses = @(& $GetProcessesAction | Where-Object { (Get-ServiceHostProcessPath $_) -ieq $hostPath })
-    foreach ($process in $installedProcesses) { & $StopProcessAction $process }
-    if ($installedProcesses.Count -gt 0) {
-        $hostExited = $false
+
+    $stopExpectedHost = {
+        $installedProcesses = @(& $GetProcessesAction | Where-Object { (Get-ServiceHostProcessPath $_) -ieq $hostPath })
+        foreach ($process in $installedProcesses) { & $StopProcessAction $process }
+        if ($installedProcesses.Count -eq 0) { return }
         foreach ($attempt in 1..$StopWaitAttempts) {
             $stillRunning = @(& $GetProcessesAction | Where-Object { (Get-ServiceHostProcessPath $_) -ieq $hostPath })
-            if ($stillRunning.Count -eq 0) {
-                $hostExited = $true
-                break
-            }
+            if ($stillRunning.Count -eq 0) { return }
             & $WaitAction
         }
-        if (-not $hostExited) { throw "Installed host process did not exit: $hostPath" }
-    }
-
-    $managerDirectory = Join-Path $StatePath 'Manager'
-    & $ProtectStateTreeAction $StatePath
-    if (Test-Path -LiteralPath $InstallPath -PathType Container) { & $RemovePathAction $InstallPath $true }
-    & $EnsureDirectoryAction $InstallPath
-    & $EnsureDirectoryAction $managerDirectory
-    foreach ($entry in @($manifest.files)) {
-        $source = Join-Path $SourcePath ([string]$entry.path)
-        $target = Join-Path $InstallPath ([string]$entry.path)
-        & $EnsureDirectoryAction (Split-Path -Parent $target)
-        & $CopyFileAction $source $target
-        if ([long](Get-Item -LiteralPath $target).Length -ne [long]$entry.length -or (Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash -ne [string]$entry.sha256) { throw "Installed file verification failed: $($entry.path)" }
-    }
-    $managerTarget = Join-Path $managerDirectory 'service_host_manager.ps1'
-    $managerStage = Join-Path $managerDirectory 'service_host_manager.ps1.stage'
-    & $ProtectStateTreeAction $StatePath
-    & $CopyFileAction $managerSource $managerStage
-    $managerInstallError = $null
-    try {
-        if ([long](Get-Item -LiteralPath $managerStage).Length -ne [long]$manifest.manager.length -or
-            (Get-FileHash -LiteralPath $managerStage -Algorithm SHA256).Hash -ne [string]$manifest.manager.sha256) {
-            throw "Staged manager verification failed: $($manifest.manager.path)"
-        }
-        & $ProtectStateTreeAction $StatePath
-        & $CopyFileAction $managerStage $managerTarget
-        if ([long](Get-Item -LiteralPath $managerTarget).Length -ne [long]$manifest.manager.length -or
-            (Get-FileHash -LiteralPath $managerTarget -Algorithm SHA256).Hash -ne [string]$manifest.manager.sha256) {
-            throw "Installed manager verification failed: $($manifest.manager.path)"
-        }
-    }
-    catch {
-        $managerInstallError = $_
-    }
-    $managerCleanupError = $null
-    try {
-        & $ProtectStateTreeAction $StatePath
-        & $RemovePathAction $managerStage $false
-    }
-    catch {
-        $managerCleanupError = $_
-    }
-    if ($null -ne $managerInstallError) { throw $managerInstallError }
-    if ($null -ne $managerCleanupError) { throw $managerCleanupError }
-    & $ProtectStateTreeAction $StatePath
-    & $CopyFileAction $manifestPath (Join-Path $StatePath 'release.manifest.json')
-    & $ProtectStateTreeAction $StatePath
-
-    $connectorPath = Join-Path $InstallPath 'QuickBooksConnectorCli.exe'
-    if (-not (Test-Path -LiteralPath $hostPath -PathType Leaf)) { throw "Installed executable was not found: $hostPath" }
-    if (-not (Test-Path -LiteralPath $connectorPath -PathType Leaf)) { throw "Installed connector CLI was not found: $connectorPath" }
-    & $SetEnvironmentVariableAction 'QUOTE_MODULEV2_QB_CONNECTOR_CLI' $connectorPath
-
-    $bridge = @{ QB_BRIDGE_TOKEN = ''; QB_BRIDGE_ORIGIN = 'http://APPSRV01:8742'; QB_BRIDGE_PORT = '8788' }
-    $bridgeSettingsPath = Join-Path $SourcePath 'bridge.settings.psd1'
-    if (Test-Path -LiteralPath $bridgeSettingsPath -PathType Leaf) {
-        $loaded = Import-PowerShellDataFile -LiteralPath $bridgeSettingsPath
-        foreach ($key in @($bridge.Keys)) { if ($loaded.ContainsKey($key) -and -not [string]::IsNullOrWhiteSpace([string]$loaded[$key])) { $bridge[$key] = [string]$loaded[$key] } }
-    }
-    else {
-        Write-Warning 'bridge.settings.psd1 was not found next to the installer; using defaults (blank token).'
-    }
-    foreach ($key in @('QB_BRIDGE_TOKEN','QB_BRIDGE_ORIGIN','QB_BRIDGE_PORT')) { & $SetEnvironmentVariableAction $key $bridge[$key] }
-    if ([string]::IsNullOrWhiteSpace($bridge.QB_BRIDGE_TOKEN)) {
-        Write-Warning 'QB_BRIDGE_TOKEN is blank - the QuickBooks bridge will reject all requests with 403 until it is set in bridge.settings.psd1 and the host is restarted.'
-    }
-    $shortcutPath = Join-Path $PublicDesktopPath 'QuickBooksServiceHost.lnk'
-    & $CreateShortcutAction $shortcutPath $hostPath $InstallPath
-
-    $plan = New-ServiceHostTaskPlan -InteractiveUser $InteractiveUser -ManagerPath $managerTarget
-    & $ProtectStateTreeAction $StatePath
-    Register-ServiceHostTask -Plan $plan -RegisterTaskAction $RegisterTaskAction
-    $installState.Plan = $plan
-    $installState.ConnectorPath = $connectorPath
-    $installState.ManagerPath = $managerTarget
-    $installState.ShortcutPath = $shortcutPath
+        throw "Installed host process did not exit: $hostPath"
     }.GetNewClosure()
-    & $MutexAction 'Global\QuickBooksServiceHostAutoUpdate' $MutexWaitMilliseconds $mutation | Out-Null
 
-    $plan = $installState.Plan
-    $hostPath = $installState.HostPath
-    try {
+    $startAndVerify = {
         & $StartTaskAction $plan.TaskName
-        if ($null -eq (& $GetTaskAction $plan.TaskName)) { throw "Scheduled Task was not found after registration: $($plan.TaskName)" }
-        $running = $false
+        if ($null -eq (& $GetTaskAction $plan.TaskName)) {
+            throw "Scheduled Task was not found after registration: $($plan.TaskName)"
+        }
         foreach ($attempt in 1..20) {
-            if (@(& $GetProcessesAction | Where-Object { (Get-ServiceHostProcessPath $_) -ieq $hostPath }).Count -gt 0) { $running = $true; break }
+            $expected = @(& $GetProcessesAction | Where-Object { (Get-ServiceHostProcessPath $_) -ieq $hostPath })
+            if ($expected.Count -eq 1) { return }
+            if ($expected.Count -gt 1) { throw "Multiple installed host processes were found: $hostPath" }
             & $WaitAction
         }
-        if (-not $running) { throw "Installed host process was not found: $hostPath" }
-    }
-    catch {
-        $lateFailure = $_
+        throw "Installed host process was not found: $hostPath"
+    }.GetNewClosure()
+
+    $rollbackLocked = {
+        $installState.Phase = 'RollingBack'
+        & $NeutralizeTaskAction $taskName
+        & $stopExpectedHost
+
+        if ($installState.PromotionHappened -and (Test-Path -LiteralPath $InstallPath)) {
+            & $RemovePathAction $InstallPath $true
+        }
+        if ($installState.CurrentMoved -and (Test-Path -LiteralPath $previousPayloadPath -PathType Container)) {
+            & $ProtectStateTreeAction $StatePath
+            & $MovePathAction $previousPayloadPath $InstallPath
+        }
+
+        if ($installState.HadPreviousManager -and (Test-Path -LiteralPath $previousManagerPath -PathType Leaf)) {
+            & $ProtectStateTreeAction $StatePath
+            & $MovePathAction $previousManagerPath $managerTarget
+        }
+        elseif ($installState.ManagerPromoted -and (Test-Path -LiteralPath $managerTarget)) {
+            & $ProtectStateTreeAction $StatePath
+            & $RemovePathAction $managerTarget $false
+        }
+
+        if ($installState.HadPreviousManifest -and (Test-Path -LiteralPath $previousManifestPath -PathType Leaf)) {
+            & $ProtectStateTreeAction $StatePath
+            & $MovePathAction $previousManifestPath $installedManifestTarget
+        }
+        elseif ($installState.ManifestPromoted -and (Test-Path -LiteralPath $installedManifestTarget)) {
+            & $ProtectStateTreeAction $StatePath
+            & $RemovePathAction $installedManifestTarget $false
+        }
+
+        if (Test-Path -LiteralPath $previousPath) {
+            & $ProtectStateTreeAction $StatePath
+            & $RemovePathAction $previousPath $true
+        }
+        if ($installState.HadPreviousRuntime) {
+            & $ProtectStateTreeAction $StatePath
+            Register-ServiceHostTask -Plan $plan -RegisterTaskAction $RegisterTaskAction
+            $installState.RollbackPrepared = $true
+        }
+        $installState.Phase = 'RollbackRestored'
+    }.GetNewClosure()
+
+    $mutation = {
+        & $NeutralizeTaskAction $taskName
+        $installState.Phase = 'TaskNeutralized'
         try {
-            $lateNeutralization = {
-                & $NeutralizeTaskAction $plan.TaskName
-            }.GetNewClosure()
-            & $MutexAction 'Global\QuickBooksServiceHostAutoUpdate' $MutexWaitMilliseconds $lateNeutralization | Out-Null
+            if (-not (Test-Path -LiteralPath $SourcePath -PathType Container)) {
+                throw "Source path does not exist: $SourcePath"
+            }
+            $manifestPath = Join-Path $SourcePath 'release.manifest.json'
+            $manifestLengthBeforeRead = [long](Get-Item -LiteralPath $manifestPath -ErrorAction Stop).Length
+            $manifestHashBeforeRead = (Get-FileHash -LiteralPath $manifestPath -Algorithm SHA256 -ErrorAction Stop).Hash
+            $manifest = & $ReadManifestAction $manifestPath
+            $manifestSourceLength = [long](Get-Item -LiteralPath $manifestPath -ErrorAction Stop).Length
+            $manifestSourceHash = (Get-FileHash -LiteralPath $manifestPath -Algorithm SHA256 -ErrorAction Stop).Hash
+            if ($manifestLengthBeforeRead -ne $manifestSourceLength -or $manifestHashBeforeRead -ne $manifestSourceHash) {
+                throw 'Release manifest changed during validation: release.manifest.json'
+            }
+            if ([int]$manifest.schema_version -ne 1 -or $null -eq $manifest.manager) {
+                throw 'Unsupported release manifest.'
+            }
+            foreach ($entry in @($manifest.files) + @($manifest.manager)) {
+                if (-not (Test-SafeReleasePath -Path ([string]$entry.path))) {
+                    throw "Unsafe manifest path: $($entry.path)"
+                }
+            }
+            $installState.Manifest = $manifest
+
+            & $ProtectStateTreeAction $StatePath
+            if (Test-Path -LiteralPath $previousPath) {
+                & $ProtectStateTreeAction $StatePath
+                & $RemovePathAction $previousPath $true
+            }
+            & $ProtectStateTreeAction $StatePath
+            & $EnsureDirectoryAction $previousPath
+            & $ProtectStateTreeAction $StatePath
+            & $EnsureDirectoryAction $previousManagerDirectory
+
+            $installState.HadCurrentInstall = Test-Path -LiteralPath $InstallPath -PathType Container
+            $installState.HadPreviousRuntime = Test-Path -LiteralPath $hostPath -PathType Leaf
+            $installState.HadPreviousManager = Test-Path -LiteralPath $managerTarget -PathType Leaf
+            $installState.HadPreviousManifest = Test-Path -LiteralPath $installedManifestTarget -PathType Leaf
+            if ($installState.HadPreviousManager) {
+                $previousManagerLength = [long](Get-Item -LiteralPath $managerTarget -ErrorAction Stop).Length
+                $previousManagerHash = (Get-FileHash -LiteralPath $managerTarget -Algorithm SHA256 -ErrorAction Stop).Hash
+                & $ProtectStateTreeAction $StatePath
+                & $CopyFileAction $managerTarget $previousManagerPath
+                if ([long](Get-Item -LiteralPath $previousManagerPath -ErrorAction Stop).Length -ne $previousManagerLength -or
+                    (Get-FileHash -LiteralPath $previousManagerPath -Algorithm SHA256 -ErrorAction Stop).Hash -ne $previousManagerHash) {
+                    throw 'Previous manager snapshot verification failed: service_host_manager.ps1'
+                }
+            }
+            if ($installState.HadPreviousManifest) {
+                $previousManifestLength = [long](Get-Item -LiteralPath $installedManifestTarget -ErrorAction Stop).Length
+                $previousManifestHash = (Get-FileHash -LiteralPath $installedManifestTarget -Algorithm SHA256 -ErrorAction Stop).Hash
+                & $ProtectStateTreeAction $StatePath
+                & $CopyFileAction $installedManifestTarget $previousManifestPath
+                if ([long](Get-Item -LiteralPath $previousManifestPath -ErrorAction Stop).Length -ne $previousManifestLength -or
+                    (Get-FileHash -LiteralPath $previousManifestPath -Algorithm SHA256 -ErrorAction Stop).Hash -ne $previousManifestHash) {
+                    throw 'Previous release manifest snapshot verification failed: release.manifest.json'
+                }
+            }
+            $installState.Phase = 'PreviousSnapshotted'
+
+            $stageRoot = Join-Path $StatePath ([guid]::NewGuid().ToString('N'))
+            $stagePayloadPath = Join-Path $stageRoot 'Payload'
+            $stageManagerDirectory = Join-Path $stageRoot 'Manager'
+            $stageManagerPath = Join-Path $stageManagerDirectory 'service_host_manager.ps1'
+            $stageManifestPath = Join-Path $stageRoot 'release.manifest.json'
+            $installState.StageRoot = $stageRoot
+            $installState.StagePayloadPath = $stagePayloadPath
+            $installState.StageManagerPath = $stageManagerPath
+            $installState.StageManifestPath = $stageManifestPath
+
+            foreach ($directory in @($stageRoot, $stagePayloadPath, $stageManagerDirectory)) {
+                & $ProtectStateTreeAction $StatePath
+                & $EnsureDirectoryAction $directory
+            }
+            foreach ($entry in @($manifest.files)) {
+                $source = Join-Path $SourcePath ([string]$entry.path)
+                $target = Join-Path $stagePayloadPath ([string]$entry.path)
+                & $ProtectStateTreeAction $StatePath
+                & $EnsureDirectoryAction (Split-Path -Parent $target)
+                & $ProtectStateTreeAction $StatePath
+                & $CopyFileAction $source $target
+                if ([long](Get-Item -LiteralPath $target -ErrorAction Stop).Length -ne [long]$entry.length -or
+                    (Get-FileHash -LiteralPath $target -Algorithm SHA256 -ErrorAction Stop).Hash -ne [string]$entry.sha256) {
+                    throw "Staged file verification failed: $($entry.path)"
+                }
+            }
+
+            $managerSource = Join-Path $SourcePath ([string]$manifest.manager.path)
+            & $ProtectStateTreeAction $StatePath
+            & $CopyFileAction $managerSource $stageManagerPath
+            if ([long](Get-Item -LiteralPath $stageManagerPath -ErrorAction Stop).Length -ne [long]$manifest.manager.length -or
+                (Get-FileHash -LiteralPath $stageManagerPath -Algorithm SHA256 -ErrorAction Stop).Hash -ne [string]$manifest.manager.sha256) {
+                throw "Staged manager verification failed: $($manifest.manager.path)"
+            }
+
+            & $ProtectStateTreeAction $StatePath
+            & $CopyFileAction $manifestPath $stageManifestPath
+            if ([long](Get-Item -LiteralPath $stageManifestPath -ErrorAction Stop).Length -ne $manifestSourceLength -or
+                (Get-FileHash -LiteralPath $stageManifestPath -Algorithm SHA256 -ErrorAction Stop).Hash -ne $manifestSourceHash) {
+                throw 'Staged release manifest verification failed: release.manifest.json'
+            }
+
+            $bridge = @{ QB_BRIDGE_TOKEN = ''; QB_BRIDGE_ORIGIN = 'http://APPSRV01:8742'; QB_BRIDGE_PORT = '8788' }
+            $bridgeSettingsPath = Join-Path $SourcePath 'bridge.settings.psd1'
+            if (Test-Path -LiteralPath $bridgeSettingsPath -PathType Leaf) {
+                $loaded = Import-PowerShellDataFile -LiteralPath $bridgeSettingsPath
+                foreach ($key in @($bridge.Keys)) {
+                    if ($loaded.ContainsKey($key) -and -not [string]::IsNullOrWhiteSpace([string]$loaded[$key])) {
+                        $bridge[$key] = [string]$loaded[$key]
+                    }
+                }
+            }
+            else {
+                Write-Warning 'bridge.settings.psd1 was not found next to the installer; using defaults (blank token).'
+            }
+            $installState.Bridge = $bridge
+            $installState.Phase = 'StageVerified'
+
+            & $stopExpectedHost
+            $installState.Stopped = $true
+            $installState.Phase = 'Stopped'
+
+            if ($installState.HadCurrentInstall) {
+                & $ProtectStateTreeAction $StatePath
+                & $MovePathAction $InstallPath $previousPayloadPath
+                $installState.CurrentMoved = $true
+            }
+            $installState.Phase = 'CurrentMoved'
+
+            & $ProtectStateTreeAction $StatePath
+            & $MovePathAction $stagePayloadPath $InstallPath
+            $installState.PromotionHappened = $true
+            $installState.Phase = 'PayloadPromoted'
+
+            & $ProtectStateTreeAction $StatePath
+            & $MovePathAction $stageManagerPath $managerTarget
+            $installState.ManagerPromoted = $true
+            $installState.Phase = 'ManagerPromoted'
+            if ([long](Get-Item -LiteralPath $managerTarget -ErrorAction Stop).Length -ne [long]$manifest.manager.length -or
+                (Get-FileHash -LiteralPath $managerTarget -Algorithm SHA256 -ErrorAction Stop).Hash -ne [string]$manifest.manager.sha256) {
+                throw "Promoted manager verification failed: $($manifest.manager.path)"
+            }
+
+            & $ProtectStateTreeAction $StatePath
+            & $MovePathAction $stageManifestPath $installedManifestTarget
+            $installState.ManifestPromoted = $true
+            $installState.Phase = 'ManifestPromoted'
+            if ([long](Get-Item -LiteralPath $installedManifestTarget -ErrorAction Stop).Length -ne $manifestSourceLength -or
+                (Get-FileHash -LiteralPath $installedManifestTarget -Algorithm SHA256 -ErrorAction Stop).Hash -ne $manifestSourceHash) {
+                throw 'Promoted release manifest verification failed: release.manifest.json'
+            }
+
+            & $ProtectStateTreeAction $StatePath
+            & $RemovePathAction $stageRoot $true
+
+            if (-not (Test-Path -LiteralPath $hostPath -PathType Leaf)) {
+                throw "Installed executable was not found: $hostPath"
+            }
+            if (-not (Test-Path -LiteralPath $connectorPath -PathType Leaf)) {
+                throw "Installed connector CLI was not found: $connectorPath"
+            }
+            & $SetEnvironmentVariableAction 'QUOTE_MODULEV2_QB_CONNECTOR_CLI' $connectorPath
+            foreach ($key in @('QB_BRIDGE_TOKEN','QB_BRIDGE_ORIGIN','QB_BRIDGE_PORT')) {
+                & $SetEnvironmentVariableAction $key $bridge[$key]
+            }
+            if ([string]::IsNullOrWhiteSpace($bridge.QB_BRIDGE_TOKEN)) {
+                Write-Warning 'QB_BRIDGE_TOKEN is blank - the QuickBooks bridge will reject all requests with 403 until it is set in bridge.settings.psd1 and the host is restarted.'
+            }
+            $shortcutPath = Join-Path $PublicDesktopPath 'QuickBooksServiceHost.lnk'
+            & $CreateShortcutAction $shortcutPath $hostPath $InstallPath
+
+            & $ProtectStateTreeAction $StatePath
+            Register-ServiceHostTask -Plan $plan -RegisterTaskAction $RegisterTaskAction
+            $installState.Phase = 'Registered'
         }
         catch {
-            $lateFailure.Exception.Data['TaskNeutralizationFailure'] = $_.Exception.Message
+            $primaryFailure = $_
+            if ($installState.Stopped) {
+                try { & $rollbackLocked }
+                catch {
+                    $primaryFailure.Exception.Data['RollbackFailure'] = $_.Exception.Message
+                    $primaryFailure.Exception.Data['TaskNeutralizationFailure'] = $_.Exception.Message
+                }
+            }
+            elseif (-not [string]::IsNullOrWhiteSpace($installState.StageRoot) -and
+                (Test-Path -LiteralPath $installState.StageRoot)) {
+                try {
+                    & $ProtectStateTreeAction $StatePath
+                    & $RemovePathAction $installState.StageRoot $true
+                }
+                catch {
+                    $primaryFailure.Exception.Data['StageCleanupFailure'] = $_.Exception.Message
+                }
+            }
+            throw $primaryFailure
         }
-        throw $lateFailure
+    }.GetNewClosure()
+
+    try {
+        & $MutexAction 'Global\QuickBooksServiceHostAutoUpdate' $MutexWaitMilliseconds $mutation | Out-Null
     }
+    catch {
+        $primaryFailure = $_
+        if ($installState.RollbackPrepared) {
+            try { & $startAndVerify }
+            catch { $primaryFailure.Exception.Data['RollbackFailure'] = $_.Exception.Message }
+        }
+        throw $primaryFailure
+    }
+
+    try {
+        & $startAndVerify
+        $installState.Phase = 'Verified'
+    }
+    catch {
+        $primaryFailure = $_
+        try {
+            $lateRollback = { & $rollbackLocked }.GetNewClosure()
+            & $MutexAction 'Global\QuickBooksServiceHostAutoUpdate' $MutexWaitMilliseconds $lateRollback | Out-Null
+        }
+        catch {
+            $primaryFailure.Exception.Data['RollbackFailure'] = $_.Exception.Message
+            $primaryFailure.Exception.Data['TaskNeutralizationFailure'] = $_.Exception.Message
+        }
+        if ($installState.RollbackPrepared) {
+            try { & $startAndVerify }
+            catch { $primaryFailure.Exception.Data['RollbackFailure'] = $_.Exception.Message }
+        }
+        throw $primaryFailure
+    }
+
     return [pscustomobject]@{
         TaskName = $plan.TaskName
-        HostPath = $installState.HostPath
-        ConnectorPath = $installState.ConnectorPath
-        ManagerPath = $installState.ManagerPath
-        ShortcutPath = $installState.ShortcutPath
+        HostPath = $hostPath
+        ConnectorPath = $connectorPath
+        ManagerPath = $managerTarget
+        ShortcutPath = Join-Path $PublicDesktopPath 'QuickBooksServiceHost.lnk'
+        Phase = $installState.Phase
     }
 }
 

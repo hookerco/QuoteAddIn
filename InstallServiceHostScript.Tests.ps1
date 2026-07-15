@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet('static', 'task-plan', 'state-security', 'native-takeown', 'identity-mismatch', 'identity-binding', 'task-neutralization', 'late-failure-neutralization', 'critical-state-revalidation', 'installer-mutex', 'manifest-install', 'corrupt-manager', 'corrupt-installed-manager', 'stale-cleanup', 'stop-race', 'stop-timeout', 'reinstall-idempotent', 'all')]
+    [ValidateSet('static', 'task-plan', 'state-security', 'native-takeown', 'identity-mismatch', 'identity-binding', 'task-neutralization', 'late-failure-neutralization', 'critical-state-revalidation', 'installer-mutex', 'manifest-install', 'corrupt-manager', 'corrupt-installed-manager', 'stale-cleanup', 'stop-race', 'stop-timeout', 'transactional-install', 'reinstall-idempotent', 'all')]
     [string]$Scenario = 'all'
 )
 
@@ -77,7 +77,25 @@ function New-InstallerFixture {
         HostPath = Join-Path $install 'QuickBooksServiceHost.exe'
         ManagerPath = Join-Path $statePath 'Manager\service_host_manager.ps1'
         InstalledManifestPath = Join-Path $statePath 'release.manifest.json'
+        PreviousPath = Join-Path $statePath 'Previous'
     }
+}
+
+function Set-InstalledReleaseFixture($Fixture) {
+    New-Item -ItemType Directory -Force -Path $Fixture.Install, (Join-Path $Fixture.Install 'nested'), (Split-Path -Parent $Fixture.ManagerPath) | Out-Null
+    [IO.File]::WriteAllText($Fixture.HostPath, 'old-host')
+    [IO.File]::WriteAllText((Join-Path $Fixture.Install 'QuickBooksConnectorCli.exe'), 'old-cli')
+    [IO.File]::WriteAllText((Join-Path $Fixture.Install 'nested\runtime.dll'), 'old-runtime')
+    [IO.File]::WriteAllText($Fixture.ManagerPath, '# old manager')
+    [IO.File]::WriteAllText($Fixture.InstalledManifestPath, '{"schema_version":1,"release_id":"release-old"}')
+}
+
+function Assert-OldReleaseRestored($Fixture, [string]$Because) {
+    Assert-Equal 'old-host' ([IO.File]::ReadAllText($Fixture.HostPath)) "$Because host"
+    Assert-Equal 'old-cli' ([IO.File]::ReadAllText((Join-Path $Fixture.Install 'QuickBooksConnectorCli.exe'))) "$Because connector"
+    Assert-Equal 'old-runtime' ([IO.File]::ReadAllText((Join-Path $Fixture.Install 'nested\runtime.dll'))) "$Because runtime"
+    Assert-Equal '# old manager' ([IO.File]::ReadAllText($Fixture.ManagerPath)) "$Because manager"
+    Assert-Equal 'release-old' ((Get-Content -Raw -LiteralPath $Fixture.InstalledManifestPath | ConvertFrom-Json).release_id) "$Because manifest"
 }
 
 function Remove-InstallerFixture($Fixture) {
@@ -88,6 +106,7 @@ function New-InjectedActions {
     param($Fixture)
     $state = [pscustomobject]@{
         CopyCalls = 0
+        MoveCalls = 0
         RemoveCalls = 0
         RegisterCalls = 0
         StartCalls = 0
@@ -119,7 +138,10 @@ function New-InjectedActions {
         EnsureDirectory = { param($path) New-Item -ItemType Directory -Force -Path $path | Out-Null }
         CopyFile = {
             param($source, $destination)
-            if ($state.RequireExitBeforeCopy -and -not $state.HostExited) { throw 'runtime copy happened before host exit' }
+            if ($state.RequireExitBeforeCopy -and -not $state.HostExited -and
+                $destination.StartsWith($Fixture.Install, [StringComparison]::OrdinalIgnoreCase)) {
+                throw 'runtime copy happened before host exit'
+            }
             $state.CopyCalls++
             $parent = Split-Path -Parent $destination
             if (-not (Test-Path -LiteralPath $parent -PathType Container)) { New-Item -ItemType Directory -Force -Path $parent | Out-Null }
@@ -127,9 +149,19 @@ function New-InjectedActions {
         }.GetNewClosure()
         RemovePath = {
             param($path, [bool]$recurse)
-            if ($state.RequireExitBeforeCopy -and -not $state.HostExited) { throw 'runtime cleanup happened before host exit' }
+            if ($state.RequireExitBeforeCopy -and -not $state.HostExited -and
+                $path.StartsWith($Fixture.Install, [StringComparison]::OrdinalIgnoreCase)) {
+                throw 'runtime cleanup happened before host exit'
+            }
             $state.RemoveCalls++
             Remove-Item -LiteralPath $path -Recurse:$recurse -Force -ErrorAction SilentlyContinue
+        }.GetNewClosure()
+        MovePath = {
+            param($source, $destination)
+            $state.MoveCalls++
+            $parent = Split-Path -Parent $destination
+            if (-not (Test-Path -LiteralPath $parent -PathType Container)) { New-Item -ItemType Directory -Force -Path $parent | Out-Null }
+            Move-Item -LiteralPath $source -Destination $destination -Force
         }.GetNewClosure()
         SetEnvironmentVariable = { param($name, $value) $state.Environment[$name] = [string]$value }.GetNewClosure()
         CreateShortcut = {
@@ -198,6 +230,7 @@ function Invoke-FixtureInstall {
     }
     $parameters = (Get-Command Invoke-ServiceHostInstall).Parameters
     if ($parameters.ContainsKey('RemovePathAction')) { $arguments.RemovePathAction = $Actions.RemovePath }
+    if ($parameters.ContainsKey('MovePathAction')) { $arguments.MovePathAction = $Actions.MovePath }
     if ($parameters.ContainsKey('StopWaitAttempts')) { $arguments.StopWaitAttempts = $StopWaitAttempts }
     if ($parameters.ContainsKey('ProtectStateTreeAction')) { $arguments.ProtectStateTreeAction = $Actions.ProtectStateTree }
     if ($parameters.ContainsKey('MutexAction')) { $arguments.MutexAction = $Actions.Mutex }
@@ -360,13 +393,14 @@ function Run-Scenario {
                 }.GetNewClosure()
                 $actions.RegisterTask = {
                     param($plan)
-                    Assert-Equal 7 $actions.State.SecurityPasses 'all critical state boundaries re-verified before task registration'
+                    Assert-True ($actions.State.SecurityPasses -ge 7) 'all critical state boundaries re-verified before task registration'
                     $events.Add('register')
                     $actions.State.RegisterCalls++
                     $actions.State.Tasks[$plan.TaskName] = $plan
                 }.GetNewClosure()
                 Invoke-FixtureInstall $fixture $actions
-                Assert-Equal 'secure:1|secure:2|secure:3|secure:4|secure:5|secure:6|secure:7|register' ($events -join '|') 'security passes immediately guard critical ProgramData writes, manager-stage cleanup, and task registration'
+                Assert-Equal 'register' $events[$events.Count - 1] 'registration is the final locked event'
+                Assert-True ($events[$events.Count - 2] -like 'secure:*') 'fresh security validation immediately guards task registration'
             }
             finally { Remove-InstallerFixture $fixture }
         }
@@ -584,12 +618,12 @@ function Run-Scenario {
                     param($source, $destination)
                     if ($destination.StartsWith($fixture.StatePath, [StringComparison]::OrdinalIgnoreCase)) {
                         $race.StateWrites++
+                        & $originalCopy $source $destination
+                        $race.Substituted = $true
                     }
-                    else { $race.Substituted = $true }
-                    & $originalCopy $source $destination
                 }.GetNewClosure()
                 Assert-ThrowsMessage { Invoke-FixtureInstall $fixture $actions } 'critical state substitution detected' 'substitution after initial pass is rejected'
-                Assert-Equal 0 $race.StateWrites 'substitution is detected before any Manager or root-state write'
+                Assert-Equal 1 $race.StateWrites 'substitution is detected before any later protected-state write'
                 Assert-Equal 0 $actions.State.RegisterCalls 'substitution prevents task registration'
             }
             finally { Remove-InstallerFixture $fixture }
@@ -597,8 +631,7 @@ function Run-Scenario {
             $fixture = New-InstallerFixture
             try {
                 $actions = New-InjectedActions $fixture
-                $managerStage = Join-Path $fixture.StatePath 'Manager\service_host_manager.ps1.stage'
-                $race = [pscustomobject]@{ Substituted = $false; PostSubstitutionChecks = 0; StageRemoveAttempts = 0 }
+                $race = [pscustomobject]@{ Substituted = $false; PostSubstitutionChecks = 0; StageRemoveAttempts = 0; ManagerStage = '' }
                 $actions.ProtectStateTree = {
                     param($path)
                     if ($race.Substituted) {
@@ -612,12 +645,18 @@ function Run-Scenario {
                 $actions.CopyFile = {
                     param($source, $destination)
                     & $originalCopy $source $destination
-                    if ($destination -ieq $managerStage) { $race.Substituted = $true }
+                    if ($source -ieq (Join-Path $fixture.Source 'service_host_manager.ps1')) {
+                        $race.ManagerStage = $destination
+                        $race.Substituted = $true
+                    }
                 }.GetNewClosure()
                 $originalRemove = $actions.RemovePath
                 $actions.RemovePath = {
                     param($path, [bool]$recurse)
-                    if ($path -ieq $managerStage) { $race.StageRemoveAttempts++ }
+                    if (-not [string]::IsNullOrWhiteSpace($race.ManagerStage) -and
+                        $race.ManagerStage.StartsWith($path, [StringComparison]::OrdinalIgnoreCase)) {
+                        $race.StageRemoveAttempts++
+                    }
                     & $originalRemove $path $recurse
                 }.GetNewClosure()
                 Assert-ThrowsMessage { Invoke-FixtureInstall $fixture $actions } 'original manager security failure' 'cleanup preserves the original manager-stage validation failure'
@@ -718,9 +757,9 @@ function Run-Scenario {
             try {
                 [IO.File]::WriteAllText((Join-Path $fixture.Source 'service_host_manager.ps1'), '# mangler')
                 $actions = New-InjectedActions $fixture
-                Assert-ThrowsMessage { Invoke-FixtureInstall $fixture $actions } 'Manager source verification failed: service_host_manager.ps1' 'corrupt manager rejected'
-                Assert-Equal 0 $actions.State.CopyCalls 'manager validation precedes all copies'
-                Assert-Equal 0 $actions.State.RemoveCalls 'manager validation precedes install cleanup'
+                Assert-ThrowsMessage { Invoke-FixtureInstall $fixture $actions } 'Staged manager verification failed: service_host_manager.ps1' 'corrupt manager rejected'
+                Assert-True ($actions.State.CopyCalls -gt 0) 'manager validation occurs against the isolated staged copy'
+                Assert-Equal 0 $actions.State.StopCalls 'manager validation precedes host stop'
                 Assert-Equal 0 $actions.State.RegisterCalls 'manager validation precedes registration'
                 Assert-Equal 0 $actions.State.StartCalls 'manager validation precedes startup'
             }
@@ -730,21 +769,17 @@ function Run-Scenario {
             $fixture = New-InstallerFixture
             try {
                 $actions = New-InjectedActions $fixture
-                $actions.CopyFile = {
+                $originalMove = $actions.MovePath
+                $actions.MovePath = {
                     param($source, $destination)
-                    $actions.State.CopyCalls++
-                    $parent = Split-Path -Parent $destination
-                    if (-not (Test-Path -LiteralPath $parent -PathType Container)) {
-                        New-Item -ItemType Directory -Force -Path $parent | Out-Null
-                    }
-                    Copy-Item -LiteralPath $source -Destination $destination -Force
+                    & $originalMove $source $destination
                     if ($destination -ieq $fixture.ManagerPath) {
                         [IO.File]::WriteAllText($destination, '# mangler')
                     }
                 }.GetNewClosure()
                 Assert-ThrowsMessage {
                     Invoke-FixtureInstall $fixture $actions
-                } 'Installed manager verification failed: service_host_manager.ps1' 'installed manager corruption rejected'
+                } 'Promoted manager verification failed: service_host_manager.ps1' 'promoted manager corruption rejected'
                 Assert-Equal 0 $actions.State.RegisterCalls 'installed manager verification precedes registration'
                 Assert-Equal 0 $actions.State.StartCalls 'installed manager verification precedes task startup'
             }
@@ -792,10 +827,300 @@ function Run-Scenario {
                 Assert-ThrowsMessage { Invoke-FixtureInstall $fixture $actions -StopWaitAttempts 3 } "Installed host process did not exit: $($fixture.HostPath)" 'bounded stop timeout'
                 Assert-Equal 1 $actions.State.StopCalls 'timeout stops once'
                 Assert-Equal 3 $actions.State.WaitCalls 'timeout uses bounded polling'
-                Assert-Equal 0 $actions.State.CopyCalls 'timeout precedes all copies'
-                Assert-Equal 0 $actions.State.RemoveCalls 'timeout preserves installed tree'
+                Assert-True ($actions.State.CopyCalls -ge 5) 'timeout occurs only after complete candidate staging'
+                Assert-Equal 'old-host' ([IO.File]::ReadAllText($fixture.HostPath)) 'timeout preserves installed tree'
                 Assert-Equal 0 $actions.State.RegisterCalls 'timeout precedes registration'
                 Assert-Equal 0 $actions.State.StartCalls 'timeout precedes startup'
+            }
+            finally { Remove-InstallerFixture $fixture }
+        }
+        'transactional-install' {
+            $taskName = 'QuickBooksServiceHost Auto Start and Update'
+
+            $fixture = New-InstallerFixture
+            try {
+                Set-InstalledReleaseFixture $fixture
+                $actions = New-InjectedActions $fixture
+                $actions.State.Tasks[$taskName] = [pscustomobject]@{ TaskName = $taskName }
+                $originalCopy = $actions.CopyFile
+                $actions.CopyFile = {
+                    param($source, $destination)
+                    & $originalCopy $source $destination
+                    if ($source -ieq (Join-Path $fixture.Source 'nested\runtime.dll') -and
+                        $destination.StartsWith($fixture.StatePath, [StringComparison]::OrdinalIgnoreCase)) {
+                        [IO.File]::WriteAllText($destination, 'corrupt-stage')
+                    }
+                }.GetNewClosure()
+                $caught = $null
+                try { Invoke-FixtureInstall $fixture $actions }
+                catch { $caught = $_ }
+                Assert-True ($null -ne $caught) 'corrupt staged runtime fails installation'
+                Assert-Equal 'Staged file verification failed: nested/runtime.dll' $caught.Exception.Message 'corrupt stage failure is explicit'
+                Assert-Equal 0 $actions.State.StopCalls 'corrupt staged runtime never stops the old host'
+                Assert-OldReleaseRestored $fixture 'corrupt staged runtime preserves'
+                Assert-Equal 0 $actions.State.Tasks.Count 'corrupt staged runtime leaves no active task'
+                Assert-Equal 0 $actions.State.RegisterCalls 'corrupt staged runtime never registers a task'
+            }
+            finally { Remove-InstallerFixture $fixture }
+
+            $fixture = New-InstallerFixture
+            try {
+                Set-InstalledReleaseFixture $fixture
+                $actions = New-InjectedActions $fixture
+                $originalCopy = $actions.CopyFile
+                $actions.CopyFile = {
+                    param($source, $destination)
+                    & $originalCopy $source $destination
+                    if ($source -ieq $fixture.InstalledManifestPath -and
+                        $destination.StartsWith($fixture.PreviousPath, [StringComparison]::OrdinalIgnoreCase)) {
+                        [IO.File]::WriteAllText($destination, '{"release_id":"corrupted-previous"}')
+                    }
+                }.GetNewClosure()
+                Assert-ThrowsMessage { Invoke-FixtureInstall $fixture $actions } 'Previous release manifest snapshot verification failed: release.manifest.json' 'corrupt retained manifest snapshot fails closed'
+                Assert-Equal 0 $actions.State.StopCalls 'corrupt retained manifest snapshot precedes host stop'
+                Assert-OldReleaseRestored $fixture 'corrupt retained manifest snapshot preserves'
+                Assert-Equal 0 $actions.State.RegisterCalls 'corrupt retained manifest snapshot never registers a task'
+            }
+            finally { Remove-InstallerFixture $fixture }
+
+            $fixture = New-InstallerFixture
+            try {
+                Set-InstalledReleaseFixture $fixture
+                $actions = New-InjectedActions $fixture
+                $originalReadManifest = $actions.ReadManifest
+                $actions.ReadManifest = {
+                    param($path)
+                    $parsed = & $originalReadManifest $path
+                    if ($path -ieq (Join-Path $fixture.Source 'release.manifest.json')) {
+                        $replacement = Get-Content -Raw -LiteralPath $path | ConvertFrom-Json
+                        $replacement.release_id = 'publication-replaced-mid-read'
+                        $replacement | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $path
+                    }
+                    $parsed
+                }.GetNewClosure()
+                Assert-ThrowsMessage { Invoke-FixtureInstall $fixture $actions } 'Release manifest changed during validation: release.manifest.json' 'manifest replacement during validation fails closed'
+                Assert-Equal 0 $actions.State.StopCalls 'manifest replacement during validation precedes host stop'
+                Assert-OldReleaseRestored $fixture 'manifest replacement preserves'
+                Assert-Equal 0 $actions.State.RegisterCalls 'manifest replacement never registers a task'
+            }
+            finally { Remove-InstallerFixture $fixture }
+
+            $fixture = New-InstallerFixture
+            try {
+                Set-InstalledReleaseFixture $fixture
+                $actions = New-InjectedActions $fixture
+                $originalCopy = $actions.CopyFile
+                $actions.CopyFile = {
+                    param($source, $destination)
+                    & $originalCopy $source $destination
+                    if ($source -ieq $fixture.ManagerPath -and
+                        $destination.StartsWith($fixture.PreviousPath, [StringComparison]::OrdinalIgnoreCase)) {
+                        [IO.File]::WriteAllText($destination, '# corrupted previous manager')
+                    }
+                }.GetNewClosure()
+                Assert-ThrowsMessage { Invoke-FixtureInstall $fixture $actions } 'Previous manager snapshot verification failed: service_host_manager.ps1' 'corrupt retained manager snapshot fails closed'
+                Assert-Equal 0 $actions.State.StopCalls 'corrupt retained manager snapshot precedes host stop'
+                Assert-OldReleaseRestored $fixture 'corrupt retained manager snapshot preserves'
+                Assert-Equal 0 $actions.State.RegisterCalls 'corrupt retained manager snapshot never registers a task'
+            }
+            finally { Remove-InstallerFixture $fixture }
+
+            $fixture = New-InstallerFixture
+            try {
+                Set-InstalledReleaseFixture $fixture
+                $actions = New-InjectedActions $fixture
+                $originalCopy = $actions.CopyFile
+                $actions.CopyFile = {
+                    param($source, $destination)
+                    if ($source -ieq (Join-Path $fixture.Source 'nested\runtime.dll')) {
+                        Remove-Item -LiteralPath $source -Force
+                    }
+                    & $originalCopy $source $destination
+                }.GetNewClosure()
+                $caught = $null
+                try { Invoke-FixtureInstall $fixture $actions }
+                catch { $caught = $_ }
+                Assert-True ($null -ne $caught) 'mid-stage publication disappearance fails installation'
+                Assert-Equal 0 $actions.State.StopCalls 'mid-stage publication disappearance never stops the old host'
+                Assert-OldReleaseRestored $fixture 'mid-stage disappearance preserves'
+                Assert-Equal 0 $actions.State.RegisterCalls 'mid-stage disappearance never registers a task'
+            }
+            finally { Remove-InstallerFixture $fixture }
+
+            $fixture = New-InstallerFixture
+            try {
+                Set-InstalledReleaseFixture $fixture
+                New-Item -ItemType Directory -Force -Path $fixture.PreviousPath | Out-Null
+                [IO.File]::WriteAllText((Join-Path $fixture.PreviousPath 'stale.txt'), 'stale')
+                $actions = New-InjectedActions $fixture
+                $originalRemove = $actions.RemovePath
+                $actions.RemovePath = {
+                    param($path, [bool]$recurse)
+                    if ($path -ieq $fixture.PreviousPath) { throw 'stale Previous cleanup failure' }
+                    & $originalRemove $path $recurse
+                }.GetNewClosure()
+                Assert-ThrowsMessage { Invoke-FixtureInstall $fixture $actions } 'stale Previous cleanup failure' 'stale Previous cleanup fails fast'
+                Assert-Equal 0 $actions.State.StopCalls 'stale Previous cleanup failure precedes host stop'
+                Assert-OldReleaseRestored $fixture 'stale Previous cleanup preserves'
+                Assert-Equal 0 $actions.State.RegisterCalls 'stale Previous cleanup failure never registers a task'
+            }
+            finally { Remove-InstallerFixture $fixture }
+
+            foreach ($failure in @('move-current', 'promote-payload', 'promote-manager', 'promote-manifest')) {
+                $fixture = New-InstallerFixture
+                try {
+                    Set-InstalledReleaseFixture $fixture
+                    $actions = New-InjectedActions $fixture
+                    $actions.State.Processes = @([pscustomobject]@{ ProcessName = 'QuickBooksServiceHost'; Id = 7; Path = $fixture.HostPath })
+                    $actions.State.HostExited = $false
+                    $originalMove = $actions.MovePath
+                    $failed = [pscustomobject]@{ Value = $false }
+                    $actions.MovePath = {
+                        param($source, $destination)
+                        $isCandidateStage = $source.StartsWith($fixture.StatePath, [StringComparison]::OrdinalIgnoreCase) -and
+                            -not $source.StartsWith($fixture.PreviousPath, [StringComparison]::OrdinalIgnoreCase)
+                        $matches = switch ($failure) {
+                            'move-current' { $source -ieq $fixture.Install }
+                            'promote-payload' { $isCandidateStage -and (Split-Path -Leaf $source) -eq 'Payload' }
+                            'promote-manager' { $isCandidateStage -and $destination -ieq $fixture.ManagerPath }
+                            'promote-manifest' { $isCandidateStage -and $destination -ieq $fixture.InstalledManifestPath }
+                        }
+                        if ($matches -and -not $failed.Value) {
+                            $failed.Value = $true
+                            throw "simulated $failure failure"
+                        }
+                        & $originalMove $source $destination
+                    }.GetNewClosure()
+                    Assert-ThrowsMessage { Invoke-FixtureInstall $fixture $actions } "simulated $failure failure" "$failure remains primary"
+                    Assert-Equal 1 $actions.State.StopCalls "$failure occurs after exactly one old-host stop"
+                    Assert-OldReleaseRestored $fixture "$failure rollback restores"
+                    Assert-Equal 1 $actions.State.Tasks.Count "$failure rollback registers the old task"
+                    Assert-Equal 1 @($actions.State.Processes | Where-Object { $_.Path -ieq $fixture.HostPath }).Count "$failure rollback restarts exactly the old expected path"
+                    Assert-True (-not (Test-Path -LiteralPath $fixture.PreviousPath)) "$failure rollback consumes Previous"
+                }
+                finally { Remove-InstallerFixture $fixture }
+            }
+
+            $fixture = New-InstallerFixture
+            try {
+                Set-InstalledReleaseFixture $fixture
+                $actions = New-InjectedActions $fixture
+                $actions.State.Processes = @([pscustomobject]@{ ProcessName = 'QuickBooksServiceHost'; Id = 8; Path = $fixture.HostPath })
+                $actions.State.HostExited = $false
+                $registerAttempt = [pscustomobject]@{ Count = 0 }
+                $actions.RegisterTask = {
+                    param($plan)
+                    $registerAttempt.Count++
+                    $actions.State.RegisterCalls++
+                    if ($registerAttempt.Count -eq 1) { throw 'simulated register failure' }
+                    $actions.State.Tasks[$plan.TaskName] = $plan
+                }.GetNewClosure()
+                Assert-ThrowsMessage { Invoke-FixtureInstall $fixture $actions } 'simulated register failure' 'register failure remains primary'
+                Assert-OldReleaseRestored $fixture 'register failure rollback restores'
+                Assert-Equal 2 $actions.State.RegisterCalls 'register failure rolls back with the old task definition'
+                Assert-Equal 1 @($actions.State.Processes | Where-Object { $_.Path -ieq $fixture.HostPath }).Count 'register failure restarts old host'
+            }
+            finally { Remove-InstallerFixture $fixture }
+
+            foreach ($failure in @('start', 'health')) {
+                $fixture = New-InstallerFixture
+                try {
+                    Set-InstalledReleaseFixture $fixture
+                    $actions = New-InjectedActions $fixture
+                    $actions.State.Processes = @([pscustomobject]@{ ProcessName = 'QuickBooksServiceHost'; Id = 9; Path = $fixture.HostPath })
+                    $actions.State.HostExited = $false
+                    $originalStart = $actions.StartTask
+                    $startAttempt = [pscustomobject]@{ Count = 0 }
+                    $actions.StartTask = {
+                        param($name)
+                        $startAttempt.Count++
+                        if ($startAttempt.Count -eq 1) {
+                            $actions.State.StartCalls++
+                            if ($failure -eq 'start') { throw 'simulated new start failure' }
+                            return
+                        }
+                        & $originalStart $name
+                    }.GetNewClosure()
+                    $expected = if ($failure -eq 'start') { 'simulated new start failure' } else { "Installed host process was not found: $($fixture.HostPath)" }
+                    Assert-ThrowsMessage { Invoke-FixtureInstall $fixture $actions } $expected "$failure failure remains primary"
+                    Assert-OldReleaseRestored $fixture "$failure failure rollback restores"
+                    Assert-Equal 2 $actions.State.StartCalls "$failure failure starts candidate then restored task"
+                    Assert-Equal 1 @($actions.State.Processes | Where-Object { $_.Path -ieq $fixture.HostPath }).Count "$failure failure restarts exact old path"
+                }
+                finally { Remove-InstallerFixture $fixture }
+            }
+
+            $fixture = New-InstallerFixture
+            try {
+                Set-InstalledReleaseFixture $fixture
+                $actions = New-InjectedActions $fixture
+                $actions.State.Processes = @([pscustomobject]@{ ProcessName = 'QuickBooksServiceHost'; Id = 10; Path = $fixture.HostPath })
+                $actions.State.HostExited = $false
+                $actions.StartTask = {
+                    param($name)
+                    $actions.State.StartCalls++
+                    if ($actions.State.StartCalls -eq 1) { throw 'primary new start failure' }
+                    throw 'rollback old start failure'
+                }.GetNewClosure()
+                $caught = $null
+                try { Invoke-FixtureInstall $fixture $actions }
+                catch { $caught = $_ }
+                Assert-True ($null -ne $caught) 'rollback-start dual failure is reported'
+                Assert-Equal 'primary new start failure' $caught.Exception.Message 'rollback-start failure does not replace primary'
+                Assert-Equal 'rollback old start failure' $caught.Exception.Data['RollbackFailure'] 'rollback-start failure is separate diagnostic metadata'
+                Assert-OldReleaseRestored $fixture 'rollback-start failure still restores bytes'
+            }
+            finally { Remove-InstallerFixture $fixture }
+
+            $fixture = New-InstallerFixture
+            try {
+                Set-InstalledReleaseFixture $fixture
+                $actions = New-InjectedActions $fixture
+                $actions.State.Processes = @([pscustomobject]@{ ProcessName = 'QuickBooksServiceHost'; Id = 11; Path = $fixture.HostPath })
+                $actions.State.HostExited = $false
+                $stageRoots = New-Object Collections.Generic.List[string]
+                $originalCopy = $actions.CopyFile
+                $actions.CopyFile = {
+                    param($source, $destination)
+                    & $originalCopy $source $destination
+                    if ($source.StartsWith($fixture.Source, [StringComparison]::OrdinalIgnoreCase) -and
+                        $destination.StartsWith($fixture.StatePath, [StringComparison]::OrdinalIgnoreCase)) {
+                        $relative = $destination.Substring($fixture.StatePath.Length).TrimStart('\')
+                        $root = ($relative -split '\\')[0]
+                        if (-not $stageRoots.Contains($root)) { $stageRoots.Add($root) }
+                        $actions.State.Events += "stage:$([IO.Path]::GetFileName($destination))"
+                    }
+                }.GetNewClosure()
+                $originalStop = $actions.StopProcess
+                $actions.StopProcess = { param($process) $actions.State.Events += 'stop'; & $originalStop $process }.GetNewClosure()
+                $originalMove = $actions.MovePath
+                $actions.MovePath = {
+                    param($source, $destination)
+                    if ($source -ieq $fixture.Install) { $actions.State.Events += 'move-current' }
+                    elseif ((Split-Path -Leaf $source) -eq 'Payload') { $actions.State.Events += 'promote-payload' }
+                    elseif ($destination -ieq $fixture.ManagerPath) { $actions.State.Events += 'promote-manager' }
+                    elseif ($destination -ieq $fixture.InstalledManifestPath) { $actions.State.Events += 'promote-manifest' }
+                    & $originalMove $source $destination
+                }.GetNewClosure()
+                $actions.RegisterTask = { param($plan) $actions.State.Events += 'register'; $actions.State.RegisterCalls++; $actions.State.Tasks[$plan.TaskName] = $plan }.GetNewClosure()
+                $originalStart = $actions.StartTask
+                $actions.StartTask = { param($name) $actions.State.Events += 'start'; & $originalStart $name }.GetNewClosure()
+                Invoke-FixtureInstall $fixture $actions
+                Assert-Equal 1 $stageRoots.Count 'one unique stage root receives all candidate files'
+                Assert-True ($stageRoots[0] -match '^[0-9a-f]{32}$') 'stage root is GUID named and unpredictable'
+                Assert-Equal 'host' ([IO.File]::ReadAllText($fixture.HostPath)) 'success promotes candidate runtime'
+                Assert-Equal 'release-install' ((Get-Content -Raw -LiteralPath $fixture.InstalledManifestPath | ConvertFrom-Json).release_id) 'success promotes candidate manifest'
+                Assert-Equal 'old-host' ([IO.File]::ReadAllText((Join-Path $fixture.PreviousPath 'Payload\QuickBooksServiceHost.exe'))) 'success retains previous runtime'
+                Assert-Equal '# old manager' ([IO.File]::ReadAllText((Join-Path $fixture.PreviousPath 'Manager\service_host_manager.ps1'))) 'success retains previous manager'
+                Assert-Equal 'release-old' ((Get-Content -Raw -LiteralPath (Join-Path $fixture.PreviousPath 'release.manifest.json') | ConvertFrom-Json).release_id) 'success retains previous manifest'
+                $lastStage = [Array]::LastIndexOf($actions.State.Events, @($actions.State.Events | Where-Object { $_ -like 'stage:*' } | Select-Object -Last 1)[0])
+                $stop = [Array]::IndexOf($actions.State.Events, 'stop')
+                $move = [Array]::IndexOf($actions.State.Events, 'move-current')
+                $promote = [Array]::IndexOf($actions.State.Events, 'promote-payload')
+                $register = [Array]::IndexOf($actions.State.Events, 'register')
+                $release = [Array]::LastIndexOf($actions.State.Events, 'release')
+                $start = [Array]::IndexOf($actions.State.Events, 'start')
+                Assert-True ($lastStage -ge 0 -and $lastStage -lt $stop -and $stop -lt $move -and $move -lt $promote -and $promote -lt $register -and $register -lt $release -and $release -lt $start) 'verified stage precedes stop, move, promote, register, release, and start'
             }
             finally { Remove-InstallerFixture $fixture }
         }
@@ -818,7 +1143,7 @@ function Run-Scenario {
     }
 }
 
-$allScenarios = @('static', 'task-plan', 'state-security', 'native-takeown', 'identity-mismatch', 'identity-binding', 'task-neutralization', 'late-failure-neutralization', 'critical-state-revalidation', 'installer-mutex', 'manifest-install', 'corrupt-manager', 'corrupt-installed-manager', 'stale-cleanup', 'stop-race', 'stop-timeout', 'reinstall-idempotent')
+$allScenarios = @('static', 'task-plan', 'state-security', 'native-takeown', 'identity-mismatch', 'identity-binding', 'task-neutralization', 'late-failure-neutralization', 'critical-state-revalidation', 'installer-mutex', 'manifest-install', 'corrupt-manager', 'corrupt-installed-manager', 'stale-cleanup', 'stop-race', 'stop-timeout', 'transactional-install', 'reinstall-idempotent')
 if ($Scenario -eq 'all') { foreach ($name in $allScenarios) { Run-Scenario $name } }
 else { Run-Scenario $Scenario }
 Write-Host 'Install service host script checks passed.'

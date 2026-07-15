@@ -1,52 +1,33 @@
-$ErrorActionPreference = 'Stop'
-
-$scriptPath = Join-Path $PSScriptRoot 'install_service_host.ps1'
-$content = Get-Content -Raw -Path $scriptPath
-$deployScriptPath = Join-Path $PSScriptRoot 'deploy_servicehost.ps1'
-$deployContent = Get-Content -Raw -Path $deployScriptPath
-
-function Assert-Contains {
-    param(
-        [string]$Pattern,
-        [string]$Message
-    )
-
-    if ($content -notmatch $Pattern) {
-        throw $Message
-    }
+[CmdletBinding()]
+param([ValidateSet('static','task-plan','identity-mismatch','manifest-install','reinstall-idempotent','all')][string]$Scenario='all')
+$ErrorActionPreference='Stop'
+$scriptPath=Join-Path $PSScriptRoot 'install_service_host.ps1'; $content=Get-Content -Raw -LiteralPath $scriptPath; $deployContent=Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot 'deploy_servicehost.ps1')
+if($content -notmatch '(?s)\bparam\s*\([\s\S]*\[switch\]\s*\$AsLibrary'){throw 'Installer does not provide the required -AsLibrary safety boundary.'}; . $scriptPath -AsLibrary
+function Assert-Equal($Expected,$Actual,[string]$Because){if($Expected -ne $Actual){throw "$Because. Expected [$Expected], got [$Actual]."}}
+function Assert-True([bool]$Condition,[string]$Because){if(-not $Condition){throw $Because}}
+function Assert-ThrowsMessage([scriptblock]$Action,[string]$Expected,[string]$Because){try{&$Action}catch{Assert-Equal $Expected $_.Exception.Message $Because;return};throw $Because}
+function Assert-Contains([string]$Pattern,[string]$Message){if($content -notmatch $Pattern){throw $Message}}
+function Assert-NotContains([string]$Pattern,[string]$Message){if($content -match $Pattern){throw $Message}}
+function New-Fixture{
+ $root=Join-Path ([IO.Path]::GetTempPath()) ('service-host-installer-test-'+[guid]::NewGuid().ToString('N'));$source=Join-Path $root share;$install=Join-Path $root install;$state=Join-Path $root state;$desktop=Join-Path $root desktop
+ New-Item -ItemType Directory -Force -Path $source,$install,$state,$desktop,(Join-Path $source nested)|Out-Null
+ [IO.File]::WriteAllText((Join-Path $source 'QuickBooksServiceHost.exe'),'host');[IO.File]::WriteAllText((Join-Path $source 'QuickBooksConnectorCli.exe'),'cli');[IO.File]::WriteAllText((Join-Path $source 'nested\runtime.dll'),'runtime');[IO.File]::WriteAllText((Join-Path $source 'unlisted.dll'),'excluded');[IO.File]::WriteAllText((Join-Path $source 'service_host_manager.ps1'),'# manager');[IO.File]::WriteAllText((Join-Path $source 'bridge.settings.psd1'),"@{`nQB_BRIDGE_TOKEN='fixture-token'`nQB_BRIDGE_ORIGIN='http://fixture:8742'`nQB_BRIDGE_PORT='8788'`n}")
+ $entries=foreach($relative in @('QuickBooksServiceHost.exe','QuickBooksConnectorCli.exe','nested/runtime.dll')){$p=Join-Path $source $relative;[pscustomobject]@{path=$relative;length=[long](Get-Item -LiteralPath $p).Length;sha256=(Get-FileHash -LiteralPath $p -Algorithm SHA256).Hash}}
+ $m=Join-Path $source 'service_host_manager.ps1';[pscustomobject]@{schema_version=1;release_id='release-install';published_at_utc='2026-07-15T10:00:00Z';files=@($entries);manager=[pscustomobject]@{path='service_host_manager.ps1';length=[long](Get-Item -LiteralPath $m).Length;sha256=(Get-FileHash -LiteralPath $m -Algorithm SHA256).Hash}}|ConvertTo-Json -Depth 5|Set-Content -LiteralPath (Join-Path $source 'release.manifest.json')
+ [pscustomobject]@{Root=$root;Source=$source;Install=$install;State=$state;Desktop=$desktop;Manager=Join-Path $state 'Manager\service_host_manager.ps1'}
 }
-
-function Assert-NotContains {
-    param(
-        [string]$Pattern,
-        [string]$Message
-    )
-
-    if ($content -match $Pattern) {
-        throw $Message
-    }
+function Remove-Fixture($f){Remove-Item -LiteralPath $f.Root -Recurse -Force -ErrorAction SilentlyContinue}
+function New-Actions($f){
+ $s=[pscustomobject]@{Copies=0;Registers=0;Starts=0;Stops=0;NextId=100;Processes=@();Tasks=@{};Environment=@{};Shortcut=$null}
+ [pscustomobject]@{State=$s;CurrentIdentity={ [pscustomobject]@{Name='DOMAIN\estimator';Sid='S-1-5-21-1000'}};TestAdministrator={$true};ReadManifest={param($p)Get-Content -Raw -LiteralPath $p|ConvertFrom-Json};EnsureDirectory={param($p)New-Item -ItemType Directory -Force -Path $p|Out-Null};CopyFile={param($a,$b)$s.Copies++;$parent=Split-Path -Parent $b;if(-not(Test-Path -LiteralPath $parent)){New-Item -ItemType Directory -Force -Path $parent|Out-Null};Copy-Item -LiteralPath $a -Destination $b -Force}.GetNewClosure();SetEnvironmentVariable={param($n,$v)$s.Environment[$n]=[string]$v}.GetNewClosure();CreateShortcut={param($p,$t,$w)$s.Shortcut=[pscustomobject]@{Path=$p;TargetPath=$t;WorkingDirectory=$w}}.GetNewClosure();RegisterTask={param($p)$s.Registers++;$s.Tasks[$p.TaskName]=$p}.GetNewClosure();StartTask={param($n)$s.Starts++;$host=Join-Path $f.Install 'QuickBooksServiceHost.exe';if(-not @($s.Processes|Where-Object Path -IEQ $host).Count){$s.NextId++;$s.Processes=@($s.Processes)+@([pscustomobject]@{ProcessName='QuickBooksServiceHost';Id=$s.NextId;Path=$host})}}.GetNewClosure();GetTask={param($n)$s.Tasks[$n]}.GetNewClosure();GetProcesses={@($s.Processes)}.GetNewClosure();StopProcess={param($p)$s.Stops++;$s.Processes=@($s.Processes|Where-Object Id -NE $p.Id)}.GetNewClosure()}
 }
-
-Assert-Contains '\$ErrorActionPreference\s*=\s*[''"]Stop[''"]' 'Installer must stop after copy or shortcut failures.'
-Assert-Contains 'Test-IsAdministrator' 'Installer must detect whether it is running as administrator.'
-Assert-Contains 'Start-Process[\s\S]*-Verb\s+RunAs' 'Installer must relaunch itself elevated when needed.'
-Assert-Contains '\$PSScriptRoot' 'Installer must copy from its own folder instead of a hardcoded mapped drive.'
-Assert-NotContains 'Z:\\COLTON TEST' 'Installer must not rely on the Z: mapped drive being available after elevation.'
-Assert-Contains 'QuickBooksConnectorCli\.exe' 'Installer must verify that the connector CLI is installed.'
-Assert-Contains 'QUOTE_MODULEV2_QB_CONNECTOR_CLI' 'Installer must publish the connector CLI path for qmv2.'
-
-if ($deployContent -notmatch 'QuickBooksConnectorCli\\bin\\Release') {
-    throw 'Deploy script must package the connector CLI Release output.'
-}
-
-if ($deployContent -notmatch 'QuickBooksServiceHost\\bin\\Release') {
-    throw 'Deploy script must package the service host Release output.'
-}
-
-$connectorCopyIndex = $deployContent.IndexOf('Copy-SourceIntoPayload -SourcePath $ConnectorSourcePath')
-$hostCopyIndex = $deployContent.IndexOf('Copy-SourceIntoPayload -SourcePath $HostSourcePath')
-if ($connectorCopyIndex -lt 0 -or $hostCopyIndex -lt 0 -or $hostCopyIndex -lt $connectorCopyIndex) {
-    throw 'Deploy script must merge the service host after the connector CLI so current host dependencies win shared-file collisions.'
-}
-
-Write-Host 'Install service host script checks passed.'
+function Invoke-FixtureInstall($f,$a){Invoke-ServiceHostInstall -SourcePath $f.Source -InstallPath $f.Install -StatePath $f.State -PublicDesktopPath $f.Desktop -InteractiveUser 'DOMAIN\estimator' -InteractiveSid 'S-1-5-21-1000' -GetCurrentIdentityAction $a.CurrentIdentity -TestAdministratorAction $a.TestAdministrator -ReadManifestAction $a.ReadManifest -EnsureDirectoryAction $a.EnsureDirectory -CopyFileAction $a.CopyFile -SetEnvironmentVariableAction $a.SetEnvironmentVariable -CreateShortcutAction $a.CreateShortcut -RegisterTaskAction $a.RegisterTask -StartTaskAction $a.StartTask -GetTaskAction $a.GetTask -GetProcessesAction $a.GetProcesses -StopProcessAction $a.StopProcess|Out-Null}
+function Run-Scenario([string]$Name){switch($Name){
+ 'static'{Assert-Contains '\$ErrorActionPreference\s*=\s*[''"]Stop[''"]' 'stop on failure';Assert-Contains 'Test-IsAdministrator' 'admin check';Assert-Contains 'Start-Process[\s\S]*-Verb\s+RunAs' 'elevation';Assert-Contains '\$PSScriptRoot' 'source folder';Assert-NotContains 'Z:\\COLTON TEST' 'no mapped drive';Assert-Contains 'QuickBooksConnectorCli\.exe' 'connector verified';Assert-Contains 'QUOTE_MODULEV2_QB_CONNECTOR_CLI' 'connector env';Assert-Contains 'New-ScheduledTaskAction' 'task action';Assert-Contains 'New-ScheduledTaskTrigger[\s\S]*-AtLogOn' 'logon trigger';Assert-Contains 'New-ScheduledTaskTrigger[\s\S]*-Daily' 'daily trigger';Assert-Contains 'New-ScheduledTaskPrincipal[\s\S]*Interactive[\s\S]*Highest' 'principal';Assert-Contains 'New-ScheduledTaskSettingsSet[\s\S]*StartWhenAvailable[\s\S]*MultipleInstances\s+IgnoreNew' 'settings';Assert-Contains 'Register-ScheduledTask[\s\S]*-Force' 'force register';Assert-Contains 'Start-ScheduledTask' 'start task';Assert-NotContains 'Remove-Item[^\r\n]*bridge\.settings\.psd1' 'preserve settings';Assert-True ($deployContent -match 'QuickBooksConnectorCli\\bin\\Release' -and $deployContent -match 'QuickBooksServiceHost\\bin\\Release') 'deploy packages outputs';Assert-True ($deployContent.IndexOf('Copy-SourceIntoPayload -SourcePath $HostSourcePath') -ge $deployContent.IndexOf('Copy-SourceIntoPayload -SourcePath $ConnectorSourcePath')) 'host wins'}
+ 'task-plan'{$p=New-ServiceHostTaskPlan -InteractiveUser 'DOMAIN\estimator' -ManagerPath 'C:\ProgramData\QuickBooksServiceHost\Manager\service_host_manager.ps1';Assert-Equal 'QuickBooksServiceHost Auto Start and Update' $p.TaskName 'task name';Assert-Equal 'DOMAIN\estimator' $p.UserId 'interactive principal';Assert-Equal 'Highest' $p.RunLevel 'highest';Assert-Equal 'Interactive' $p.LogonType 'logon type';Assert-Equal '06:00:00' $p.DailyAt 'daily';Assert-True $p.AtLogOn 'logon';Assert-True $p.StartWhenAvailable 'late';Assert-True (-not $p.WakeToRun) 'no wake';Assert-Equal 'IgnoreNew' $p.MultipleInstances 'no overlap';Assert-Equal 'powershell.exe' $p.Execute 'shell';Assert-Equal '-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "C:\ProgramData\QuickBooksServiceHost\Manager\service_host_manager.ps1"' $p.Arguments 'arguments'}
+ 'identity-mismatch'{$f=New-Fixture;try{$s=[pscustomobject]@{Copies=0;Registers=0;Starts=0};Assert-ThrowsMessage {Invoke-ServiceHostInstall -SourcePath $f.Source -InstallPath $f.Install -StatePath $f.State -PublicDesktopPath $f.Desktop -InteractiveUser user -InteractiveSid sid -GetCurrentIdentityAction {[pscustomobject]@{Name='other';Sid='wrong'}} -TestAdministratorAction {$true} -ReadManifestAction {throw 'read'} -EnsureDirectoryAction {throw 'dir'} -CopyFileAction {$s.Copies++} -SetEnvironmentVariableAction {throw 'env'} -CreateShortcutAction {throw 'shortcut'} -RegisterTaskAction {$s.Registers++} -StartTaskAction {$s.Starts++} -GetTaskAction {$null} -GetProcessesAction {@()} -StopProcessAction {throw 'stop'}} 'Installer elevation must use the same local-administrator account that runs QuickBooks.' 'identity mismatch';Assert-Equal 0 $s.Copies 'no copies';Assert-Equal 0 $s.Registers 'no task';Assert-Equal 0 $s.Starts 'no start'}finally{Remove-Fixture $f}}
+ 'manifest-install'{$f=New-Fixture;try{$a=New-Actions $f;$before=Get-Content -Raw (Join-Path $f.Source 'bridge.settings.psd1');Invoke-FixtureInstall $f $a;Assert-True (Test-Path (Join-Path $f.Install 'QuickBooksServiceHost.exe')) 'host';Assert-True (Test-Path (Join-Path $f.Install 'QuickBooksConnectorCli.exe')) 'cli';Assert-True (Test-Path (Join-Path $f.Install 'nested\runtime.dll')) 'nested';Assert-True (-not(Test-Path (Join-Path $f.Install 'unlisted.dll'))) 'only manifest';Assert-True (Test-Path $f.Manager) 'manager';Assert-True (Test-Path (Join-Path $f.State 'Manager\release.manifest.json')) 'manifest';Assert-Equal $before (Get-Content -Raw (Join-Path $f.Source 'bridge.settings.psd1')) 'settings';Assert-Equal (Join-Path $f.Install 'QuickBooksConnectorCli.exe') $a.State.Environment['QUOTE_MODULEV2_QB_CONNECTOR_CLI'] 'connector env';Assert-Equal 'fixture-token' $a.State.Environment['QB_BRIDGE_TOKEN'] 'token';Assert-Equal 1 $a.State.Tasks.Count 'task';Assert-Equal 1 @($a.State.Processes).Count 'process'}finally{Remove-Fixture $f}}
+ 'reinstall-idempotent'{$f=New-Fixture;try{$a=New-Actions $f;Invoke-FixtureInstall $f $a;Invoke-FixtureInstall $f $a;Assert-Equal 2 $a.State.Registers 'register calls';Assert-Equal 1 $a.State.Tasks.Count 'logical task';Assert-Equal 2 $a.State.Starts 'start calls';Assert-Equal 1 $a.State.Stops 'reinstall stop';Assert-Equal 1 @($a.State.Processes).Count 'one process';Assert-Equal (Join-Path $f.Install 'QuickBooksServiceHost.exe') $a.State.Processes[0].Path 'installed path'}finally{Remove-Fixture $f}}
+ default{throw "Unknown scenario: $Name"}
+}}
+$all=@('static','task-plan','identity-mismatch','manifest-install','reinstall-idempotent');if($Scenario -eq 'all'){foreach($n in $all){Run-Scenario $n}}else{Run-Scenario $Scenario};Write-Host 'Install service host script checks passed.'

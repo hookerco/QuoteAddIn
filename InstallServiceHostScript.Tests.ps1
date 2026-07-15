@@ -125,6 +125,7 @@ function New-InjectedActions {
         RemoveCalls = 0
         RegisterCalls = 0
         StartCalls = 0
+        DirectStartCalls = 0
         StopCalls = 0
         WaitCalls = 0
         NextId = 100
@@ -194,6 +195,15 @@ function New-InjectedActions {
                 $state.Processes = @($state.Processes) + @([pscustomobject]@{ ProcessName = 'QuickBooksServiceHost'; Id = $state.NextId; Path = $Fixture.HostPath })
             }
         }.GetNewClosure()
+        StartInstalledHost = {
+            param($hostPath, $workingDirectory)
+            $state.DirectStartCalls++
+            $state.StopRequested = $false
+            if (-not @($state.Processes | Where-Object { $_.Path -ieq $hostPath }).Count) {
+                $state.NextId++
+                $state.Processes = @($state.Processes) + @([pscustomobject]@{ ProcessName = 'QuickBooksServiceHost'; Id = $state.NextId; Path = $hostPath })
+            }
+        }.GetNewClosure()
         GetTask = { param($taskName) $state.Tasks[$taskName] }.GetNewClosure()
         GetProcesses = {
             if ($state.StopRequested -and @($state.Processes).Count -gt 0) {
@@ -255,6 +265,7 @@ function Invoke-FixtureInstall {
     if ($parameters.ContainsKey('GetVolumeIdentityAction')) { $arguments.GetVolumeIdentityAction = $Actions.GetVolumeIdentity }
     if ($parameters.ContainsKey('MutexAction')) { $arguments.MutexAction = $Actions.Mutex }
     if ($parameters.ContainsKey('NeutralizeTaskAction')) { $arguments.NeutralizeTaskAction = $Actions.NeutralizeTask }
+    if ($parameters.ContainsKey('StartInstalledHostAction')) { $arguments.StartInstalledHostAction = $Actions.StartInstalledHost }
     Invoke-ServiceHostInstall @arguments | Out-Null
 }
 
@@ -903,7 +914,8 @@ function Run-Scenario {
                 Assert-True ($actions.State.CopyCalls -ge 5) 'timeout occurs only after complete candidate staging'
                 Assert-OldReleaseRestored $fixture 'timeout preserves installed release'
                 Assert-Equal 1 $actions.State.RegisterCalls 'timeout re-registers old task'
-                Assert-Equal 1 $actions.State.StartCalls 'timeout restarts and verifies old task posture'
+                Assert-Equal 0 $actions.State.StartCalls 'timeout recovery never invokes the manager task'
+                Assert-Equal 0 $actions.State.DirectStartCalls 'timeout verifies the still-running installed host without duplicate launch'
                 Assert-Equal 1 @($actions.State.Processes | Where-Object { $_.Path -ieq $fixture.HostPath }).Count 'timeout leaves exactly one old host'
             }
             finally { Remove-InstallerFixture $fixture }
@@ -1118,7 +1130,8 @@ function Run-Scenario {
                     $expected = if ($failure -eq 'start') { 'simulated new start failure' } else { "Installed host process was not found: $($fixture.HostPath)" }
                     Assert-ThrowsMessage { Invoke-FixtureInstall $fixture $actions } $expected "$failure failure remains primary"
                     Assert-OldReleaseRestored $fixture "$failure failure rollback restores"
-                    Assert-Equal 2 $actions.State.StartCalls "$failure failure starts candidate then restored task"
+                    Assert-Equal 1 $actions.State.StartCalls "$failure failure starts candidate task only"
+                    Assert-Equal 1 $actions.State.DirectStartCalls "$failure failure directly starts restored host"
                     Assert-Equal 1 @($actions.State.Processes | Where-Object { $_.Path -ieq $fixture.HostPath }).Count "$failure failure restarts exact old path"
                 }
                 finally { Remove-InstallerFixture $fixture }
@@ -1133,9 +1146,9 @@ function Run-Scenario {
                 $actions.StartTask = {
                     param($name)
                     $actions.State.StartCalls++
-                    if ($actions.State.StartCalls -eq 1) { throw 'primary new start failure' }
-                    throw 'rollback old start failure'
+                    throw 'primary new start failure'
                 }.GetNewClosure()
+                $actions.StartInstalledHost = { param($hostPath, $workingDirectory) $actions.State.DirectStartCalls++; throw 'rollback old start failure' }.GetNewClosure()
                 $caught = $null
                 try { Invoke-FixtureInstall $fixture $actions }
                 catch { $caught = $_ }
@@ -1265,10 +1278,76 @@ function Run-Scenario {
                 Assert-ThrowsMessage { Invoke-FixtureInstall $fixture $actions } 'simulated partial stop failure' 'partial stop failure remains primary'
                 Assert-Equal 2 $actions.State.StopCalls 'partial stop records both stop attempts'
                 Assert-Equal 1 $actions.State.RegisterCalls 'partial stop re-registers old task'
-                Assert-Equal 1 $actions.State.StartCalls 'partial stop starts and verifies old task'
+                Assert-Equal 0 $actions.State.StartCalls 'partial stop recovery never invokes manager task'
+                Assert-Equal 0 $actions.State.DirectStartCalls 'partial stop verifies the surviving installed host without duplicate launch'
                 Assert-Equal 1 @($actions.State.Processes | Where-Object { $_.Path -ieq $fixture.HostPath }).Count 'partial stop recovers exactly one old host'
                 Assert-OldReleaseRestored $fixture 'partial stop keeps current tree untouched'
                 Assert-RetainedPreviousFixture $fixture 'partial stop restores pre-existing Previous'
+            }
+            finally { Remove-InstallerFixture $fixture }
+
+            $fixture = New-InstallerFixture
+            try {
+                Set-InstalledReleaseFixture $fixture
+                Set-RetainedPreviousFixture $fixture
+                $actions = New-InjectedActions $fixture
+                $actions.State.Tasks[$taskName] = [pscustomobject]@{ TaskName = $taskName }
+                $actions.State.Processes = @([pscustomobject]@{ ProcessName = 'QuickBooksServiceHost'; Id = 26; Path = $fixture.HostPath })
+                $actions.StopProcess = { param($process) $actions.State.StopCalls++; throw 'simulated stop recovery failure' }.GetNewClosure()
+                $originalMove = $actions.MovePath
+                $actions.MovePath = {
+                    param($source, $destination)
+                    if ((Split-Path -Leaf $source) -eq 'DisplacedPrevious' -and $destination -ieq $fixture.PreviousPath) {
+                        throw 'simulated displaced Previous restore failure'
+                    }
+                    & $originalMove $source $destination
+                }.GetNewClosure()
+                $caught = $null
+                try { Invoke-FixtureInstall $fixture $actions } catch { $caught = $_ }
+                Assert-True ($null -ne $caught) 'failed displaced Previous recovery throws'
+                Assert-Equal 'simulated stop recovery failure' $caught.Exception.Message 'stop failure remains primary when Previous restore fails'
+                Assert-Equal 'simulated displaced Previous restore failure' $caught.Exception.Data['RollbackFailure'] 'Previous restore failure is separate recovery diagnostic'
+                Assert-True (-not [string]::IsNullOrWhiteSpace([string]$caught.Exception.Data['RecoveryStatePath'])) 'recoverable GUID state path is reported'
+                Assert-True ([string]$caught.Exception.Data['StageCleanupFailure'] -match 'preserved') 'stage cleanup diagnostic reports intentional preservation'
+                $retained = Join-Path ([string]$caught.Exception.Data['RecoveryStatePath']) 'DisplacedPrevious\Payload\retained.txt'
+                Assert-Equal 'retained-payload' ([IO.File]::ReadAllText($retained)) 'failed Previous restore preserves recoverable retained payload'
+                Assert-Equal 0 $actions.State.StartCalls 'failed Previous recovery never invokes manager task'
+                Assert-Equal 0 $actions.State.DirectStartCalls 'failed Previous recovery verifies the still-running old installed host'
+            }
+            finally { Remove-InstallerFixture $fixture }
+
+            $fixture = New-InstallerFixture
+            try {
+                Set-InstalledReleaseFixture $fixture
+                $actions = New-InjectedActions $fixture
+                $actions.State.Processes = @([pscustomobject]@{ ProcessName = 'QuickBooksServiceHost'; Id = 27; Path = $fixture.HostPath })
+                $originalNeutralize = $actions.NeutralizeTask
+                $neutralizeAttempt = [pscustomobject]@{ Count = 0 }
+                $actions.NeutralizeTask = {
+                    param($name)
+                    $neutralizeAttempt.Count++
+                    & $originalNeutralize $name
+                    if ($neutralizeAttempt.Count -eq 2) { throw 'simulated rollback neutralize-after-unregister failure' }
+                }.GetNewClosure()
+                $originalMove = $actions.MovePath
+                $managerPromotionFailed = [pscustomobject]@{ Value = $false }
+                $actions.MovePath = {
+                    param($source, $destination)
+                    if ($destination -ieq $fixture.ManagerPath -and -not $managerPromotionFailed.Value) {
+                        $managerPromotionFailed.Value = $true
+                        throw 'simulated manager promotion failure'
+                    }
+                    & $originalMove $source $destination
+                }.GetNewClosure()
+                $caught = $null
+                try { Invoke-FixtureInstall $fixture $actions } catch { $caught = $_ }
+                Assert-True ($null -ne $caught) 'rollback neutralize mutate-then-throw case fails forward install'
+                Assert-Equal 'simulated manager promotion failure' $caught.Exception.Message 'promotion failure remains primary through rollback neutralize error'
+                Assert-Equal 'simulated rollback neutralize-after-unregister failure' $caught.Exception.Data['TaskNeutralizationFailure'] 'rollback neutralize error is separate diagnostic'
+                Assert-OldReleaseRestored $fixture 'rollback continues restoring state after neutralize error'
+                Assert-Equal 1 $actions.State.Tasks.Count 'rollback recreates task after neutralize error'
+                Assert-Equal 0 $actions.State.StartCalls 'rollback recovery never invokes manager task'
+                Assert-Equal 1 $actions.State.DirectStartCalls 'rollback directly restarts restored host after neutralize error'
             }
             finally { Remove-InstallerFixture $fixture }
 

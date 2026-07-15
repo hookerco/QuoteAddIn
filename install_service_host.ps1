@@ -478,6 +478,10 @@ function Invoke-ServiceHostInstall {
         },
         [scriptblock]$RegisterTaskAction,
         [scriptblock]$StartTaskAction = { param($taskName) Start-ScheduledTask -TaskName $taskName },
+        [scriptblock]$StartInstalledHostAction = {
+            param($installedHostPath, $workingDirectory)
+            Start-Process -FilePath $installedHostPath -WorkingDirectory $workingDirectory -WindowStyle Hidden -ErrorAction Stop | Out-Null
+        },
         [scriptblock]$GetTaskAction = { param($taskName) Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue },
         [scriptblock]$GetProcessesAction = { Get-CimInstance Win32_Process -Filter "Name='QuickBooksServiceHost.exe'" },
         [scriptblock]$StopProcessAction = { param($process) Stop-Process -Id $process.ProcessId -Force -ErrorAction Stop },
@@ -559,8 +563,7 @@ function Invoke-ServiceHostInstall {
         throw "Installed host process did not exit: $hostPath"
     }.GetNewClosure()
 
-    $startAndVerify = {
-        & $StartTaskAction $plan.TaskName
+    $verifyInstalledHost = {
         if ($null -eq (& $GetTaskAction $plan.TaskName)) {
             throw "Scheduled Task was not found after registration: $($plan.TaskName)"
         }
@@ -571,6 +574,21 @@ function Invoke-ServiceHostInstall {
             & $WaitAction
         }
         throw "Installed host process was not found: $hostPath"
+    }.GetNewClosure()
+
+    $startTaskAndVerify = {
+        & $StartTaskAction $plan.TaskName
+        & $verifyInstalledHost
+    }.GetNewClosure()
+
+    $startRestoredHostAndVerify = {
+        if ($null -eq (& $GetTaskAction $plan.TaskName)) {
+            throw "Scheduled Task was not found after recovery registration: $($plan.TaskName)"
+        }
+        $existing = @(& $GetProcessesAction | Where-Object { (Get-ServiceHostProcessPath $_) -ieq $hostPath })
+        if ($existing.Count -gt 1) { throw "Multiple installed host processes were found: $hostPath" }
+        if ($existing.Count -eq 0) { & $StartInstalledHostAction $hostPath $InstallPath }
+        & $verifyInstalledHost
     }.GetNewClosure()
 
     $invokeMoveAndInspect = {
@@ -604,8 +622,11 @@ function Invoke-ServiceHostInstall {
     $rollbackLocked = {
         $installState.Phase = 'RollingBack'
         $rollbackFailure = $null
+        $neutralizationFailure = $null
+        try { & $NeutralizeTaskAction $taskName }
+        catch { $neutralizationFailure = $_ }
+        finally { $installState.TaskNeutralized = $null -eq (& $GetTaskAction $taskName) }
         try {
-            & $NeutralizeTaskAction $taskName
             & $stopExpectedHost
 
             if ($installState.PromotionHappened -and (Test-Path -LiteralPath $InstallPath)) {
@@ -653,6 +674,10 @@ function Invoke-ServiceHostInstall {
         if ($null -ne $cleanupFailure) {
             if ($null -ne $rollbackFailure) { $rollbackFailure.Exception.Data['StageCleanupFailure'] = $cleanupFailure.Exception.Message }
             else { $cleanupFailure.Exception.Data['StageCleanupFailure'] = $cleanupFailure.Exception.Message }
+        }
+        if ($null -ne $neutralizationFailure) {
+            if ($null -eq $rollbackFailure) { $rollbackFailure = $neutralizationFailure }
+            $rollbackFailure.Exception.Data['TaskNeutralizationFailure'] = $neutralizationFailure.Exception.Message
         }
         if ($null -ne $rollbackFailure) { throw $rollbackFailure }
         if ($null -ne $cleanupFailure) { throw $cleanupFailure }
@@ -850,7 +875,9 @@ function Invoke-ServiceHostInstall {
                 try { & $rollbackLocked }
                 catch {
                     $primaryFailure.Exception.Data['RollbackFailure'] = $_.Exception.Message
-                    $primaryFailure.Exception.Data['TaskNeutralizationFailure'] = $_.Exception.Message
+                    $taskNeutralizationDiagnostic = $_.Exception.Data['TaskNeutralizationFailure']
+                    if ($null -eq $taskNeutralizationDiagnostic) { $taskNeutralizationDiagnostic = $_.Exception.Message }
+                    $primaryFailure.Exception.Data['TaskNeutralizationFailure'] = $taskNeutralizationDiagnostic
                     if ($null -ne $_.Exception.Data['StageCleanupFailure']) {
                         $primaryFailure.Exception.Data['StageCleanupFailure'] = $_.Exception.Data['StageCleanupFailure']
                     }
@@ -870,8 +897,16 @@ function Invoke-ServiceHostInstall {
                     }
                     catch { if ($null -eq $recoveryFailure) { $recoveryFailure = $_ } }
                 }
-                try { & $cleanupStageLocked }
-                catch { $primaryFailure.Exception.Data['StageCleanupFailure'] = $_.Exception.Message }
+                $preserveRecoveryState = $null -ne $recoveryFailure -and $installState.PreviousDisplaced -and
+                    (Test-Path -LiteralPath $installState.DisplacedPreviousPath -PathType Container)
+                if ($preserveRecoveryState) {
+                    $primaryFailure.Exception.Data['RecoveryStatePath'] = $installState.StageRoot
+                    $primaryFailure.Exception.Data['StageCleanupFailure'] = "GUID stage preserved because displaced Previous restoration failed: $($installState.StageRoot)"
+                }
+                else {
+                    try { & $cleanupStageLocked }
+                    catch { $primaryFailure.Exception.Data['StageCleanupFailure'] = $_.Exception.Message }
+                }
                 if ($null -ne $recoveryFailure) { $primaryFailure.Exception.Data['RollbackFailure'] = $recoveryFailure.Exception.Message }
             }
             else {
@@ -891,14 +926,14 @@ function Invoke-ServiceHostInstall {
     catch {
         $primaryFailure = $_
         if ($installState.RollbackPrepared) {
-            try { & $startAndVerify }
+            try { & $startRestoredHostAndVerify }
             catch { $primaryFailure.Exception.Data['RollbackFailure'] = $_.Exception.Message }
         }
         throw $primaryFailure
     }
 
     try {
-        & $startAndVerify
+        & $startTaskAndVerify
         $installState.Phase = 'Verified'
     }
     catch {
@@ -909,13 +944,15 @@ function Invoke-ServiceHostInstall {
         }
         catch {
             $primaryFailure.Exception.Data['RollbackFailure'] = $_.Exception.Message
-            $primaryFailure.Exception.Data['TaskNeutralizationFailure'] = $_.Exception.Message
+            $taskNeutralizationDiagnostic = $_.Exception.Data['TaskNeutralizationFailure']
+            if ($null -eq $taskNeutralizationDiagnostic) { $taskNeutralizationDiagnostic = $_.Exception.Message }
+            $primaryFailure.Exception.Data['TaskNeutralizationFailure'] = $taskNeutralizationDiagnostic
             if ($null -ne $_.Exception.Data['StageCleanupFailure']) {
                 $primaryFailure.Exception.Data['StageCleanupFailure'] = $_.Exception.Data['StageCleanupFailure']
             }
         }
         if ($installState.RollbackPrepared) {
-            try { & $startAndVerify }
+            try { & $startRestoredHostAndVerify }
             catch { $primaryFailure.Exception.Data['RollbackFailure'] = $_.Exception.Message }
         }
         throw $primaryFailure

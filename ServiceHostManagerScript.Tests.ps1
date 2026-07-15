@@ -409,6 +409,52 @@ function Run-Scenario {
             }
             finally { Remove-TestTree $tree }
         }
+        'qb-defers-missing-host-starts-installed' {
+            $tree = New-TestTree
+            try {
+                Write-InstalledRelease -Tree $tree
+                Write-TestRelease -Tree $tree | Out-Null
+                $state = [pscustomobject]@{ Starts = 0; Stopped = @(); MutexName = '' }
+                $processes = @(
+                    [pscustomobject]@{ ProcessName = 'QBW32'; Id = 22; Path = 'C:\Fake\QBW32.exe' }
+                )
+                $actions = New-OrchestrationActions -State $state -Processes $processes
+                Invoke-ServiceHostManager -SharePath $tree.Share -InstallPath $tree.Install `
+                    -StatePath $tree.StatePath -GetProcessesAction $actions.GetProcesses `
+                    -StopProcessAction $actions.StopProcess -StartHost $actions.StartHost `
+                    -TestHost $actions.TestHost -MutexAction $actions.Mutex | Out-Null
+                Assert-Equal 1 $state.Starts 'QuickBooks deferral starts the missing installed host exactly once'
+                Assert-Equal 0 $state.Stopped.Count 'QuickBooks deferral does not stop QuickBooks or any host process'
+                Assert-Equal 'old-bytes' (Get-Content -Raw (Join-Path $tree.Install 'QuickBooksServiceHost.exe')) `
+                    'QuickBooks deferral does not promote the available runtime'
+                Assert-Equal 'release-a' ((Get-Content -Raw (Join-Path $tree.StatePath 'release.manifest.json') | ConvertFrom-Json).release_id) `
+                    'QuickBooks deferral preserves the installed release manifest'
+            }
+            finally { Remove-TestTree $tree }
+        }
+        'cli-defers-missing-host-starts-installed' {
+            $tree = New-TestTree
+            try {
+                Write-InstalledRelease -Tree $tree
+                Write-TestRelease -Tree $tree | Out-Null
+                $state = [pscustomobject]@{ Starts = 0; Stopped = @(); MutexName = '' }
+                $processes = @(
+                    [pscustomobject]@{ ProcessName = 'QuickBooksConnectorCli'; Id = 23; Path = 'C:\Fake\QuickBooksConnectorCli.exe' }
+                )
+                $actions = New-OrchestrationActions -State $state -Processes $processes
+                Invoke-ServiceHostManager -SharePath $tree.Share -InstallPath $tree.Install `
+                    -StatePath $tree.StatePath -GetProcessesAction $actions.GetProcesses `
+                    -StopProcessAction $actions.StopProcess -StartHost $actions.StartHost `
+                    -TestHost $actions.TestHost -MutexAction $actions.Mutex | Out-Null
+                Assert-Equal 1 $state.Starts 'connector deferral starts the missing installed host exactly once'
+                Assert-Equal 0 $state.Stopped.Count 'connector deferral does not stop the connector or any host process'
+                Assert-Equal 'old-bytes' (Get-Content -Raw (Join-Path $tree.Install 'QuickBooksServiceHost.exe')) `
+                    'connector deferral does not promote the available runtime'
+                Assert-Equal 'release-a' ((Get-Content -Raw (Join-Path $tree.StatePath 'release.manifest.json') | ConvertFrom-Json).release_id) `
+                    'connector deferral preserves the installed release manifest'
+            }
+            finally { Remove-TestTree $tree }
+        }
         'mutex-skips-overlap' {
             $tree = New-TestTree
             try {
@@ -426,7 +472,7 @@ function Run-Scenario {
                 Assert-Equal 0 $result 'overlapping invocation exits successfully'
                 Assert-Equal 'Global\QuickBooksServiceHostAutoUpdate' $state.MutexName 'manager uses required mutex name'
                 Assert-Equal 0 $state.Starts 'overlapping invocation performs no host action'
-                $log = Get-Content -Raw (Join-Path $tree.StatePath 'service-host-manager.log')
+                $log = Get-Content -Raw (Join-Path (Join-Path $tree.StatePath 'Logs') 'service-host-manager.log')
                 Assert-True ($log -match 'overlap_skipped') 'overlapping invocation records its skipped decision'
             }
             finally { Remove-TestTree $tree }
@@ -453,7 +499,9 @@ function Run-Scenario {
         'logs-rotate' {
             $tree = New-TestTree
             try {
-                $logPath = Join-Path $tree.StatePath 'service-host-manager.log'
+                $logDirectory = Join-Path $tree.StatePath 'Logs'
+                New-Item -ItemType Directory -Force -Path $logDirectory | Out-Null
+                $logPath = Join-Path $logDirectory 'service-host-manager.log'
                 [IO.File]::WriteAllText($logPath, ('x' * (1MB - 10)))
                 foreach ($index in 1..5) {
                     [IO.File]::WriteAllText("$logPath.$index", "old-$index")
@@ -479,7 +527,7 @@ function Run-Scenario {
                     result = 'safe'; rollback = $false; host_pid = 1; host_path = 'C:\fake\host.exe'
                     exception = "request used $secret"; environment = @{ QB_BRIDGE_TOKEN = $secret }
                 })
-                $line = Get-Content -Raw (Join-Path $tree.StatePath 'service-host-manager.log')
+                $line = Get-Content -Raw (Join-Path (Join-Path $tree.StatePath 'Logs') 'service-host-manager.log')
                 Assert-True (-not $line.Contains($secret)) 'structured log excludes token-bearing exception and environment data'
                 $record = $line | ConvertFrom-Json
                 Assert-True ($null -ne $record.timestamp_utc) 'structured log includes UTC timestamp'
@@ -489,6 +537,25 @@ function Run-Scenario {
                 Remove-Item Env:\QB_BRIDGE_TOKEN -ErrorAction SilentlyContinue
                 Remove-TestTree $tree
             }
+        }
+        'logs-use-state-logs-directory' {
+            $tree = New-TestTree
+            try {
+                $logDirectory = Join-Path $tree.StatePath 'Logs'
+                Assert-True (-not (Test-Path -LiteralPath $logDirectory)) 'test begins without the manager log directory'
+                Write-ManagerLog -StatePath $tree.StatePath -Record ([pscustomobject]@{
+                    installed_release = 'a'; available_release = 'b'; decision = 'keep-running'
+                    result = 'running'; rollback = $false; host_pid = 1; host_path = 'C:\fake\host.exe'
+                })
+                $logPath = Join-Path $logDirectory 'service-host-manager.log'
+                Assert-True (Test-Path -LiteralPath $logDirectory -PathType Container) `
+                    'manager logging creates StatePath\Logs'
+                Assert-True (Test-Path -LiteralPath $logPath -PathType Leaf) `
+                    'manager logging writes the exact StatePath\Logs\service-host-manager.log path'
+                Assert-True (-not (Test-Path -LiteralPath (Join-Path $tree.StatePath 'service-host-manager.log'))) `
+                    'manager logging does not write the legacy StatePath root log'
+            }
+            finally { Remove-TestTree $tree }
         }
         'previous-cleanup-failure-preserves-install' {
             $tree = New-TestTree
@@ -653,7 +720,7 @@ function Run-Scenario {
                     -StopProcessAction { param($process) } -StartHost $startHost -TestHost { $true } `
                     -MutexAction $mutex | Out-Null
 
-                $record = Get-Content -Raw (Join-Path $tree.StatePath 'service-host-manager.log') | ConvertFrom-Json
+                $record = Get-Content -Raw (Join-Path (Join-Path $tree.StatePath 'Logs') 'service-host-manager.log') | ConvertFrom-Json
                 Assert-True ($state.Calls -ge 2) 'logging refreshes the expected-path host state after the action'
                 Assert-Equal 71 $record.host_pid 'log records the host PID observed after startup'
                 Assert-Equal $expectedPath $record.host_path 'log records the expected host path observed after startup'
@@ -716,7 +783,7 @@ function Run-Scenario {
                     'completed runtime update remains installed after the share disappears'
                 Assert-Equal 'single-owner-manager' (Get-Content -Raw (Join-Path $tree.StatePath 'Manager\service_host_manager.ps1')) `
                     'single manager reconciliation completes before the share disappears'
-                $record = Get-Content -Raw (Join-Path $tree.StatePath 'service-host-manager.log') | ConvertFrom-Json
+                $record = Get-Content -Raw (Join-Path (Join-Path $tree.StatePath 'Logs') 'service-host-manager.log') | ConvertFrom-Json
                 Assert-Equal 'apply-update' $record.decision 'completed update retains its logged decision'
                 Assert-Equal 'updated' $record.result 'completed update retains its logged result'
             }
@@ -753,10 +820,13 @@ $allScenarios = @(
     'share-offline-starts-installed',
     'qb-defers',
     'cli-defers',
+    'qb-defers-missing-host-starts-installed',
+    'cli-defers-missing-host-starts-installed',
     'mutex-skips-overlap',
     'manager-self-updates',
     'logs-rotate',
     'logs-redact',
+    'logs-use-state-logs-directory',
     'wrong-path-host-replaced',
     'hidden-startup',
     'previous-cleanup-failure-preserves-install',

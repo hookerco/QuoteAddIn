@@ -256,7 +256,8 @@ function Rotate-ManagerLogs {
         [long]$IncomingLength = 0
     )
 
-    $logPath = Join-Path $StatePath 'service-host-manager.log'
+    $logDirectory = Join-Path $StatePath 'Logs'
+    $logPath = Join-Path $logDirectory 'service-host-manager.log'
     if (-not (Test-Path -LiteralPath $logPath -PathType Leaf)) { return }
     if (([long](Get-Item -LiteralPath $logPath).Length + $IncomingLength) -le 1MB) { return }
 
@@ -276,7 +277,8 @@ function Write-ManagerLog {
         [Parameter(Mandatory = $true)]$Record
     )
 
-    New-Item -ItemType Directory -Force -Path $StatePath | Out-Null
+    $logDirectory = Join-Path $StatePath 'Logs'
+    New-Item -ItemType Directory -Force -Path $logDirectory | Out-Null
     $safeRecord = [ordered]@{
         timestamp_utc = [datetime]::UtcNow.ToString('o')
         installed_release = [string]$Record.installed_release
@@ -291,7 +293,7 @@ function Write-ManagerLog {
     $incomingLength = [Text.Encoding]::UTF8.GetByteCount($line + [Environment]::NewLine)
     Rotate-ManagerLogs -StatePath $StatePath -IncomingLength $incomingLength
     $utf8NoBom = New-Object Text.UTF8Encoding -ArgumentList $false
-    [IO.File]::AppendAllText((Join-Path $StatePath 'service-host-manager.log'), `
+    [IO.File]::AppendAllText((Join-Path $logDirectory 'service-host-manager.log'), `
         $line + [Environment]::NewLine, $utf8NoBom)
 }
 
@@ -433,6 +435,10 @@ function Invoke-ServiceHostManager {
                 }
                 'defer-update' { $result = 'deferred' }
                 'keep-running' { $result = 'running' }
+            }
+            if ($decision -eq 'defer-update' -and $currentHosts.Count -eq 0) {
+                & $StartHost | Out-Null
+                if (-not (& $TestHost)) { throw 'Installed host failed its health check.' }
             }
         }
         catch {

@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet('static', 'task-plan', 'state-security', 'identity-mismatch', 'identity-binding', 'installer-mutex', 'manifest-install', 'corrupt-manager', 'corrupt-installed-manager', 'stale-cleanup', 'stop-race', 'stop-timeout', 'reinstall-idempotent', 'all')]
+    [ValidateSet('static', 'task-plan', 'state-security', 'identity-mismatch', 'identity-binding', 'task-neutralization', 'critical-state-revalidation', 'installer-mutex', 'manifest-install', 'corrupt-manager', 'corrupt-installed-manager', 'stale-cleanup', 'stop-race', 'stop-timeout', 'reinstall-idempotent', 'all')]
     [string]$Scenario = 'all'
 )
 
@@ -108,6 +108,7 @@ function New-InjectedActions {
         MutexName = ''
         MutexWaitMilliseconds = 0
         Events = @()
+        NeutralizeCalls = 0
     }
     [pscustomobject]@{
         State = $state
@@ -167,6 +168,7 @@ function New-InjectedActions {
             try { & $action }
             finally { $state.Locked = $false; $state.Events += 'release' }
         }.GetNewClosure()
+        NeutralizeTask = { param($taskName) $state.NeutralizeCalls++; $state.Tasks.Remove($taskName) }.GetNewClosure()
     }
 }
 
@@ -199,6 +201,7 @@ function Invoke-FixtureInstall {
     if ($parameters.ContainsKey('StopWaitAttempts')) { $arguments.StopWaitAttempts = $StopWaitAttempts }
     if ($parameters.ContainsKey('ProtectStateTreeAction')) { $arguments.ProtectStateTreeAction = $Actions.ProtectStateTree }
     if ($parameters.ContainsKey('MutexAction')) { $arguments.MutexAction = $Actions.Mutex }
+    if ($parameters.ContainsKey('NeutralizeTaskAction')) { $arguments.NeutralizeTaskAction = $Actions.NeutralizeTask }
     Invoke-ServiceHostInstall @arguments | Out-Null
 }
 
@@ -270,8 +273,12 @@ function Run-Scenario {
             }.GetNewClosure()
             $getItem = { param($path) $items[$path] }.GetNewClosure()
             $getChildren = { param($path) @($items.Values | Where-Object { $_.Parent -eq $path }) }.GetNewClosure()
-            $getAcl = { param($path) $acls[$path] }.GetNewClosure()
             $ownersTaken = @{}
+            $getAcl = {
+                param($path)
+                if (-not $ownersTaken.ContainsKey($path)) { throw [UnauthorizedAccessException]::new('READ_CONTROL denied until ownership takeover') }
+                $acls[$path]
+            }.GetNewClosure()
             $setOwner = { param($path, $ownerSid) $ownersTaken[$path] = $true; $acls[$path].SetOwner($ownerSid) }.GetNewClosure()
             $setAcl = { param($path, $acl) if (-not $ownersTaken.ContainsKey($path)) { throw 'ACL set before ownership repair' }; $acls[$path] = $acl }.GetNewClosure()
 
@@ -321,6 +328,23 @@ function Run-Scenario {
             } "Reparse points are not allowed in the service host state tree: $swap" 'reparse replacement after owner step rejected'
             Assert-Equal 0 $swapAclCalls.Count 'canonical ACL is not applied through a replaced reparse point'
 
+            $takeown = [pscustomobject]@{ FilePath = ''; Arguments = @() }
+            Set-ServiceHostPathOwner -Path 'C:\ProgramData\Hostile' `
+                -OwnerSid (New-Object Security.Principal.SecurityIdentifier $administratorSid) `
+                -InvokeTakeOwnershipAction {
+                    param($filePath, $arguments)
+                    $takeown.FilePath = $filePath
+                    $takeown.Arguments = @($arguments)
+                    [pscustomobject]@{ ExitCode = 0; Output = 'SUCCESS' }
+                }.GetNewClosure()
+            Assert-True ($takeown.FilePath -match '(?i)takeown\.exe$') 'native ownership boundary invokes takeown.exe'
+            Assert-Equal '/F|C:\ProgramData\Hostile|/A' ($takeown.Arguments -join '|') 'takeown uses exact nonrecursive Administrators-owner arguments'
+            Assert-ThrowsMessage {
+                Set-ServiceHostPathOwner -Path 'C:\ProgramData\Denied' `
+                    -OwnerSid (New-Object Security.Principal.SecurityIdentifier $administratorSid) `
+                    -InvokeTakeOwnershipAction { param($filePath, $arguments) [pscustomobject]@{ ExitCode = 5; Output = 'Access denied' } }
+            } 'Failed to take Administrators ownership of service host state path: C:\ProgramData\Denied (exit 5).' 'takeown nonzero exit fails clearly'
+
             $fixture = New-InstallerFixture
             try {
                 $actions = New-InjectedActions $fixture
@@ -336,13 +360,13 @@ function Run-Scenario {
                 }.GetNewClosure()
                 $actions.RegisterTask = {
                     param($plan)
-                    Assert-Equal 2 $actions.State.SecurityPasses 'manager and state files re-verified before task registration'
+                    Assert-Equal 6 $actions.State.SecurityPasses 'all critical state boundaries re-verified before task registration'
                     $events.Add('register')
                     $actions.State.RegisterCalls++
                     $actions.State.Tasks[$plan.TaskName] = $plan
                 }.GetNewClosure()
                 Invoke-FixtureInstall $fixture $actions
-                Assert-Equal 'secure:1|secure:2|register' ($events -join '|') 'security passes bracket ProgramData copies before task registration'
+                Assert-Equal 'secure:1|secure:2|secure:3|secure:4|secure:5|secure:6|register' ($events -join '|') 'security passes immediately guard critical ProgramData writes and task registration'
             }
             finally { Remove-InstallerFixture $fixture }
         }
@@ -391,6 +415,93 @@ function Run-Scenario {
                 Assert-Equal 0 $state.Copies 'no copies before username binding'
                 Assert-Equal 0 $state.Registers 'no registration before username binding'
                 Assert-Equal 0 $state.Starts 'no startup before username binding'
+            }
+            finally { Remove-InstallerFixture $fixture }
+        }
+        'task-neutralization' {
+            $fixture = New-InstallerFixture
+            try {
+                $actions = New-InjectedActions $fixture
+                $taskName = 'QuickBooksServiceHost Auto Start and Update'
+                $actions.State.Tasks[$taskName] = [pscustomobject]@{ TaskName = $taskName; Hostile = $true }
+                $actions.NeutralizeTask = {
+                    param($name)
+                    if (-not $actions.State.Locked) { throw 'task neutralization occurred outside installer mutex' }
+                    $actions.State.NeutralizeCalls++
+                    $actions.State.Events += 'neutralize'
+                    $actions.State.Tasks.Remove($name)
+                }.GetNewClosure()
+                $actions.ProtectStateTree = {
+                    param($path)
+                    if ($actions.State.NeutralizeCalls -ne 1) { throw 'StatePath inspection occurred before task neutralization' }
+                    throw 'simulated ACL repair failure'
+                }.GetNewClosure()
+                Assert-ThrowsMessage { Invoke-FixtureInstall $fixture $actions } 'simulated ACL repair failure' 'ACL failure propagates after neutralization'
+                Assert-Equal 1 $actions.State.NeutralizeCalls 'existing task neutralized once'
+                Assert-Equal 0 $actions.State.Tasks.Count 'hostile task remains absent after ACL failure'
+                Assert-Equal 0 $actions.State.RegisterCalls 'failed security repair does not recreate task'
+                Assert-Equal 0 $actions.State.StartCalls 'failed security repair does not start task'
+                Assert-Equal 'mutex:Global\QuickBooksServiceHostAutoUpdate|neutralize|release' ($actions.State.Events -join '|') 'neutralization is first locked action before StatePath inspection'
+            }
+            finally { Remove-InstallerFixture $fixture }
+
+            $fixture = New-InstallerFixture
+            try {
+                $actions = New-InjectedActions $fixture
+                $actions.NeutralizeTask = { param($name) if (-not $actions.State.Locked) { throw 'neutralize outside lock' }; $actions.State.NeutralizeCalls++; $actions.State.Events += 'neutralize' }.GetNewClosure()
+                $actions.ProtectStateTree = { param($path) if ($actions.State.NeutralizeCalls -ne 1) { throw 'security before neutralize' }; $actions.State.SecurityPasses++; $actions.State.Events += 'secure' }.GetNewClosure()
+                $actions.RegisterTask = { param($plan) $actions.State.Events += 'register'; $actions.State.RegisterCalls++; $actions.State.Tasks[$plan.TaskName] = $plan }.GetNewClosure()
+                Invoke-FixtureInstall $fixture $actions
+                $neutralizeIndex = [Array]::IndexOf($actions.State.Events, 'neutralize')
+                $secureIndex = [Array]::IndexOf($actions.State.Events, 'secure')
+                $registerIndex = [Array]::IndexOf($actions.State.Events, 'register')
+                Assert-True ($neutralizeIndex -gt 0 -and $neutralizeIndex -lt $secureIndex) 'task neutralized before first state security pass'
+                Assert-True ($registerIndex -gt $secureIndex) 'task recreated only after secure state verification'
+            }
+            finally { Remove-InstallerFixture $fixture }
+        }
+        'critical-state-revalidation' {
+            $fixture = New-InstallerFixture
+            try {
+                $actions = New-InjectedActions $fixture
+                $race = [pscustomobject]@{ Substituted = $false; StateWrites = 0 }
+                $actions.ProtectStateTree = {
+                    param($path)
+                    if ($race.Substituted) { throw 'critical state substitution detected' }
+                    $actions.State.SecurityPasses++
+                }.GetNewClosure()
+                $originalCopy = $actions.CopyFile
+                $actions.CopyFile = {
+                    param($source, $destination)
+                    if ($destination.StartsWith($fixture.StatePath, [StringComparison]::OrdinalIgnoreCase)) {
+                        $race.StateWrites++
+                    }
+                    else { $race.Substituted = $true }
+                    & $originalCopy $source $destination
+                }.GetNewClosure()
+                Assert-ThrowsMessage { Invoke-FixtureInstall $fixture $actions } 'critical state substitution detected' 'substitution after initial pass is rejected'
+                Assert-Equal 0 $race.StateWrites 'substitution is detected before any Manager or root-state write'
+                Assert-Equal 0 $actions.State.RegisterCalls 'substitution prevents task registration'
+            }
+            finally { Remove-InstallerFixture $fixture }
+
+            $fixture = New-InstallerFixture
+            try {
+                $actions = New-InjectedActions $fixture
+                $actions.ProtectStateTree = { param($path) $actions.State.SecurityPasses++; $actions.State.Events += 'secure' }.GetNewClosure()
+                $originalCopy = $actions.CopyFile
+                $actions.CopyFile = {
+                    param($source, $destination)
+                    if ($destination.StartsWith($fixture.StatePath, [StringComparison]::OrdinalIgnoreCase)) { $actions.State.Events += 'state-write' }
+                    & $originalCopy $source $destination
+                }.GetNewClosure()
+                $actions.RegisterTask = { param($plan) $actions.State.Events += 'register'; $actions.State.RegisterCalls++; $actions.State.Tasks[$plan.TaskName] = $plan }.GetNewClosure()
+                Invoke-FixtureInstall $fixture $actions
+                foreach ($index in 0..($actions.State.Events.Count - 1)) {
+                    if ($actions.State.Events[$index] -in @('state-write', 'register')) {
+                        Assert-True ($index -gt 0 -and $actions.State.Events[$index - 1] -eq 'secure') "fresh security validation immediately precedes $($actions.State.Events[$index])"
+                    }
+                }
             }
             finally { Remove-InstallerFixture $fixture }
         }
@@ -566,7 +677,7 @@ function Run-Scenario {
     }
 }
 
-$allScenarios = @('static', 'task-plan', 'state-security', 'identity-mismatch', 'identity-binding', 'installer-mutex', 'manifest-install', 'corrupt-manager', 'corrupt-installed-manager', 'stale-cleanup', 'stop-race', 'stop-timeout', 'reinstall-idempotent')
+$allScenarios = @('static', 'task-plan', 'state-security', 'identity-mismatch', 'identity-binding', 'task-neutralization', 'critical-state-revalidation', 'installer-mutex', 'manifest-install', 'corrupt-manager', 'corrupt-installed-manager', 'stale-cleanup', 'stop-race', 'stop-timeout', 'reinstall-idempotent')
 if ($Scenario -eq 'all') { foreach ($name in $allScenarios) { Run-Scenario $name } }
 else { Run-Scenario $Scenario }
 Write-Host 'Install service host script checks passed.'

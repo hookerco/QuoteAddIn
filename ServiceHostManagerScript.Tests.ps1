@@ -458,7 +458,7 @@ function Run-Scenario {
         'mutex-skips-overlap' {
             $tree = New-TestTree
             try {
-                Write-InstalledRelease -Tree $tree
+                Remove-Item -LiteralPath $tree.StatePath -Recurse -Force
                 $state = [pscustomobject]@{ Starts = 0; MutexName = '' }
                 $skipMutex = {
                     param($name, $action)
@@ -472,8 +472,7 @@ function Run-Scenario {
                 Assert-Equal 0 $result 'overlapping invocation exits successfully'
                 Assert-Equal 'Global\QuickBooksServiceHostAutoUpdate' $state.MutexName 'manager uses required mutex name'
                 Assert-Equal 0 $state.Starts 'overlapping invocation performs no host action'
-                $overlapLog = Join-Path (Join-Path $tree.StatePath 'Logs') 'service-host-manager.log'
-                Assert-True (-not (Test-Path -LiteralPath $overlapLog)) 'lost mutex performs no state or log mutation'
+                Assert-True (-not (Test-Path -LiteralPath $tree.StatePath)) 'lost mutex with absent StatePath creates nothing'
             }
             finally { Remove-TestTree $tree }
         }

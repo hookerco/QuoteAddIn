@@ -332,7 +332,6 @@ function Invoke-ServiceHostManager {
         [scriptblock]$MutexAction = { param($name, $action) Invoke-WithManagerMutex -Name $name -Action $action }
     )
 
-    New-Item -ItemType Directory -Force -Path $StatePath | Out-Null
     if ($null -eq $StartHost) {
         $StartHost = { Start-InstalledHost -InstallPath $InstallPath }.GetNewClosure()
     }
@@ -348,6 +347,7 @@ function Invoke-ServiceHostManager {
 
     $gate = [pscustomobject]@{ Executed = $false }
     $body = {
+        New-Item -ItemType Directory -Force -Path $StatePath | Out-Null
         $gate.Executed = $true
         $processes = @(& $GetProcessesAction)
         $hostProcesses = @($processes | Where-Object { $_.ProcessName -ieq 'QuickBooksServiceHost' })

@@ -111,6 +111,27 @@ function Assert-ServiceHostStateItemSafe {
     }
 }
 
+function Set-ServiceHostPathOwner {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][Security.Principal.SecurityIdentifier]$OwnerSid,
+        [scriptblock]$InvokeTakeOwnershipAction = {
+            param($filePath, $arguments)
+            $output = @(& $filePath @arguments 2>&1)
+            [pscustomobject]@{ ExitCode = $LASTEXITCODE; Output = ($output -join [Environment]::NewLine) }
+        }
+    )
+
+    if ($OwnerSid.Value -ne 'S-1-5-32-544') { throw 'Service host state owner must be BUILTIN\Administrators.' }
+    $takeownPath = if ([string]::IsNullOrWhiteSpace($env:SystemRoot)) { 'takeown.exe' } else { Join-Path $env:SystemRoot 'System32\takeown.exe' }
+    $arguments = @('/F', $Path, '/A')
+    $result = & $InvokeTakeOwnershipAction $takeownPath $arguments
+    if ($null -eq $result -or [int]$result.ExitCode -ne 0) {
+        $exitCode = if ($null -eq $result) { -1 } else { [int]$result.ExitCode }
+        throw "Failed to take Administrators ownership of service host state path: $Path (exit $exitCode)."
+    }
+}
+
 function Protect-ServiceHostStateTree {
     param(
         [Parameter(Mandatory = $true)][string]$StatePath,
@@ -118,12 +139,7 @@ function Protect-ServiceHostStateTree {
         [scriptblock]$GetItemAction = { param($path) Get-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue },
         [scriptblock]$GetChildrenAction = { param($path) @(Get-ChildItem -LiteralPath $path -Force -ErrorAction Stop) },
         [scriptblock]$GetAclAction = { param($path) Get-Acl -LiteralPath $path },
-        [scriptblock]$SetOwnerAction = {
-            param($path, $ownerSid)
-            $ownershipAcl = Get-Acl -LiteralPath $path
-            $ownershipAcl.SetOwner($ownerSid)
-            Set-Acl -LiteralPath $path -AclObject $ownershipAcl
-        },
+        [scriptblock]$SetOwnerAction = { param($path, $ownerSid) Set-ServiceHostPathOwner -Path $path -OwnerSid $ownerSid },
         [scriptblock]$SetAclAction = { param($path, $acl) Set-Acl -LiteralPath $path -AclObject $acl }
     )
 
@@ -304,6 +320,12 @@ function Invoke-ServiceHostInstall {
         [scriptblock]$WaitAction = { Start-Sleep -Milliseconds 250 },
         [scriptblock]$ProtectStateTreeAction = { param($path) Protect-ServiceHostStateTree -StatePath $path | Out-Null },
         [scriptblock]$MutexAction = { param($name, $waitMilliseconds, $action) Invoke-WithInstallerMutex -Name $name -WaitMilliseconds $waitMilliseconds -Action $action },
+        [scriptblock]$NeutralizeTaskAction = {
+            param($taskName)
+            if ($null -ne (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue)) {
+                Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction Stop
+            }
+        },
         [ValidateRange(1, 300000)][int]$MutexWaitMilliseconds = 30000,
         [ValidateRange(1, 600)][int]$StopWaitAttempts = 40
     )
@@ -333,6 +355,7 @@ function Invoke-ServiceHostInstall {
         ShortcutPath = ''
     }
     $mutation = {
+    & $NeutralizeTaskAction 'QuickBooksServiceHost Auto Start and Update'
     $hostPath = $installState.HostPath
     $installedProcesses = @(& $GetProcessesAction | Where-Object { (Get-ServiceHostProcessPath $_) -ieq $hostPath })
     foreach ($process in $installedProcesses) { & $StopProcessAction $process }
@@ -363,12 +386,14 @@ function Invoke-ServiceHostInstall {
     }
     $managerTarget = Join-Path $managerDirectory 'service_host_manager.ps1'
     $managerStage = Join-Path $managerDirectory 'service_host_manager.ps1.stage'
+    & $ProtectStateTreeAction $StatePath
     & $CopyFileAction $managerSource $managerStage
     try {
         if ([long](Get-Item -LiteralPath $managerStage).Length -ne [long]$manifest.manager.length -or
             (Get-FileHash -LiteralPath $managerStage -Algorithm SHA256).Hash -ne [string]$manifest.manager.sha256) {
             throw "Staged manager verification failed: $($manifest.manager.path)"
         }
+        & $ProtectStateTreeAction $StatePath
         & $CopyFileAction $managerStage $managerTarget
         if ([long](Get-Item -LiteralPath $managerTarget).Length -ne [long]$manifest.manager.length -or
             (Get-FileHash -LiteralPath $managerTarget -Algorithm SHA256).Hash -ne [string]$manifest.manager.sha256) {
@@ -378,6 +403,7 @@ function Invoke-ServiceHostInstall {
     finally {
         & $RemovePathAction $managerStage $false
     }
+    & $ProtectStateTreeAction $StatePath
     & $CopyFileAction $manifestPath (Join-Path $StatePath 'release.manifest.json')
     & $ProtectStateTreeAction $StatePath
 
@@ -403,6 +429,7 @@ function Invoke-ServiceHostInstall {
     & $CreateShortcutAction $shortcutPath $hostPath $InstallPath
 
     $plan = New-ServiceHostTaskPlan -InteractiveUser $InteractiveUser -ManagerPath $managerTarget
+    & $ProtectStateTreeAction $StatePath
     Register-ServiceHostTask -Plan $plan -RegisterTaskAction $RegisterTaskAction
     $installState.Plan = $plan
     $installState.ConnectorPath = $connectorPath

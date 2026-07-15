@@ -43,10 +43,10 @@ if ($deployContent -notmatch 'QuickBooksServiceHost\\bin\\Release') {
     throw 'Deploy script must package the service host Release output.'
 }
 
-$connectorCopyIndex = $deployContent.IndexOf('Copy-Item -Path "$connectorCliSourcePath\*"')
-$hostCopyIndex = $deployContent.IndexOf('Copy-Item -Path "$hostSourcePath\*"')
+$connectorCopyIndex = $deployContent.IndexOf('Copy-SourceIntoPayload -SourcePath $ConnectorSourcePath')
+$hostCopyIndex = $deployContent.IndexOf('Copy-SourceIntoPayload -SourcePath $HostSourcePath')
 if ($connectorCopyIndex -lt 0 -or $hostCopyIndex -lt 0 -or $hostCopyIndex -lt $connectorCopyIndex) {
-    throw 'Deploy script must copy the service host after the connector CLI so current host dependencies win shared-file collisions.'
+    throw 'Deploy script must merge the service host after the connector CLI so current host dependencies win shared-file collisions.'
 }
 
 Write-Host 'Install service host script checks passed.'

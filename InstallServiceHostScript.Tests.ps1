@@ -271,10 +271,13 @@ function Run-Scenario {
             $getItem = { param($path) $items[$path] }.GetNewClosure()
             $getChildren = { param($path) @($items.Values | Where-Object { $_.Parent -eq $path }) }.GetNewClosure()
             $getAcl = { param($path) $acls[$path] }.GetNewClosure()
-            $setAcl = { param($path, $acl) $acls[$path] = $acl }.GetNewClosure()
+            $ownersTaken = @{}
+            $setOwner = { param($path, $ownerSid) $ownersTaken[$path] = $true; $acls[$path].SetOwner($ownerSid) }.GetNewClosure()
+            $setAcl = { param($path, $acl) if (-not $ownersTaken.ContainsKey($path)) { throw 'ACL set before ownership repair' }; $acls[$path] = $acl }.GetNewClosure()
 
             Protect-ServiceHostStateTree -StatePath $root -EnsureDirectoryAction $ensureDirectory `
-                -GetItemAction $getItem -GetChildrenAction $getChildren -GetAclAction $getAcl -SetAclAction $setAcl | Out-Null
+                -GetItemAction $getItem -GetChildrenAction $getChildren -GetAclAction $getAcl `
+                -SetOwnerAction $setOwner -SetAclAction $setAcl | Out-Null
             foreach ($path in @($root, $manager, $logs, $hostile, $hostileFile)) {
                 Assert-True (Test-ServiceHostSecureAcl -Acl $acls[$path] -IsContainer ([bool]$items[$path].PSIsContainer)) "secure ACL repaired for $path"
                 Assert-Equal $administratorSid $acls[$path].GetOwner([Security.Principal.SecurityIdentifier]).Value "administrator owner for $path"
@@ -293,9 +296,30 @@ function Run-Scenario {
             }.GetNewClosure()
             Assert-ThrowsMessage {
                 Protect-ServiceHostStateTree -StatePath $root -EnsureDirectoryAction $ensureDirectory `
-                    -GetItemAction $getItem -GetChildrenAction $getChildrenWithLinkGuard -GetAclAction $getAcl -SetAclAction $setAcl | Out-Null
+                    -GetItemAction $getItem -GetChildrenAction $getChildrenWithLinkGuard -GetAclAction $getAcl `
+                    -SetOwnerAction $setOwner -SetAclAction $setAcl | Out-Null
             } "Reparse points are not allowed in the service host state tree: $link" 'reparse point rejected'
             Assert-Equal 0 $linkEnumerations.Count 'reparse directory is never traversed'
+
+            $items.Remove($link)
+            $acls.Remove($link)
+            $swap = Join-Path $root 'SwapAfterOwner'
+            $items[$swap] = [pscustomobject]@{ FullName = $swap; PSIsContainer = $true; Attributes = [IO.FileAttributes]::Directory; Parent = $root }
+            $acls[$swap] = $insecureAcl
+            $swapAclCalls = [pscustomobject]@{ Count = 0 }
+            $swapOwner = {
+                param($path, $ownerSid)
+                $ownersTaken[$path] = $true
+                $acls[$path].SetOwner($ownerSid)
+                if ($path -eq $swap) { $items[$path].Attributes = [IO.FileAttributes]::Directory -bor [IO.FileAttributes]::ReparsePoint }
+            }.GetNewClosure()
+            $swapSetAcl = { param($path, $acl) if ($path -eq $swap) { $swapAclCalls.Count++ }; $acls[$path] = $acl }.GetNewClosure()
+            Assert-ThrowsMessage {
+                Protect-ServiceHostStateTree -StatePath $root -EnsureDirectoryAction $ensureDirectory `
+                    -GetItemAction $getItem -GetChildrenAction $getChildren -GetAclAction $getAcl `
+                    -SetOwnerAction $swapOwner -SetAclAction $swapSetAcl | Out-Null
+            } "Reparse points are not allowed in the service host state tree: $swap" 'reparse replacement after owner step rejected'
+            Assert-Equal 0 $swapAclCalls.Count 'canonical ACL is not applied through a replaced reparse point'
 
             $fixture = New-InstallerFixture
             try {

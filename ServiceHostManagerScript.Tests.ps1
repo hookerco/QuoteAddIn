@@ -472,8 +472,8 @@ function Run-Scenario {
                 Assert-Equal 0 $result 'overlapping invocation exits successfully'
                 Assert-Equal 'Global\QuickBooksServiceHostAutoUpdate' $state.MutexName 'manager uses required mutex name'
                 Assert-Equal 0 $state.Starts 'overlapping invocation performs no host action'
-                $log = Get-Content -Raw (Join-Path (Join-Path $tree.StatePath 'Logs') 'service-host-manager.log')
-                Assert-True ($log -match 'overlap_skipped') 'overlapping invocation records its skipped decision'
+                $overlapLog = Join-Path (Join-Path $tree.StatePath 'Logs') 'service-host-manager.log'
+                Assert-True (-not (Test-Path -LiteralPath $overlapLog)) 'lost mutex performs no state or log mutation'
             }
             finally { Remove-TestTree $tree }
         }

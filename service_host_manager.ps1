@@ -476,17 +476,6 @@ function Invoke-ServiceHostManager {
     }.GetNewClosure()
 
     & $MutexAction 'Global\QuickBooksServiceHostAutoUpdate' $body | Out-Null
-    if (-not $gate.Executed) {
-        Write-ManagerLog -StatePath $StatePath -Record ([pscustomobject]@{
-            installed_release = ''
-            available_release = ''
-            decision = 'overlap_skipped'
-            result = 'skipped'
-            rollback = $false
-            host_pid = $null
-            host_path = ''
-        })
-    }
     return 0
 }
 

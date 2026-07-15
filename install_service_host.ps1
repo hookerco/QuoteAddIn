@@ -118,17 +118,40 @@ function Protect-ServiceHostStateTree {
         [scriptblock]$GetItemAction = { param($path) Get-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue },
         [scriptblock]$GetChildrenAction = { param($path) @(Get-ChildItem -LiteralPath $path -Force -ErrorAction Stop) },
         [scriptblock]$GetAclAction = { param($path) Get-Acl -LiteralPath $path },
+        [scriptblock]$SetOwnerAction = {
+            param($path, $ownerSid)
+            $ownershipAcl = Get-Acl -LiteralPath $path
+            $ownershipAcl.SetOwner($ownerSid)
+            Set-Acl -LiteralPath $path -AclObject $ownershipAcl
+        },
         [scriptblock]$SetAclAction = { param($path, $acl) Set-Acl -LiteralPath $path -AclObject $acl }
     )
 
     $protectEntry = {
         param($item)
-        Assert-ServiceHostStateItemSafe -Item $item
-        $secureAcl = New-ServiceHostSecureAcl -IsContainer ([bool]$item.PSIsContainer)
-        & $SetAclAction $item.FullName $secureAcl | Out-Null
-        $verifiedAcl = & $GetAclAction $item.FullName
-        if (-not (Test-ServiceHostSecureAcl -Acl $verifiedAcl -IsContainer ([bool]$item.PSIsContainer))) {
-            throw "Service host state ACL verification failed: $($item.FullName)"
+        $path = [string]$item.FullName
+        $freshItem = & $GetItemAction $path
+        Assert-ServiceHostStateItemSafe -Item $freshItem
+        $administrators = New-Object Security.Principal.SecurityIdentifier 'S-1-5-32-544'
+        & $SetOwnerAction $path $administrators | Out-Null
+
+        $freshItem = & $GetItemAction $path
+        Assert-ServiceHostStateItemSafe -Item $freshItem
+        $ownerAcl = & $GetAclAction $path
+        if ($ownerAcl.GetOwner([Security.Principal.SecurityIdentifier]).Value -ne $administrators.Value) {
+            throw "Service host state owner verification failed: $path"
+        }
+
+        $freshItem = & $GetItemAction $path
+        Assert-ServiceHostStateItemSafe -Item $freshItem
+        $secureAcl = New-ServiceHostSecureAcl -IsContainer ([bool]$freshItem.PSIsContainer)
+        & $SetAclAction $path $secureAcl | Out-Null
+
+        $freshItem = & $GetItemAction $path
+        Assert-ServiceHostStateItemSafe -Item $freshItem
+        $verifiedAcl = & $GetAclAction $path
+        if (-not (Test-ServiceHostSecureAcl -Acl $verifiedAcl -IsContainer ([bool]$freshItem.PSIsContainer))) {
+            throw "Service host state ACL verification failed: $path"
         }
     }.GetNewClosure()
 
@@ -159,7 +182,9 @@ function Protect-ServiceHostStateTree {
         $key = ([string]$directory.FullName).ToLowerInvariant()
         if ($visited.ContainsKey($key)) { continue }
         $visited[$key] = $true
-        foreach ($child in @(& $GetChildrenAction $directory.FullName)) {
+        $freshDirectory = & $GetItemAction $directory.FullName
+        Assert-ServiceHostStateItemSafe -Item $freshDirectory
+        foreach ($child in @(& $GetChildrenAction $freshDirectory.FullName)) {
             Assert-ServiceHostStateItemSafe -Item $child
             & $protectEntry $child
             if ([bool]$child.PSIsContainer) { $queue.Enqueue($child) }

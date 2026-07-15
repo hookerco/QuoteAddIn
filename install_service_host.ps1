@@ -243,6 +243,113 @@ function Protect-ServiceHostStateTree {
     return @($visited.Keys)
 }
 
+function New-ServiceHostRuntimeAcl {
+    param([Parameter(Mandatory = $true)][bool]$IsContainer)
+
+    $acl = if ($IsContainer) {
+        New-Object Security.AccessControl.DirectorySecurity
+    }
+    else {
+        New-Object Security.AccessControl.FileSecurity
+    }
+    $administrators = New-Object Security.Principal.SecurityIdentifier 'S-1-5-32-544'
+    $system = New-Object Security.Principal.SecurityIdentifier 'S-1-5-18'
+    $users = New-Object Security.Principal.SecurityIdentifier 'S-1-5-32-545'
+    $acl.SetOwner($administrators)
+    $acl.SetAccessRuleProtection($true, $false)
+    $inheritance = if ($IsContainer) {
+        [Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [Security.AccessControl.InheritanceFlags]::ObjectInherit
+    }
+    else { [Security.AccessControl.InheritanceFlags]::None }
+    foreach ($entry in @(
+        [pscustomobject]@{ Sid = $system; Rights = [Security.AccessControl.FileSystemRights]::FullControl },
+        [pscustomobject]@{ Sid = $administrators; Rights = [Security.AccessControl.FileSystemRights]::FullControl },
+        [pscustomobject]@{ Sid = $users; Rights = [Security.AccessControl.FileSystemRights]::ReadAndExecute }
+    )) {
+        $rule = New-Object Security.AccessControl.FileSystemAccessRule(
+            $entry.Sid,
+            $entry.Rights,
+            $inheritance,
+            [Security.AccessControl.PropagationFlags]::None,
+            [Security.AccessControl.AccessControlType]::Allow)
+        $acl.AddAccessRule($rule)
+    }
+    return $acl
+}
+
+function Test-ServiceHostRuntimeAcl {
+    param(
+        [Parameter(Mandatory = $true)]$Acl,
+        [Parameter(Mandatory = $true)][bool]$IsContainer
+    )
+
+    try { $owner = $Acl.GetOwner([Security.Principal.SecurityIdentifier]).Value }
+    catch { return $false }
+    if ($owner -ne 'S-1-5-32-544' -or -not $Acl.AreAccessRulesProtected) { return $false }
+    $expectedInheritance = if ($IsContainer) {
+        [Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [Security.AccessControl.InheritanceFlags]::ObjectInherit
+    }
+    else { [Security.AccessControl.InheritanceFlags]::None }
+    $expected = @{
+        'S-1-5-18' = [Security.AccessControl.FileSystemRights]::FullControl
+        'S-1-5-32-544' = [Security.AccessControl.FileSystemRights]::FullControl
+        'S-1-5-32-545' = ([Security.AccessControl.FileSystemRights]::ReadAndExecute -bor [Security.AccessControl.FileSystemRights]::Synchronize)
+    }
+    $rules = @($Acl.GetAccessRules($true, $false, [Security.Principal.SecurityIdentifier]))
+    if ($rules.Count -ne $expected.Count) { return $false }
+    foreach ($rule in $rules) {
+        $sid = $rule.IdentityReference.Value
+        if (-not $expected.ContainsKey($sid) -or
+            $rule.AccessControlType -ne [Security.AccessControl.AccessControlType]::Allow -or
+            $rule.FileSystemRights -ne $expected[$sid] -or
+            $rule.InheritanceFlags -ne $expectedInheritance -or
+            $rule.PropagationFlags -ne [Security.AccessControl.PropagationFlags]::None -or
+            $rule.IsInherited) {
+            return $false
+        }
+    }
+    return $true
+}
+
+function Protect-ServiceHostRuntimeTree {
+    param(
+        [Parameter(Mandatory = $true)][string]$InstallPath,
+        [scriptblock]$GetItemAction = { param($path) Get-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue },
+        [scriptblock]$GetChildrenAction = { param($path) @(Get-ChildItem -LiteralPath $path -Force -ErrorAction Stop) },
+        [scriptblock]$SetAclAction = { param($path, $acl) Set-Acl -LiteralPath $path -AclObject $acl },
+        [scriptblock]$GetAclAction = { param($path) Get-Acl -LiteralPath $path }
+    )
+
+    $rootItem = & $GetItemAction $InstallPath
+    if ($null -eq $rootItem -or -not [bool]$rootItem.PSIsContainer) { throw "Install path is not a directory: $InstallPath" }
+    $queue = New-Object 'Collections.Generic.Queue[object]'
+    $queue.Enqueue($rootItem)
+    $visited = @{}
+    while ($queue.Count -gt 0) {
+        $item = $queue.Dequeue()
+        $freshItem = & $GetItemAction $item.FullName
+        Assert-ServiceHostStateItemSafe -Item $freshItem
+        $key = ([string]$freshItem.FullName).ToLowerInvariant()
+        if ($visited.ContainsKey($key)) { continue }
+        $visited[$key] = $true
+        $runtimeAcl = New-ServiceHostRuntimeAcl -IsContainer ([bool]$freshItem.PSIsContainer)
+        & $SetAclAction $freshItem.FullName $runtimeAcl | Out-Null
+        $freshItem = & $GetItemAction $freshItem.FullName
+        Assert-ServiceHostStateItemSafe -Item $freshItem
+        $verifiedAcl = & $GetAclAction $freshItem.FullName
+        if (-not (Test-ServiceHostRuntimeAcl -Acl $verifiedAcl -IsContainer ([bool]$freshItem.PSIsContainer))) {
+            throw "Service host runtime ACL verification failed: $($freshItem.FullName)"
+        }
+        if ([bool]$freshItem.PSIsContainer) {
+            foreach ($child in @(& $GetChildrenAction $freshItem.FullName)) {
+                Assert-ServiceHostStateItemSafe -Item $child
+                $queue.Enqueue($child)
+            }
+        }
+    }
+    return @($visited.Keys)
+}
+
 function Invoke-WithInstallerMutex {
     param(
         [Parameter(Mandatory = $true)][string]$Name,
@@ -324,6 +431,28 @@ function Get-ServiceHostProcessPath {
     return ''
 }
 
+function Get-ServiceHostVolumeIdentity {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    $candidate = [IO.Path]::GetFullPath($Path)
+    while (-not (Test-Path -LiteralPath $candidate)) {
+        $parent = Split-Path -Parent $candidate
+        if ([string]::IsNullOrWhiteSpace($parent) -or $parent -eq $candidate) {
+            throw "Unable to resolve an existing ancestor for volume identity: $Path"
+        }
+        $candidate = $parent
+    }
+    $volume = Get-Volume -FilePath $candidate -ErrorAction Stop
+    $identity = if (-not [string]::IsNullOrWhiteSpace([string]$volume.UniqueId)) {
+        [string]$volume.UniqueId
+    }
+    elseif (-not [string]::IsNullOrWhiteSpace([string]$volume.ObjectId)) {
+        [string]$volume.ObjectId
+    }
+    else { '' }
+    if ([string]::IsNullOrWhiteSpace($identity)) { throw "Unable to resolve volume identity: $Path" }
+    return $identity
+}
+
 function Invoke-ServiceHostInstall {
     param(
         [Parameter(Mandatory = $true)][string]$SourcePath,
@@ -354,6 +483,8 @@ function Invoke-ServiceHostInstall {
         [scriptblock]$StopProcessAction = { param($process) Stop-Process -Id $process.ProcessId -Force -ErrorAction Stop },
         [scriptblock]$WaitAction = { Start-Sleep -Milliseconds 250 },
         [scriptblock]$ProtectStateTreeAction = { param($path) Protect-ServiceHostStateTree -StatePath $path | Out-Null },
+        [scriptblock]$ProtectRuntimeTreeAction = { param($path) Protect-ServiceHostRuntimeTree -InstallPath $path | Out-Null },
+        [scriptblock]$GetVolumeIdentityAction = { param($path) Get-ServiceHostVolumeIdentity -Path $path },
         [scriptblock]$MutexAction = { param($name, $waitMilliseconds, $action) Invoke-WithInstallerMutex -Name $name -WaitMilliseconds $waitMilliseconds -Action $action },
         [scriptblock]$NeutralizeTaskAction = {
             param($taskName)
@@ -368,6 +499,13 @@ function Invoke-ServiceHostInstall {
     Assert-ElevatedIdentityMatches -InteractiveUser $InteractiveUser -InteractiveSid $InteractiveSid `
         -GetCurrentIdentityAction $GetCurrentIdentityAction -ResolveInteractiveUserSidAction $ResolveInteractiveUserSidAction `
         -TestAdministratorAction $TestAdministratorAction
+
+    $installVolume = [string](& $GetVolumeIdentityAction $InstallPath)
+    $stateVolume = [string](& $GetVolumeIdentityAction $StatePath)
+    if ([string]::IsNullOrWhiteSpace($installVolume) -or [string]::IsNullOrWhiteSpace($stateVolume) -or
+        -not $installVolume.Equals($stateVolume, [StringComparison]::OrdinalIgnoreCase)) {
+        throw 'InstallPath and StatePath must be on the same volume for transactional directory moves.'
+    }
 
     $taskName = 'QuickBooksServiceHost Auto Start and Update'
     $hostPath = Join-Path $InstallPath 'QuickBooksServiceHost.exe'
@@ -388,17 +526,23 @@ function Invoke-ServiceHostInstall {
         StagePayloadPath = ''
         StageManagerPath = ''
         StageManifestPath = ''
+        StagePreviousPath = ''
+        DisplacedPreviousPath = ''
         Manifest = $null
         Bridge = $null
         HadCurrentInstall = $false
         HadPreviousRuntime = $false
         HadPreviousManager = $false
         HadPreviousManifest = $false
+        TaskNeutralized = $false
+        StopAttempted = $false
         Stopped = $false
         CurrentMoved = $false
         PromotionHappened = $false
         ManagerPromoted = $false
         ManifestPromoted = $false
+        PreviousDisplaced = $false
+        PreviousPrepared = $false
         RollbackPrepared = $false
         Plan = $plan
     }
@@ -429,52 +573,92 @@ function Invoke-ServiceHostInstall {
         throw "Installed host process was not found: $hostPath"
     }.GetNewClosure()
 
-    $rollbackLocked = {
-        $installState.Phase = 'RollingBack'
-        & $NeutralizeTaskAction $taskName
-        & $stopExpectedHost
+    $invokeMoveAndInspect = {
+        param([string]$source, [string]$destination, [string]$flagName = '')
+        try { & $MovePathAction $source $destination }
+        finally {
+            if (-not [string]::IsNullOrWhiteSpace($flagName)) {
+                $installState.$flagName = (-not (Test-Path -LiteralPath $source)) -and (Test-Path -LiteralPath $destination)
+            }
+        }
+    }.GetNewClosure()
 
-        if ($installState.PromotionHappened -and (Test-Path -LiteralPath $InstallPath)) {
-            & $RemovePathAction $InstallPath $true
-        }
-        if ($installState.CurrentMoved -and (Test-Path -LiteralPath $previousPayloadPath -PathType Container)) {
+    $cleanupStageLocked = {
+        if (-not [string]::IsNullOrWhiteSpace($installState.StageRoot) -and (Test-Path -LiteralPath $installState.StageRoot)) {
             & $ProtectStateTreeAction $StatePath
-            & $MovePathAction $previousPayloadPath $InstallPath
+            & $RemovePathAction $installState.StageRoot $true
         }
+    }.GetNewClosure()
 
-        if ($installState.HadPreviousManager -and (Test-Path -LiteralPath $previousManagerPath -PathType Leaf)) {
-            & $ProtectStateTreeAction $StatePath
-            & $MovePathAction $previousManagerPath $managerTarget
-        }
-        elseif ($installState.ManagerPromoted -and (Test-Path -LiteralPath $managerTarget)) {
-            & $ProtectStateTreeAction $StatePath
-            & $RemovePathAction $managerTarget $false
-        }
-
-        if ($installState.HadPreviousManifest -and (Test-Path -LiteralPath $previousManifestPath -PathType Leaf)) {
-            & $ProtectStateTreeAction $StatePath
-            & $MovePathAction $previousManifestPath $installedManifestTarget
-        }
-        elseif ($installState.ManifestPromoted -and (Test-Path -LiteralPath $installedManifestTarget)) {
-            & $ProtectStateTreeAction $StatePath
-            & $RemovePathAction $installedManifestTarget $false
-        }
-
-        if (Test-Path -LiteralPath $previousPath) {
+    $restorePreflightPreviousLocked = {
+        if ($installState.PreviousPrepared -and (Test-Path -LiteralPath $previousPath)) {
             & $ProtectStateTreeAction $StatePath
             & $RemovePathAction $previousPath $true
         }
-        if ($installState.HadPreviousRuntime) {
+        if ($installState.PreviousDisplaced -and (Test-Path -LiteralPath $installState.DisplacedPreviousPath -PathType Container)) {
             & $ProtectStateTreeAction $StatePath
-            Register-ServiceHostTask -Plan $plan -RegisterTaskAction $RegisterTaskAction
-            $installState.RollbackPrepared = $true
+            & $invokeMoveAndInspect $installState.DisplacedPreviousPath $previousPath ''
         }
-        $installState.Phase = 'RollbackRestored'
+    }.GetNewClosure()
+
+    $rollbackLocked = {
+        $installState.Phase = 'RollingBack'
+        $rollbackFailure = $null
+        try {
+            & $NeutralizeTaskAction $taskName
+            & $stopExpectedHost
+
+            if ($installState.PromotionHappened -and (Test-Path -LiteralPath $InstallPath)) {
+                & $RemovePathAction $InstallPath $true
+            }
+            if ($installState.CurrentMoved -and (Test-Path -LiteralPath $previousPayloadPath -PathType Container)) {
+                & $ProtectStateTreeAction $StatePath
+                & $invokeMoveAndInspect $previousPayloadPath $InstallPath ''
+                & $ProtectRuntimeTreeAction $InstallPath
+            }
+
+            if ($installState.HadPreviousManager -and (Test-Path -LiteralPath $previousManagerPath -PathType Leaf)) {
+                & $ProtectStateTreeAction $StatePath
+                & $invokeMoveAndInspect $previousManagerPath $managerTarget ''
+            }
+            elseif ($installState.ManagerPromoted -and (Test-Path -LiteralPath $managerTarget)) {
+                & $ProtectStateTreeAction $StatePath
+                & $RemovePathAction $managerTarget $false
+            }
+
+            if ($installState.HadPreviousManifest -and (Test-Path -LiteralPath $previousManifestPath -PathType Leaf)) {
+                & $ProtectStateTreeAction $StatePath
+                & $invokeMoveAndInspect $previousManifestPath $installedManifestTarget ''
+            }
+            elseif ($installState.ManifestPromoted -and (Test-Path -LiteralPath $installedManifestTarget)) {
+                & $ProtectStateTreeAction $StatePath
+                & $RemovePathAction $installedManifestTarget $false
+            }
+
+            if (Test-Path -LiteralPath $previousPath) {
+                & $ProtectStateTreeAction $StatePath
+                & $RemovePathAction $previousPath $true
+            }
+            if ($installState.HadPreviousRuntime) {
+                & $ProtectStateTreeAction $StatePath
+                Register-ServiceHostTask -Plan $plan -RegisterTaskAction $RegisterTaskAction
+                $installState.RollbackPrepared = $true
+            }
+            $installState.Phase = 'RollbackRestored'
+        }
+        catch { $rollbackFailure = $_ }
+        $cleanupFailure = $null
+        try { & $cleanupStageLocked }
+        catch { $cleanupFailure = $_ }
+        if ($null -ne $cleanupFailure) {
+            if ($null -ne $rollbackFailure) { $rollbackFailure.Exception.Data['StageCleanupFailure'] = $cleanupFailure.Exception.Message }
+            else { $cleanupFailure.Exception.Data['StageCleanupFailure'] = $cleanupFailure.Exception.Message }
+        }
+        if ($null -ne $rollbackFailure) { throw $rollbackFailure }
+        if ($null -ne $cleanupFailure) { throw $cleanupFailure }
     }.GetNewClosure()
 
     $mutation = {
-        & $NeutralizeTaskAction $taskName
-        $installState.Phase = 'TaskNeutralized'
         try {
             if (-not (Test-Path -LiteralPath $SourcePath -PathType Container)) {
                 throw "Source path does not exist: $SourcePath"
@@ -498,27 +682,45 @@ function Invoke-ServiceHostInstall {
             }
             $installState.Manifest = $manifest
 
-            & $ProtectStateTreeAction $StatePath
-            if (Test-Path -LiteralPath $previousPath) {
-                & $ProtectStateTreeAction $StatePath
-                & $RemovePathAction $previousPath $true
-            }
-            & $ProtectStateTreeAction $StatePath
-            & $EnsureDirectoryAction $previousPath
-            & $ProtectStateTreeAction $StatePath
-            & $EnsureDirectoryAction $previousManagerDirectory
-
             $installState.HadCurrentInstall = Test-Path -LiteralPath $InstallPath -PathType Container
             $installState.HadPreviousRuntime = Test-Path -LiteralPath $hostPath -PathType Leaf
             $installState.HadPreviousManager = Test-Path -LiteralPath $managerTarget -PathType Leaf
             $installState.HadPreviousManifest = Test-Path -LiteralPath $installedManifestTarget -PathType Leaf
+            if ($installState.HadPreviousRuntime -and -not $installState.HadPreviousManager) {
+                throw 'Existing runtime requires a verified manager snapshot: service_host_manager.ps1'
+            }
+            if ($installState.HadPreviousRuntime -and -not $installState.HadPreviousManifest) {
+                throw 'Existing runtime requires a verified release manifest snapshot: release.manifest.json'
+            }
+
+            $stageRoot = Join-Path $StatePath ([guid]::NewGuid().ToString('N'))
+            $stagePayloadPath = Join-Path $stageRoot 'Payload'
+            $stageManagerDirectory = Join-Path $stageRoot 'Manager'
+            $stageManagerPath = Join-Path $stageManagerDirectory 'service_host_manager.ps1'
+            $stageManifestPath = Join-Path $stageRoot 'release.manifest.json'
+            $stagePreviousPath = Join-Path $stageRoot 'PreparedPrevious'
+            $stagePreviousManagerDirectory = Join-Path $stagePreviousPath 'Manager'
+            $stagePreviousManagerPath = Join-Path $stagePreviousManagerDirectory 'service_host_manager.ps1'
+            $stagePreviousManifestPath = Join-Path $stagePreviousPath 'release.manifest.json'
+            $displacedPreviousPath = Join-Path $stageRoot 'DisplacedPrevious'
+            $installState.StageRoot = $stageRoot
+            $installState.StagePayloadPath = $stagePayloadPath
+            $installState.StageManagerPath = $stageManagerPath
+            $installState.StageManifestPath = $stageManifestPath
+            $installState.StagePreviousPath = $stagePreviousPath
+            $installState.DisplacedPreviousPath = $displacedPreviousPath
+
+            foreach ($directory in @($stageRoot, $stagePayloadPath, $stageManagerDirectory, $stagePreviousPath, $stagePreviousManagerDirectory)) {
+                & $ProtectStateTreeAction $StatePath
+                & $EnsureDirectoryAction $directory
+            }
             if ($installState.HadPreviousManager) {
                 $previousManagerLength = [long](Get-Item -LiteralPath $managerTarget -ErrorAction Stop).Length
                 $previousManagerHash = (Get-FileHash -LiteralPath $managerTarget -Algorithm SHA256 -ErrorAction Stop).Hash
                 & $ProtectStateTreeAction $StatePath
-                & $CopyFileAction $managerTarget $previousManagerPath
-                if ([long](Get-Item -LiteralPath $previousManagerPath -ErrorAction Stop).Length -ne $previousManagerLength -or
-                    (Get-FileHash -LiteralPath $previousManagerPath -Algorithm SHA256 -ErrorAction Stop).Hash -ne $previousManagerHash) {
+                & $CopyFileAction $managerTarget $stagePreviousManagerPath
+                if ([long](Get-Item -LiteralPath $stagePreviousManagerPath -ErrorAction Stop).Length -ne $previousManagerLength -or
+                    (Get-FileHash -LiteralPath $stagePreviousManagerPath -Algorithm SHA256 -ErrorAction Stop).Hash -ne $previousManagerHash) {
                     throw 'Previous manager snapshot verification failed: service_host_manager.ps1'
                 }
             }
@@ -526,28 +728,13 @@ function Invoke-ServiceHostInstall {
                 $previousManifestLength = [long](Get-Item -LiteralPath $installedManifestTarget -ErrorAction Stop).Length
                 $previousManifestHash = (Get-FileHash -LiteralPath $installedManifestTarget -Algorithm SHA256 -ErrorAction Stop).Hash
                 & $ProtectStateTreeAction $StatePath
-                & $CopyFileAction $installedManifestTarget $previousManifestPath
-                if ([long](Get-Item -LiteralPath $previousManifestPath -ErrorAction Stop).Length -ne $previousManifestLength -or
-                    (Get-FileHash -LiteralPath $previousManifestPath -Algorithm SHA256 -ErrorAction Stop).Hash -ne $previousManifestHash) {
+                & $CopyFileAction $installedManifestTarget $stagePreviousManifestPath
+                if ([long](Get-Item -LiteralPath $stagePreviousManifestPath -ErrorAction Stop).Length -ne $previousManifestLength -or
+                    (Get-FileHash -LiteralPath $stagePreviousManifestPath -Algorithm SHA256 -ErrorAction Stop).Hash -ne $previousManifestHash) {
                     throw 'Previous release manifest snapshot verification failed: release.manifest.json'
                 }
             }
             $installState.Phase = 'PreviousSnapshotted'
-
-            $stageRoot = Join-Path $StatePath ([guid]::NewGuid().ToString('N'))
-            $stagePayloadPath = Join-Path $stageRoot 'Payload'
-            $stageManagerDirectory = Join-Path $stageRoot 'Manager'
-            $stageManagerPath = Join-Path $stageManagerDirectory 'service_host_manager.ps1'
-            $stageManifestPath = Join-Path $stageRoot 'release.manifest.json'
-            $installState.StageRoot = $stageRoot
-            $installState.StagePayloadPath = $stagePayloadPath
-            $installState.StageManagerPath = $stageManagerPath
-            $installState.StageManifestPath = $stageManifestPath
-
-            foreach ($directory in @($stageRoot, $stagePayloadPath, $stageManagerDirectory)) {
-                & $ProtectStateTreeAction $StatePath
-                & $EnsureDirectoryAction $directory
-            }
             foreach ($entry in @($manifest.files)) {
                 $source = Join-Path $SourcePath ([string]$entry.path)
                 $target = Join-Path $stagePayloadPath ([string]$entry.path)
@@ -592,25 +779,35 @@ function Invoke-ServiceHostInstall {
             $installState.Bridge = $bridge
             $installState.Phase = 'StageVerified'
 
+            if (Test-Path -LiteralPath $previousPath) {
+                & $ProtectStateTreeAction $StatePath
+                & $invokeMoveAndInspect $previousPath $displacedPreviousPath 'PreviousDisplaced'
+            }
+            & $ProtectStateTreeAction $StatePath
+            & $invokeMoveAndInspect $stagePreviousPath $previousPath 'PreviousPrepared'
+            $installState.Phase = 'PreviousPrepared'
+
+            try { & $NeutralizeTaskAction $taskName }
+            finally { $installState.TaskNeutralized = $null -eq (& $GetTaskAction $taskName) }
+            $installState.Phase = 'TaskNeutralized'
+            $installState.StopAttempted = $true
             & $stopExpectedHost
             $installState.Stopped = $true
             $installState.Phase = 'Stopped'
 
             if ($installState.HadCurrentInstall) {
                 & $ProtectStateTreeAction $StatePath
-                & $MovePathAction $InstallPath $previousPayloadPath
-                $installState.CurrentMoved = $true
+                & $invokeMoveAndInspect $InstallPath $previousPayloadPath 'CurrentMoved'
             }
             $installState.Phase = 'CurrentMoved'
 
             & $ProtectStateTreeAction $StatePath
-            & $MovePathAction $stagePayloadPath $InstallPath
-            $installState.PromotionHappened = $true
+            & $invokeMoveAndInspect $stagePayloadPath $InstallPath 'PromotionHappened'
+            & $ProtectRuntimeTreeAction $InstallPath
             $installState.Phase = 'PayloadPromoted'
 
             & $ProtectStateTreeAction $StatePath
-            & $MovePathAction $stageManagerPath $managerTarget
-            $installState.ManagerPromoted = $true
+            & $invokeMoveAndInspect $stageManagerPath $managerTarget 'ManagerPromoted'
             $installState.Phase = 'ManagerPromoted'
             if ([long](Get-Item -LiteralPath $managerTarget -ErrorAction Stop).Length -ne [long]$manifest.manager.length -or
                 (Get-FileHash -LiteralPath $managerTarget -Algorithm SHA256 -ErrorAction Stop).Hash -ne [string]$manifest.manager.sha256) {
@@ -618,16 +815,14 @@ function Invoke-ServiceHostInstall {
             }
 
             & $ProtectStateTreeAction $StatePath
-            & $MovePathAction $stageManifestPath $installedManifestTarget
-            $installState.ManifestPromoted = $true
+            & $invokeMoveAndInspect $stageManifestPath $installedManifestTarget 'ManifestPromoted'
             $installState.Phase = 'ManifestPromoted'
             if ([long](Get-Item -LiteralPath $installedManifestTarget -ErrorAction Stop).Length -ne $manifestSourceLength -or
                 (Get-FileHash -LiteralPath $installedManifestTarget -Algorithm SHA256 -ErrorAction Stop).Hash -ne $manifestSourceHash) {
                 throw 'Promoted release manifest verification failed: release.manifest.json'
             }
 
-            & $ProtectStateTreeAction $StatePath
-            & $RemovePathAction $stageRoot $true
+            & $cleanupStageLocked
 
             if (-not (Test-Path -LiteralPath $hostPath -PathType Leaf)) {
                 throw "Installed executable was not found: $hostPath"
@@ -656,17 +851,35 @@ function Invoke-ServiceHostInstall {
                 catch {
                     $primaryFailure.Exception.Data['RollbackFailure'] = $_.Exception.Message
                     $primaryFailure.Exception.Data['TaskNeutralizationFailure'] = $_.Exception.Message
+                    if ($null -ne $_.Exception.Data['StageCleanupFailure']) {
+                        $primaryFailure.Exception.Data['StageCleanupFailure'] = $_.Exception.Data['StageCleanupFailure']
+                    }
                 }
             }
-            elseif (-not [string]::IsNullOrWhiteSpace($installState.StageRoot) -and
-                (Test-Path -LiteralPath $installState.StageRoot)) {
+            elseif ($installState.TaskNeutralized) {
+                $recoveryFailure = $null
                 try {
-                    & $ProtectStateTreeAction $StatePath
-                    & $RemovePathAction $installState.StageRoot $true
+                    & $restorePreflightPreviousLocked
                 }
-                catch {
-                    $primaryFailure.Exception.Data['StageCleanupFailure'] = $_.Exception.Message
+                catch { $recoveryFailure = $_ }
+                if ($installState.HadPreviousRuntime) {
+                    try {
+                        & $ProtectStateTreeAction $StatePath
+                        Register-ServiceHostTask -Plan $plan -RegisterTaskAction $RegisterTaskAction
+                        if ($installState.StopAttempted) { $installState.RollbackPrepared = $true }
+                    }
+                    catch { if ($null -eq $recoveryFailure) { $recoveryFailure = $_ } }
                 }
+                try { & $cleanupStageLocked }
+                catch { $primaryFailure.Exception.Data['StageCleanupFailure'] = $_.Exception.Message }
+                if ($null -ne $recoveryFailure) { $primaryFailure.Exception.Data['RollbackFailure'] = $recoveryFailure.Exception.Message }
+            }
+            else {
+                try {
+                    & $restorePreflightPreviousLocked
+                    & $cleanupStageLocked
+                }
+                catch { $primaryFailure.Exception.Data['StageCleanupFailure'] = $_.Exception.Message }
             }
             throw $primaryFailure
         }
@@ -697,6 +910,9 @@ function Invoke-ServiceHostInstall {
         catch {
             $primaryFailure.Exception.Data['RollbackFailure'] = $_.Exception.Message
             $primaryFailure.Exception.Data['TaskNeutralizationFailure'] = $_.Exception.Message
+            if ($null -ne $_.Exception.Data['StageCleanupFailure']) {
+                $primaryFailure.Exception.Data['StageCleanupFailure'] = $_.Exception.Data['StageCleanupFailure']
+            }
         }
         if ($installState.RollbackPrepared) {
             try { & $startAndVerify }

@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet('manifest-contract', 'host-wins', 'settings-excluded', 'manager-entry', 'copy-corruption', 'manifest-written-last', 'all')]
+    [ValidateSet('manifest-contract', 'host-wins', 'settings-excluded', 'manager-entry', 'copy-corruption', 'manifest-written-last', 'release-id-unborn-fallback', 'manager-source-change', 'all')]
     [string]$Scenario = 'all'
 )
 
@@ -20,6 +20,12 @@ function Assert-Equal($Expected, $Actual, [string]$Because) {
 
 function Assert-True([bool]$Condition, [string]$Because) {
     if (-not $Condition) { throw $Because }
+}
+
+function Assert-Matches([string]$Pattern, [string]$Actual, [string]$Because) {
+    if ($Actual -notmatch $Pattern) {
+        throw "$Because. Expected [$Actual] to match [$Pattern]."
+    }
 }
 
 function Assert-Throws([scriptblock]$Action, [string]$Because) {
@@ -145,6 +151,53 @@ function Run-Scenario {
                     Assert-True ($completionTime -ge $payloadTime) 'final manifest must be the last published runtime artifact'
                 }
             }
+            'release-id-unborn-fallback' {
+                $repositoryPath = Join-Path $fixture.Root 'unborn-repository'
+                & git init --quiet $repositoryPath
+                if ($LASTEXITCODE) { throw 'Failed to initialize temporary unborn repository.' }
+
+                # Reproduce Git variants that print symbolic HEAD while still returning 128.
+                $gitShimPath = Join-Path $fixture.Root 'git.cmd'
+                [IO.File]::WriteAllText($gitShimPath, "@echo HEAD`r`n@exit /b 128`r`n", [Text.Encoding]::ASCII)
+                $previousPath = $env:PATH
+                try {
+                    $env:PATH = $fixture.Root + ';' + $previousPath
+                    $releaseId = Get-DefaultReleaseId -RepositoryPath $repositoryPath
+                }
+                finally {
+                    $env:PATH = $previousPath
+                }
+                Assert-Matches '^\d{8}T\d{13}Z$' $releaseId 'unborn repository must use the UTC timestamp fallback'
+                Assert-True ($releaseId -ne 'HEAD') 'failed git output must never become the release ID'
+            }
+            'manager-source-change' {
+                $managerSourcePath = $fixture.Manager
+                $originalManifestFunction = (Get-Command New-ReleaseManifest -CommandType Function).ScriptBlock
+                try {
+                    Set-Item -LiteralPath Function:\New-ReleaseManifest -Value {
+                        param(
+                            [string]$PayloadRoot,
+                            [string]$ManagerPath,
+                            [string]$ReleaseId,
+                            [datetime]$PublishedAtUtc
+                        )
+                        Set-Content -LiteralPath $managerSourcePath -Value '# changed after verified copy' -NoNewline
+                        & $originalManifestFunction -PayloadRoot $PayloadRoot -ManagerPath $ManagerPath `
+                            -ReleaseId $ReleaseId -PublishedAtUtc $PublishedAtUtc
+                    }
+
+                    $manifest = Invoke-FixturePublish -Fixture $fixture
+                }
+                finally {
+                    Set-Item -LiteralPath Function:\New-ReleaseManifest -Value $originalManifestFunction
+                }
+
+                $publishedManager = Join-Path $fixture.Destination 'service_host_manager.ps1'
+                $publishedHash = (Get-FileHash -LiteralPath $publishedManager -Algorithm SHA256).Hash
+                $changedSourceHash = (Get-FileHash -LiteralPath $fixture.Manager -Algorithm SHA256).Hash
+                Assert-True ($changedSourceHash -ne $publishedHash) 'test must mutate the manager source after its destination copy'
+                Assert-Equal $publishedHash $manifest.manager.sha256 'manager manifest entry must describe the verified destination bytes'
+            }
             default {
                 throw "Unknown scenario: $Name"
             }
@@ -161,7 +214,9 @@ $allScenarios = @(
     'settings-excluded',
     'manager-entry',
     'copy-corruption',
-    'manifest-written-last'
+    'manifest-written-last',
+    'release-id-unborn-fallback',
+    'manager-source-change'
 )
 
 if ($Scenario -eq 'all') {

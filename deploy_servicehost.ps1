@@ -137,7 +137,7 @@ function Publish-ServiceHostRelease {
 
         $publishedManagerPath = Join-Path $DestinationPath 'service_host_manager.ps1'
         Copy-VerifiedFile -Source $ManagerPath -Destination $publishedManagerPath -CopyFileAction $CopyFileAction
-        $manifest = New-ReleaseManifest -PayloadRoot $temporaryPayload -ManagerPath $ManagerPath `
+        $manifest = New-ReleaseManifest -PayloadRoot $temporaryPayload -ManagerPath $publishedManagerPath `
             -ReleaseId $ReleaseId -PublishedAtUtc $PublishedAtUtc
 
         $json = $manifest | ConvertTo-Json -Depth 5
@@ -156,13 +156,17 @@ function Get-DefaultReleaseId {
     param([Parameter(Mandatory = $true)][string]$RepositoryPath)
 
     $commit = $null
+    $gitExitCode = 1
     try {
-        $commit = (& git -C $RepositoryPath rev-parse HEAD 2>$null | Select-Object -First 1)
+        $gitOutput = @(& git -C $RepositoryPath rev-parse HEAD 2>$null)
+        $gitExitCode = $LASTEXITCODE
+        $commit = ($gitOutput | Select-Object -First 1)
     }
     catch {
         $commit = $null
+        $gitExitCode = 1
     }
-    if (-not [string]::IsNullOrWhiteSpace([string]$commit)) {
+    if ($gitExitCode -eq 0 -and -not [string]::IsNullOrWhiteSpace([string]$commit)) {
         return ([string]$commit).Trim()
     }
     return [datetime]::UtcNow.ToString('yyyyMMddTHHmmssfffffffZ')

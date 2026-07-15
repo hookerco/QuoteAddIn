@@ -10,6 +10,10 @@ function Assert-Equal($Expected, $Actual, [string]$Because) {
     }
 }
 
+function Assert-True([bool]$Value, [string]$Because) {
+    if (-not $Value) { throw $Because }
+}
+
 function Assert-Throws([scriptblock]$Action, [string]$Because) {
     $threw = $false
     try {
@@ -49,6 +53,83 @@ function New-ValidManifest {
             length = 456
             sha256 = ('B' * 64)
         }
+    }
+}
+
+function New-TestTree {
+    $root = Join-Path ([IO.Path]::GetTempPath()) ('service-host-manager-test-' + [guid]::NewGuid().ToString('N'))
+    $share = Join-Path $root 'share'
+    $install = Join-Path $root 'install'
+    $statePath = Join-Path $root 'state'
+    New-Item -ItemType Directory -Force -Path $share, $install, $statePath | Out-Null
+    [pscustomobject]@{
+        Root = $root
+        Share = $share
+        Install = $install
+        StatePath = $statePath
+    }
+}
+
+function Remove-TestTree($Tree) {
+    Remove-Item -LiteralPath $Tree.Root -Recurse -Force -ErrorAction SilentlyContinue
+}
+
+function Write-TestRelease {
+    param(
+        $Tree,
+        [string]$ReleaseId = 'release-b',
+        [string]$HostBytes = 'new-bytes',
+        [string]$ManagerBytes = 'new-manager'
+    )
+
+    $hostPath = Join-Path $Tree.Share 'QuickBooksServiceHost.exe'
+    $managerPath = Join-Path $Tree.Share 'service_host_manager.ps1'
+    [IO.File]::WriteAllText($hostPath, $HostBytes)
+    [IO.File]::WriteAllText($managerPath, $ManagerBytes)
+    $manifest = [pscustomobject]@{
+        schema_version = 1
+        release_id = $ReleaseId
+        published_at_utc = '2026-07-15T10:00:00Z'
+        files = @(
+            [pscustomobject]@{
+                path = 'QuickBooksServiceHost.exe'
+                length = [long](Get-Item -LiteralPath $hostPath).Length
+                sha256 = (Get-FileHash -LiteralPath $hostPath -Algorithm SHA256).Hash
+            }
+        )
+        manager = [pscustomobject]@{
+            path = 'service_host_manager.ps1'
+            length = [long](Get-Item -LiteralPath $managerPath).Length
+            sha256 = (Get-FileHash -LiteralPath $managerPath -Algorithm SHA256).Hash
+        }
+    }
+    $manifest | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $Tree.Share 'release.manifest.json')
+    return $manifest
+}
+
+function Write-InstalledRelease {
+    param($Tree, [string]$ReleaseId = 'release-a', [string]$HostBytes = 'old-bytes')
+
+    [IO.File]::WriteAllText((Join-Path $Tree.Install 'QuickBooksServiceHost.exe'), $HostBytes)
+    [IO.File]::WriteAllText((Join-Path $Tree.StatePath 'service_host_manager.ps1'), 'old-manager')
+    [pscustomobject]@{
+        schema_version = 1
+        release_id = $ReleaseId
+        published_at_utc = '2026-07-14T10:00:00Z'
+        files = @()
+        manager = $null
+    } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $Tree.StatePath 'installed.manifest.json')
+}
+
+function New-OrchestrationActions {
+    param($State, [object[]]$Processes = @())
+
+    [pscustomobject]@{
+        GetProcesses = { $Processes }.GetNewClosure()
+        StopProcess = { param($process) $State.Stopped += @($process.Id) }.GetNewClosure()
+        StartHost = { $State.Starts++ }.GetNewClosure()
+        TestHost = { $true }
+        Mutex = { param($name, $action) $State.MutexName = $name; & $action }.GetNewClosure()
     }
 }
 
@@ -159,6 +240,252 @@ function Run-Scenario {
                 'Invalid manifest hash: QuickBooksServiceHost.exe' `
                 'non-hex SHA-256 must be rejected precisely'
         }
+        'update-success' {
+            $tree = New-TestTree
+            try {
+                $manifest = Write-TestRelease -Tree $tree
+                Write-InstalledRelease -Tree $tree
+                $state = [pscustomobject]@{ Stops = 0; Starts = 0; Healthy = $true }
+                $stop = { $state.Stops++ }.GetNewClosure()
+                $start = { $state.Starts++ }.GetNewClosure()
+                $health = { $state.Healthy }.GetNewClosure()
+                Invoke-ReleaseTransaction -Manifest $manifest -SharePath $tree.Share `
+                    -InstallPath $tree.Install -StatePath $tree.StatePath `
+                    -StopHost $stop -StartHost $start -TestHost $health
+                Assert-Equal 1 $state.Stops 'host stopped once after staging verifies'
+                Assert-Equal 1 $state.Starts 'new host started once'
+                Assert-Equal 'new-bytes' (Get-Content -Raw (Join-Path $tree.Install 'QuickBooksServiceHost.exe')) `
+                    'new runtime installed'
+                Assert-Equal 'release-b' ((Get-Content -Raw (Join-Path $tree.StatePath 'installed.manifest.json') | ConvertFrom-Json).release_id) `
+                    'installed release state updated'
+            }
+            finally { Remove-TestTree $tree }
+        }
+        'update-rolls-back' {
+            $tree = New-TestTree
+            try {
+                $manifest = Write-TestRelease -Tree $tree
+                Write-InstalledRelease -Tree $tree
+                $state = [pscustomobject]@{ Stops = 0; Starts = 0; Healthy = $false }
+                $stop = { $state.Stops++ }.GetNewClosure()
+                $start = {
+                    $state.Starts++
+                    if ($state.Starts -eq 2) { $state.Healthy = $true }
+                }.GetNewClosure()
+                $health = { $state.Healthy }.GetNewClosure()
+                Assert-ThrowsMessage {
+                    Invoke-ReleaseTransaction -Manifest $manifest -SharePath $tree.Share `
+                        -InstallPath $tree.Install -StatePath $tree.StatePath `
+                        -StopHost $stop -StartHost $start -TestHost $health
+                } 'Release failed; previous host restored.' `
+                    'failed replacement must report failure after restoring the previous host'
+                Assert-Equal 1 $state.Stops 'rollback transaction stops the old host once'
+                Assert-Equal 2 $state.Starts 'rollback transaction starts new then previous host'
+                Assert-Equal 'old-bytes' (Get-Content -Raw (Join-Path $tree.Install 'QuickBooksServiceHost.exe')) `
+                    'failed replacement restores old runtime bytes'
+                Assert-Equal 'release-a' ((Get-Content -Raw (Join-Path $tree.StatePath 'installed.manifest.json') | ConvertFrom-Json).release_id) `
+                    'failed replacement restores old installed manifest'
+                Assert-Equal 'new-manager' (Get-Content -Raw (Join-Path $tree.StatePath 'service_host_manager.ps1')) `
+                    'manager update remains independent after runtime rollback is final'
+            }
+            finally { Remove-TestTree $tree }
+        }
+        'stage-hash-fails-before-stop' {
+            $tree = New-TestTree
+            try {
+                $manifest = Write-TestRelease -Tree $tree
+                Write-InstalledRelease -Tree $tree
+                $manifest.files[0].sha256 = ('C' * 64)
+                $state = [pscustomobject]@{ Stops = 0; Starts = 0 }
+                $stop = { $state.Stops++ }.GetNewClosure()
+                $start = { $state.Starts++ }.GetNewClosure()
+                Assert-Throws {
+                    Invoke-ReleaseTransaction -Manifest $manifest -SharePath $tree.Share `
+                        -InstallPath $tree.Install -StatePath $tree.StatePath `
+                        -StopHost $stop -StartHost $start -TestHost { $true }
+                } 'corrupt staged bytes must reject the release'
+                Assert-Equal 0 $state.Stops 'staging verification failure must not stop host'
+                Assert-Equal 0 $state.Starts 'staging verification failure must not start host'
+                Assert-Equal 'old-bytes' (Get-Content -Raw (Join-Path $tree.Install 'QuickBooksServiceHost.exe')) `
+                    'staging verification failure preserves installed bytes'
+            }
+            finally { Remove-TestTree $tree }
+        }
+        'manager-self-updates' {
+            $tree = New-TestTree
+            try {
+                $manifest = Write-TestRelease -Tree $tree -ManagerBytes 'new-manager'
+                Write-InstalledRelease -Tree $tree
+                $state = [pscustomobject]@{ Stops = 0; Starts = 0 }
+                Invoke-ReleaseTransaction -Manifest $manifest -SharePath $tree.Share `
+                    -InstallPath $tree.Install -StatePath $tree.StatePath `
+                    -StopHost { $state.Stops++ }.GetNewClosure() `
+                    -StartHost { $state.Starts++ }.GetNewClosure() -TestHost { $true }
+                Assert-Equal 'new-manager' (Get-Content -Raw (Join-Path $tree.StatePath 'service_host_manager.ps1')) `
+                    'verified manager entry replaces local manager after runtime result is final'
+            }
+            finally { Remove-TestTree $tree }
+        }
+        'hidden-startup' {
+            $tree = New-TestTree
+            try {
+                Write-InstalledRelease -Tree $tree
+                $capture = [pscustomobject]@{ FilePath = ''; WorkingDirectory = ''; WindowStyle = '' }
+                $process = Start-InstalledHost -InstallPath $tree.Install -StartProcessAction {
+                    param($filePath, $workingDirectory, $windowStyle)
+                    $capture.FilePath = $filePath
+                    $capture.WorkingDirectory = $workingDirectory
+                    $capture.WindowStyle = $windowStyle
+                    return [pscustomobject]@{ Id = 42; Path = $filePath }
+                }.GetNewClosure()
+                Assert-Equal (Join-Path $tree.Install 'QuickBooksServiceHost.exe') $capture.FilePath `
+                    'host startup uses installed executable'
+                Assert-Equal $tree.Install $capture.WorkingDirectory 'host startup uses exact install working directory'
+                Assert-Equal 'Hidden' $capture.WindowStyle 'host startup uses hidden window style'
+                Assert-Equal 42 $process.Id 'host startup returns created process'
+            }
+            finally { Remove-TestTree $tree }
+        }
+        'share-offline-starts-installed' {
+            $tree = New-TestTree
+            try {
+                Write-InstalledRelease -Tree $tree
+                Remove-Item -LiteralPath $tree.Share -Recurse -Force
+                $state = [pscustomobject]@{ Starts = 0; Stopped = @(); MutexName = '' }
+                $actions = New-OrchestrationActions -State $state
+                $result = Invoke-ServiceHostManager -SharePath $tree.Share -InstallPath $tree.Install `
+                    -StatePath $tree.StatePath -GetProcessesAction $actions.GetProcesses `
+                    -StopProcessAction $actions.StopProcess -StartHost $actions.StartHost `
+                    -TestHost $actions.TestHost -MutexAction $actions.Mutex
+                Assert-Equal 0 $result 'offline manager invocation exits successfully'
+                Assert-Equal 1 $state.Starts 'offline manager starts installed host when missing'
+                Assert-Equal 0 $state.Stopped.Count 'offline manager does not stop unrelated processes'
+            }
+            finally { Remove-TestTree $tree }
+        }
+        'qb-defers' {
+            $tree = New-TestTree
+            try {
+                Write-InstalledRelease -Tree $tree
+                Write-TestRelease -Tree $tree | Out-Null
+                $state = [pscustomobject]@{ Starts = 0; Stopped = @(); MutexName = '' }
+                $processes = @(
+                    [pscustomobject]@{ ProcessName = 'QBW32'; Id = 10; Path = 'C:\Fake\QBW32.exe' },
+                    [pscustomobject]@{ ProcessName = 'QuickBooksServiceHost'; Id = 11; Path = (Join-Path $tree.Install 'QuickBooksServiceHost.exe') }
+                )
+                $actions = New-OrchestrationActions -State $state -Processes $processes
+                Invoke-ServiceHostManager -SharePath $tree.Share -InstallPath $tree.Install `
+                    -StatePath $tree.StatePath -GetProcessesAction $actions.GetProcesses `
+                    -StopProcessAction $actions.StopProcess -StartHost $actions.StartHost `
+                    -TestHost $actions.TestHost -MutexAction $actions.Mutex | Out-Null
+                Assert-Equal 0 $state.Starts 'QuickBooks activity defers replacement startup'
+                Assert-Equal 0 $state.Stopped.Count 'QuickBooks activity defers before stopping host'
+                Assert-Equal 'old-bytes' (Get-Content -Raw (Join-Path $tree.Install 'QuickBooksServiceHost.exe')) `
+                    'QuickBooks deferral preserves installed bytes'
+            }
+            finally { Remove-TestTree $tree }
+        }
+        'cli-defers' {
+            $tree = New-TestTree
+            try {
+                Write-InstalledRelease -Tree $tree
+                Write-TestRelease -Tree $tree | Out-Null
+                $state = [pscustomobject]@{ Starts = 0; Stopped = @(); MutexName = '' }
+                $processes = @(
+                    [pscustomobject]@{ ProcessName = 'QuickBooksConnectorCli'; Id = 20; Path = 'C:\Fake\QuickBooksConnectorCli.exe' },
+                    [pscustomobject]@{ ProcessName = 'QuickBooksServiceHost'; Id = 21; Path = (Join-Path $tree.Install 'QuickBooksServiceHost.exe') }
+                )
+                $actions = New-OrchestrationActions -State $state -Processes $processes
+                Invoke-ServiceHostManager -SharePath $tree.Share -InstallPath $tree.Install `
+                    -StatePath $tree.StatePath -GetProcessesAction $actions.GetProcesses `
+                    -StopProcessAction $actions.StopProcess -StartHost $actions.StartHost `
+                    -TestHost $actions.TestHost -MutexAction $actions.Mutex | Out-Null
+                Assert-Equal 0 $state.Starts 'connector activity defers replacement startup'
+                Assert-Equal 0 $state.Stopped.Count 'connector activity defers before stopping host'
+            }
+            finally { Remove-TestTree $tree }
+        }
+        'mutex-skips-overlap' {
+            $tree = New-TestTree
+            try {
+                Write-InstalledRelease -Tree $tree
+                $state = [pscustomobject]@{ Starts = 0; MutexName = '' }
+                $skipMutex = {
+                    param($name, $action)
+                    $state.MutexName = $name
+                    return 0
+                }.GetNewClosure()
+                $result = Invoke-ServiceHostManager -SharePath $tree.Share -InstallPath $tree.Install `
+                    -StatePath $tree.StatePath -GetProcessesAction { throw 'must not inspect processes' } `
+                    -StopProcessAction { throw 'must not stop processes' } `
+                    -StartHost { $state.Starts++ }.GetNewClosure() -TestHost { $true } -MutexAction $skipMutex
+                Assert-Equal 0 $result 'overlapping invocation exits successfully'
+                Assert-Equal 'Global\QuickBooksServiceHostAutoUpdate' $state.MutexName 'manager uses required mutex name'
+                Assert-Equal 0 $state.Starts 'overlapping invocation performs no host action'
+                $log = Get-Content -Raw (Join-Path $tree.StatePath 'service-host-manager.log')
+                Assert-True ($log -match 'overlap_skipped') 'overlapping invocation records its skipped decision'
+            }
+            finally { Remove-TestTree $tree }
+        }
+        'wrong-path-host-replaced' {
+            $tree = New-TestTree
+            try {
+                Write-InstalledRelease -Tree $tree
+                $state = [pscustomobject]@{ Starts = 0; Stopped = @(); MutexName = '' }
+                $processes = @(
+                    [pscustomobject]@{ ProcessName = 'QuickBooksServiceHost'; Id = 31; Path = 'C:\Wrong\QuickBooksServiceHost.exe' },
+                    [pscustomobject]@{ ProcessName = 'QuickBooksServiceHost'; Id = 32; Path = 'C:\Duplicate\QuickBooksServiceHost.exe' }
+                )
+                $actions = New-OrchestrationActions -State $state -Processes $processes
+                Invoke-ServiceHostManager -SharePath (Join-Path $tree.Root 'offline') -InstallPath $tree.Install `
+                    -StatePath $tree.StatePath -GetProcessesAction $actions.GetProcesses `
+                    -StopProcessAction $actions.StopProcess -StartHost $actions.StartHost `
+                    -TestHost $actions.TestHost -MutexAction $actions.Mutex | Out-Null
+                Assert-Equal 2 $state.Stopped.Count 'all wrong-path host processes are stopped'
+                Assert-Equal 1 $state.Starts 'expected installed host starts after wrong-path hosts stop'
+            }
+            finally { Remove-TestTree $tree }
+        }
+        'logs-rotate' {
+            $tree = New-TestTree
+            try {
+                $logPath = Join-Path $tree.StatePath 'service-host-manager.log'
+                [IO.File]::WriteAllText($logPath, ('x' * (1MB - 10)))
+                foreach ($index in 1..5) {
+                    [IO.File]::WriteAllText("$logPath.$index", "old-$index")
+                }
+                Write-ManagerLog -StatePath $tree.StatePath -Record ([pscustomobject]@{
+                    installed_release = 'a'; available_release = 'b'; decision = 'apply-update'
+                    result = ('y' * 200); rollback = $false; host_pid = 1; host_path = 'C:\fake\host.exe'
+                })
+                Assert-True (Test-Path -LiteralPath "$logPath.1") 'oversized log rotates to .1'
+                Assert-True (Test-Path -LiteralPath "$logPath.5") 'log rotation retains fifth backup'
+                Assert-True (-not (Test-Path -LiteralPath "$logPath.6")) 'log rotation never creates sixth backup'
+                Assert-True ((Get-Item -LiteralPath $logPath).Length -lt 1MB) 'active log remains bounded after rotation'
+            }
+            finally { Remove-TestTree $tree }
+        }
+        'logs-redact' {
+            $tree = New-TestTree
+            try {
+                $secret = 'super-secret-bridge-token'
+                $env:QB_BRIDGE_TOKEN = $secret
+                Write-ManagerLog -StatePath $tree.StatePath -Record ([pscustomobject]@{
+                    installed_release = 'a'; available_release = 'b'; decision = 'defer-update'
+                    result = 'safe'; rollback = $false; host_pid = 1; host_path = 'C:\fake\host.exe'
+                    exception = "request used $secret"; environment = @{ QB_BRIDGE_TOKEN = $secret }
+                })
+                $line = Get-Content -Raw (Join-Path $tree.StatePath 'service-host-manager.log')
+                Assert-True (-not $line.Contains($secret)) 'structured log excludes token-bearing exception and environment data'
+                $record = $line | ConvertFrom-Json
+                Assert-True ($null -ne $record.timestamp_utc) 'structured log includes UTC timestamp'
+                Assert-Equal 'defer-update' $record.decision 'structured log preserves allowlisted decision'
+            }
+            finally {
+                Remove-Item Env:\QB_BRIDGE_TOKEN -ErrorAction SilentlyContinue
+                Remove-TestTree $tree
+            }
+        }
         default {
             throw "Unknown scenario: $Name"
         }
@@ -180,7 +507,19 @@ $allScenarios = @(
     'manifest-rejects-release-id',
     'manifest-rejects-duplicate',
     'manifest-rejects-length',
-    'manifest-rejects-hash'
+    'manifest-rejects-hash',
+    'update-success',
+    'update-rolls-back',
+    'stage-hash-fails-before-stop',
+    'share-offline-starts-installed',
+    'qb-defers',
+    'cli-defers',
+    'mutex-skips-overlap',
+    'manager-self-updates',
+    'logs-rotate',
+    'logs-redact',
+    'wrong-path-host-replaced',
+    'hidden-startup'
 )
 
 if ($Scenario -eq 'all') {

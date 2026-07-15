@@ -285,8 +285,8 @@ function Run-Scenario {
                     'failed replacement restores old runtime bytes'
                 Assert-Equal 'release-a' ((Get-Content -Raw (Join-Path $tree.StatePath 'installed.manifest.json') | ConvertFrom-Json).release_id) `
                     'failed replacement restores old installed manifest'
-                Assert-Equal 'new-manager' (Get-Content -Raw (Join-Path $tree.StatePath 'service_host_manager.ps1')) `
-                    'manager update remains independent after runtime rollback is final'
+                Assert-Equal 'old-manager' (Get-Content -Raw (Join-Path $tree.StatePath 'service_host_manager.ps1')) `
+                    'runtime transaction leaves manager reconciliation to orchestration'
             }
             finally { Remove-TestTree $tree }
         }
@@ -314,13 +314,15 @@ function Run-Scenario {
         'manager-self-updates' {
             $tree = New-TestTree
             try {
-                $manifest = Write-TestRelease -Tree $tree -ManagerBytes 'new-manager'
+                Write-TestRelease -Tree $tree -ManagerBytes 'new-manager' | Out-Null
                 Write-InstalledRelease -Tree $tree
-                $state = [pscustomobject]@{ Stops = 0; Starts = 0 }
-                Invoke-ReleaseTransaction -Manifest $manifest -SharePath $tree.Share `
-                    -InstallPath $tree.Install -StatePath $tree.StatePath `
-                    -StopHost { $state.Stops++ }.GetNewClosure() `
-                    -StartHost { $state.Starts++ }.GetNewClosure() -TestHost { $true }
+                $state = [pscustomobject]@{ Starts = 0; Stopped = @(); MutexName = '' }
+                $processes = @([pscustomobject]@{ ProcessName = 'QuickBooksServiceHost'; Id = 51; Path = (Join-Path $tree.Install 'QuickBooksServiceHost.exe') })
+                $actions = New-OrchestrationActions -State $state -Processes $processes
+                Invoke-ServiceHostManager -SharePath $tree.Share -InstallPath $tree.Install `
+                    -StatePath $tree.StatePath -GetProcessesAction $actions.GetProcesses `
+                    -StopProcessAction $actions.StopProcess -StartHost $actions.StartHost `
+                    -TestHost $actions.TestHost -MutexAction $actions.Mutex | Out-Null
                 Assert-Equal 'new-manager' (Get-Content -Raw (Join-Path $tree.StatePath 'service_host_manager.ps1')) `
                     'verified manager entry replaces local manager after runtime result is final'
             }
@@ -677,6 +679,50 @@ function Run-Scenario {
             }
             finally { Remove-TestTree $tree }
         }
+        'manager-reconciliation-owned-once-after-update' {
+            $tree = New-TestTree
+            $originalUpdateManager = (Get-Command Update-InstalledManager).ScriptBlock
+            try {
+                Write-TestRelease -Tree $tree -ReleaseId 'release-b' -ManagerBytes 'single-owner-manager' | Out-Null
+                Write-InstalledRelease -Tree $tree -ReleaseId 'release-a'
+                $state = [pscustomobject]@{ ManagerCalls = 0; Starts = 0; Stopped = @(); MutexName = '' }
+                $processes = @(
+                    [pscustomobject]@{
+                        ProcessName = 'QuickBooksServiceHost'
+                        Id = 81
+                        Path = (Join-Path $tree.Install 'QuickBooksServiceHost.exe')
+                    }
+                )
+                $actions = New-OrchestrationActions -State $state -Processes $processes
+                $replacement = {
+                    param($Manifest, $SharePath, $StatePath)
+                    $state.ManagerCalls++
+                    & $originalUpdateManager -Manifest $Manifest -SharePath $SharePath -StatePath $StatePath
+                    if ($state.ManagerCalls -eq 1) {
+                        Remove-Item -LiteralPath $SharePath -Recurse -Force
+                    }
+                }.GetNewClosure()
+                Set-Item -Path Function:\Update-InstalledManager -Value $replacement
+
+                Invoke-ServiceHostManager -SharePath $tree.Share -InstallPath $tree.Install `
+                    -StatePath $tree.StatePath -GetProcessesAction $actions.GetProcesses `
+                    -StopProcessAction $actions.StopProcess -StartHost $actions.StartHost `
+                    -TestHost $actions.TestHost -MutexAction $actions.Mutex | Out-Null
+
+                Assert-Equal 1 $state.ManagerCalls 'manager reconciliation has one owner after runtime outcome is final'
+                Assert-Equal 'new-bytes' (Get-Content -Raw (Join-Path $tree.Install 'QuickBooksServiceHost.exe')) `
+                    'completed runtime update remains installed after the share disappears'
+                Assert-Equal 'single-owner-manager' (Get-Content -Raw (Join-Path $tree.StatePath 'service_host_manager.ps1')) `
+                    'single manager reconciliation completes before the share disappears'
+                $record = Get-Content -Raw (Join-Path $tree.StatePath 'service-host-manager.log') | ConvertFrom-Json
+                Assert-Equal 'apply-update' $record.decision 'completed update retains its logged decision'
+                Assert-Equal 'updated' $record.result 'completed update retains its logged result'
+            }
+            finally {
+                Set-Item -Path Function:\Update-InstalledManager -Value $originalUpdateManager
+                Remove-TestTree $tree
+            }
+        }
         default {
             throw "Unknown scenario: $Name"
         }
@@ -716,7 +762,8 @@ $allScenarios = @(
     'partial-stop-failure-restarts-installed',
     'manager-retries-when-runtime-current',
     'activity-race-defers-after-staging',
-    'logs-refresh-host-after-action'
+    'logs-refresh-host-after-action',
+    'manager-reconciliation-owned-once-after-update'
 )
 
 if ($Scenario -eq 'all') {

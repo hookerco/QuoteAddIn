@@ -222,7 +222,6 @@ function Invoke-ReleaseTransaction {
                 if (-not (& $TestHost)) {
                     throw 'Release failed and previous host failed to restart.'
                 }
-                Update-InstalledManager -Manifest $Manifest -SharePath $SharePath -StatePath $StatePath
                 throw 'Release failed; previous host restored.'
             }
         }
@@ -246,7 +245,6 @@ function Invoke-ReleaseTransaction {
         throw
     }
 
-    Update-InstalledManager -Manifest $Manifest -SharePath $SharePath -StatePath $StatePath
     return 'updated'
 }
 

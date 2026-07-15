@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet('static', 'task-plan', 'identity-mismatch', 'manifest-install', 'corrupt-manager', 'corrupt-installed-manager', 'stale-cleanup', 'stop-race', 'stop-timeout', 'reinstall-idempotent', 'all')]
+    [ValidateSet('static', 'task-plan', 'state-security', 'identity-mismatch', 'identity-binding', 'installer-mutex', 'manifest-install', 'corrupt-manager', 'corrupt-installed-manager', 'stale-cleanup', 'stop-race', 'stop-timeout', 'reinstall-idempotent', 'all')]
     [string]$Scenario = 'all'
 )
 
@@ -103,10 +103,16 @@ function New-InjectedActions {
         ExitPollsRemaining = 0
         NeverExit = $false
         RequireExitBeforeCopy = $false
+        SecurityPasses = 0
+        Locked = $false
+        MutexName = ''
+        MutexWaitMilliseconds = 0
+        Events = @()
     }
     [pscustomobject]@{
         State = $state
         CurrentIdentity = { [pscustomobject]@{ Name = 'DOMAIN\estimator'; Sid = 'S-1-5-21-1000' } }
+        ResolveUserSid = { param($name) 'S-1-5-21-1000' }
         TestAdministrator = { $true }
         ReadManifest = { param($path) Get-Content -Raw -LiteralPath $path | ConvertFrom-Json }
         EnsureDirectory = { param($path) New-Item -ItemType Directory -Force -Path $path | Out-Null }
@@ -151,6 +157,16 @@ function New-InjectedActions {
         }.GetNewClosure()
         StopProcess = { param($process) $state.StopCalls++; $state.StopRequested = $true }.GetNewClosure()
         Wait = { $state.WaitCalls++ }.GetNewClosure()
+        ProtectStateTree = { param($path) $state.SecurityPasses++ }.GetNewClosure()
+        Mutex = {
+            param($name, $waitMilliseconds, $action)
+            $state.MutexName = $name
+            $state.MutexWaitMilliseconds = $waitMilliseconds
+            $state.Events += "mutex:$name"
+            $state.Locked = $true
+            try { & $action }
+            finally { $state.Locked = $false; $state.Events += 'release' }
+        }.GetNewClosure()
     }
 }
 
@@ -164,6 +180,7 @@ function Invoke-FixtureInstall {
         InteractiveUser = 'DOMAIN\estimator'
         InteractiveSid = 'S-1-5-21-1000'
         GetCurrentIdentityAction = $Actions.CurrentIdentity
+        ResolveInteractiveUserSidAction = $Actions.ResolveUserSid
         TestAdministratorAction = $Actions.TestAdministrator
         ReadManifestAction = $Actions.ReadManifest
         EnsureDirectoryAction = $Actions.EnsureDirectory
@@ -180,6 +197,8 @@ function Invoke-FixtureInstall {
     $parameters = (Get-Command Invoke-ServiceHostInstall).Parameters
     if ($parameters.ContainsKey('RemovePathAction')) { $arguments.RemovePathAction = $Actions.RemovePath }
     if ($parameters.ContainsKey('StopWaitAttempts')) { $arguments.StopWaitAttempts = $StopWaitAttempts }
+    if ($parameters.ContainsKey('ProtectStateTreeAction')) { $arguments.ProtectStateTreeAction = $Actions.ProtectStateTree }
+    if ($parameters.ContainsKey('MutexAction')) { $arguments.MutexAction = $Actions.Mutex }
     Invoke-ServiceHostInstall @arguments | Out-Null
 }
 
@@ -214,6 +233,95 @@ function Run-Scenario {
             Assert-Equal 'powershell.exe' $plan.Execute 'shell'
             Assert-Equal '-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "C:\ProgramData\QuickBooksServiceHost\Manager\service_host_manager.ps1"' $plan.Arguments 'arguments'
         }
+        'state-security' {
+            $administratorSid = 'S-1-5-32-544'
+            $systemSid = 'S-1-5-18'
+            $usersSid = New-Object Security.Principal.SecurityIdentifier 'S-1-5-32-545'
+            $insecureAcl = New-Object Security.AccessControl.DirectorySecurity
+            $insecureAcl.SetOwner($usersSid)
+            $insecureAcl.SetAccessRuleProtection($true, $false)
+            $usersRule = New-Object Security.AccessControl.FileSystemAccessRule(
+                $usersSid,
+                [Security.AccessControl.FileSystemRights]::Modify,
+                ([Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [Security.AccessControl.InheritanceFlags]::ObjectInherit),
+                [Security.AccessControl.PropagationFlags]::None,
+                [Security.AccessControl.AccessControlType]::Allow)
+            $insecureAcl.AddAccessRule($usersRule)
+            Assert-True (-not (Test-ServiceHostSecureAcl -Acl $insecureAcl -IsContainer $true)) 'writable Users ACL and owner mismatch are rejected'
+
+            $root = 'C:\ProgramData\QuickBooksServiceHost-Test'
+            $manager = Join-Path $root 'Manager'
+            $logs = Join-Path $root 'Logs'
+            $hostile = Join-Path $root 'Hostile'
+            $hostileFile = Join-Path $hostile 'state.json'
+            $items = @{}
+            foreach ($entry in @(
+                [pscustomobject]@{ FullName = $root; PSIsContainer = $true; Attributes = [IO.FileAttributes]::Directory; Parent = '' },
+                [pscustomobject]@{ FullName = $hostile; PSIsContainer = $true; Attributes = [IO.FileAttributes]::Directory; Parent = $root },
+                [pscustomobject]@{ FullName = $hostileFile; PSIsContainer = $false; Attributes = [IO.FileAttributes]::Normal; Parent = $hostile }
+            )) { $items[$entry.FullName] = $entry }
+            $acls = @{ $root = $insecureAcl; $hostile = $insecureAcl; $hostileFile = $insecureAcl }
+            $ensureDirectory = {
+                param($path)
+                if (-not $items.ContainsKey($path)) {
+                    $items[$path] = [pscustomobject]@{ FullName = $path; PSIsContainer = $true; Attributes = [IO.FileAttributes]::Directory; Parent = Split-Path -Parent $path }
+                    $acls[$path] = $insecureAcl
+                }
+            }.GetNewClosure()
+            $getItem = { param($path) $items[$path] }.GetNewClosure()
+            $getChildren = { param($path) @($items.Values | Where-Object { $_.Parent -eq $path }) }.GetNewClosure()
+            $getAcl = { param($path) $acls[$path] }.GetNewClosure()
+            $setAcl = { param($path, $acl) $acls[$path] = $acl }.GetNewClosure()
+
+            Protect-ServiceHostStateTree -StatePath $root -EnsureDirectoryAction $ensureDirectory `
+                -GetItemAction $getItem -GetChildrenAction $getChildren -GetAclAction $getAcl -SetAclAction $setAcl | Out-Null
+            foreach ($path in @($root, $manager, $logs, $hostile, $hostileFile)) {
+                Assert-True (Test-ServiceHostSecureAcl -Acl $acls[$path] -IsContainer ([bool]$items[$path].PSIsContainer)) "secure ACL repaired for $path"
+                Assert-Equal $administratorSid $acls[$path].GetOwner([Security.Principal.SecurityIdentifier]).Value "administrator owner for $path"
+                $sids = @($acls[$path].GetAccessRules($true, $false, [Security.Principal.SecurityIdentifier]) | ForEach-Object { $_.IdentityReference.Value } | Sort-Object)
+                Assert-Equal "$systemSid|$administratorSid" ($sids -join '|') "only SYSTEM and Administrators allowed for $path"
+            }
+
+            $link = Join-Path $root 'Linked'
+            $items[$link] = [pscustomobject]@{ FullName = $link; PSIsContainer = $true; Attributes = ([IO.FileAttributes]::Directory -bor [IO.FileAttributes]::ReparsePoint); Parent = $root }
+            $acls[$link] = $insecureAcl
+            $linkEnumerations = [pscustomobject]@{ Count = 0 }
+            $getChildrenWithLinkGuard = {
+                param($path)
+                if ($path -eq $link) { $linkEnumerations.Count++; throw 'followed reparse point' }
+                @($items.Values | Where-Object { $_.Parent -eq $path })
+            }.GetNewClosure()
+            Assert-ThrowsMessage {
+                Protect-ServiceHostStateTree -StatePath $root -EnsureDirectoryAction $ensureDirectory `
+                    -GetItemAction $getItem -GetChildrenAction $getChildrenWithLinkGuard -GetAclAction $getAcl -SetAclAction $setAcl | Out-Null
+            } "Reparse points are not allowed in the service host state tree: $link" 'reparse point rejected'
+            Assert-Equal 0 $linkEnumerations.Count 'reparse directory is never traversed'
+
+            $fixture = New-InstallerFixture
+            try {
+                $actions = New-InjectedActions $fixture
+                $events = New-Object Collections.Generic.List[string]
+                $actions.ProtectStateTree = { param($path) $actions.State.SecurityPasses++; $events.Add("secure:$($actions.State.SecurityPasses)") }.GetNewClosure()
+                $originalCopy = $actions.CopyFile
+                $actions.CopyFile = {
+                    param($source, $destination)
+                    if ($destination.StartsWith($fixture.StatePath, [StringComparison]::OrdinalIgnoreCase) -and $actions.State.SecurityPasses -lt 1) {
+                        throw 'ProgramData copy occurred before security initialization'
+                    }
+                    & $originalCopy $source $destination
+                }.GetNewClosure()
+                $actions.RegisterTask = {
+                    param($plan)
+                    Assert-Equal 2 $actions.State.SecurityPasses 'manager and state files re-verified before task registration'
+                    $events.Add('register')
+                    $actions.State.RegisterCalls++
+                    $actions.State.Tasks[$plan.TaskName] = $plan
+                }.GetNewClosure()
+                Invoke-FixtureInstall $fixture $actions
+                Assert-Equal 'secure:1|secure:2|register' ($events -join '|') 'security passes bracket ProgramData copies before task registration'
+            }
+            finally { Remove-InstallerFixture $fixture }
+        }
         'identity-mismatch' {
             $fixture = New-InstallerFixture
             try {
@@ -232,6 +340,81 @@ function Run-Scenario {
                 Assert-Equal 0 $state.Copies 'no copies'
                 Assert-Equal 0 $state.Registers 'no registration'
                 Assert-Equal 0 $state.Starts 'no startup'
+            }
+            finally { Remove-InstallerFixture $fixture }
+        }
+        'identity-binding' {
+            Assert-ElevatedIdentityMatches -InteractiveUser 'DOMAIN\estimator' -InteractiveSid 'S-1-5-21-1000' `
+                -GetCurrentIdentityAction { [pscustomobject]@{ Name = 'DOMAIN\estimator'; Sid = 'S-1-5-21-1000' } } `
+                -ResolveInteractiveUserSidAction { param($name) 'S-1-5-21-1000' } -TestAdministratorAction { $true }
+
+            $fixture = New-InstallerFixture
+            try {
+                $state = [pscustomobject]@{ Copies = 0; Registers = 0; Starts = 0 }
+                Assert-ThrowsMessage {
+                    Invoke-ServiceHostInstall -SourcePath $fixture.Source -InstallPath $fixture.Install -StatePath $fixture.StatePath `
+                        -PublicDesktopPath $fixture.Desktop -InteractiveUser 'DOMAIN\other' -InteractiveSid 'S-1-5-21-1000' `
+                        -GetCurrentIdentityAction { [pscustomobject]@{ Name = 'DOMAIN\estimator'; Sid = 'S-1-5-21-1000' } } `
+                        -ResolveInteractiveUserSidAction { param($name) 'S-1-5-21-2000' } -TestAdministratorAction { $true } `
+                        -ReadManifestAction { throw 'manifest read before user binding' } -EnsureDirectoryAction { throw 'directory mutation before user binding' } `
+                        -CopyFileAction { $state.Copies++ } -RemovePathAction { throw 'remove before user binding' } `
+                        -SetEnvironmentVariableAction { throw 'environment mutation before user binding' } `
+                        -CreateShortcutAction { throw 'shortcut mutation before user binding' } -RegisterTaskAction { $state.Registers++ } `
+                        -StartTaskAction { $state.Starts++ } -GetTaskAction { $null } -GetProcessesAction { @() } `
+                        -StopProcessAction { throw 'process mutation before user binding' } -WaitAction { throw 'wait before user binding' } `
+                        -ProtectStateTreeAction { throw 'state mutation before user binding' }
+                } 'InteractiveUser must resolve to the verified InteractiveSid.' 'wrong username cannot select another task principal'
+                Assert-Equal 0 $state.Copies 'no copies before username binding'
+                Assert-Equal 0 $state.Registers 'no registration before username binding'
+                Assert-Equal 0 $state.Starts 'no startup before username binding'
+            }
+            finally { Remove-InstallerFixture $fixture }
+        }
+        'installer-mutex' {
+            $fixture = New-InstallerFixture
+            try {
+                $actions = New-InjectedActions $fixture
+                $assertLocked = { param($name) if (-not $actions.State.Locked) { throw "$name mutation occurred outside installer mutex" }; $actions.State.Events += $name }.GetNewClosure()
+                $originalEnsure = $actions.EnsureDirectory
+                $actions.EnsureDirectory = { param($path) & $assertLocked 'directory'; & $originalEnsure $path }.GetNewClosure()
+                $originalCopy = $actions.CopyFile
+                $actions.CopyFile = { param($source, $destination) & $assertLocked 'copy'; & $originalCopy $source $destination }.GetNewClosure()
+                $originalRemove = $actions.RemovePath
+                $actions.RemovePath = { param($path, [bool]$recurse) & $assertLocked 'remove'; & $originalRemove $path $recurse }.GetNewClosure()
+                $actions.ProtectStateTree = { param($path) & $assertLocked 'secure'; $actions.State.SecurityPasses++ }.GetNewClosure()
+                $actions.SetEnvironmentVariable = { param($name, $value) & $assertLocked 'environment'; $actions.State.Environment[$name] = [string]$value }.GetNewClosure()
+                $actions.CreateShortcut = { param($path, $target, $workingDirectory) & $assertLocked 'shortcut'; $actions.State.Shortcut = [pscustomobject]@{ Path = $path; TargetPath = $target; WorkingDirectory = $workingDirectory } }.GetNewClosure()
+                $actions.RegisterTask = { param($plan) & $assertLocked 'register'; $actions.State.RegisterCalls++; $actions.State.Tasks[$plan.TaskName] = $plan }.GetNewClosure()
+                $actions.StartTask = {
+                    param($taskName)
+                    if ($actions.State.Locked) { throw 'task start occurred while installer mutex was held' }
+                    $actions.State.Events += 'start'
+                    $actions.State.StartCalls++
+                    $actions.State.NextId++
+                    $actions.State.Processes = @([pscustomobject]@{ ProcessName = 'QuickBooksServiceHost'; Id = $actions.State.NextId; Path = $fixture.HostPath })
+                }.GetNewClosure()
+                Invoke-FixtureInstall $fixture $actions
+                Assert-Equal 'Global\QuickBooksServiceHostAutoUpdate' $actions.State.MutexName 'installer shares manager mutex name'
+                Assert-Equal 30000 $actions.State.MutexWaitMilliseconds 'installer uses bounded mutex wait'
+                $releaseIndex = [Array]::IndexOf($actions.State.Events, 'release')
+                $startIndex = [Array]::IndexOf($actions.State.Events, 'start')
+                $registerIndex = [Array]::IndexOf($actions.State.Events, 'register')
+                Assert-True ($registerIndex -gt 0 -and $registerIndex -lt $releaseIndex) 'task registration is mutex protected'
+                Assert-True ($releaseIndex -gt $registerIndex -and $releaseIndex -lt $startIndex) 'mutex releases before task start'
+            }
+            finally { Remove-InstallerFixture $fixture }
+
+            $fixture = New-InstallerFixture
+            try {
+                $actions = New-InjectedActions $fixture
+                $actions.Mutex = { param($name, $waitMilliseconds, $action) throw "Timed out waiting for service host update lock: $name" }
+                Assert-ThrowsMessage { Invoke-FixtureInstall $fixture $actions } `
+                    'Timed out waiting for service host update lock: Global\QuickBooksServiceHostAutoUpdate' 'concurrent manager ownership fails clearly'
+                Assert-Equal 0 $actions.State.CopyCalls 'concurrent ownership fails before copies'
+                Assert-Equal 0 $actions.State.RemoveCalls 'concurrent ownership fails before filesystem removal'
+                Assert-Equal 0 $actions.State.SecurityPasses 'concurrent ownership fails before state mutation'
+                Assert-Equal 0 $actions.State.RegisterCalls 'concurrent ownership fails before task mutation'
+                Assert-Equal 0 $actions.State.StartCalls 'concurrent ownership fails before task start'
             }
             finally { Remove-InstallerFixture $fixture }
         }
@@ -359,7 +542,7 @@ function Run-Scenario {
     }
 }
 
-$allScenarios = @('static', 'task-plan', 'identity-mismatch', 'manifest-install', 'corrupt-manager', 'corrupt-installed-manager', 'stale-cleanup', 'stop-race', 'stop-timeout', 'reinstall-idempotent')
+$allScenarios = @('static', 'task-plan', 'state-security', 'identity-mismatch', 'identity-binding', 'installer-mutex', 'manifest-install', 'corrupt-manager', 'corrupt-installed-manager', 'stale-cleanup', 'stop-race', 'stop-timeout', 'reinstall-idempotent')
 if ($Scenario -eq 'all') { foreach ($name in $allScenarios) { Run-Scenario $name } }
 else { Run-Scenario $Scenario }
 Write-Host 'Install service host script checks passed.'

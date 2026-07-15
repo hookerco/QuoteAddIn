@@ -18,15 +18,174 @@ function Get-InteractiveInstallIdentity {
     [pscustomobject]@{ Name = $identity.Name; Sid = $identity.User.Value }
 }
 
+function Resolve-InteractiveUserSid {
+    param([Parameter(Mandatory = $true)][string]$InteractiveUser)
+    $account = New-Object Security.Principal.NTAccount $InteractiveUser
+    return $account.Translate([Security.Principal.SecurityIdentifier]).Value
+}
+
 function Assert-ElevatedIdentityMatches {
     param(
+        [Parameter(Mandatory = $true)][string]$InteractiveUser,
         [Parameter(Mandatory = $true)][string]$InteractiveSid,
         [scriptblock]$GetCurrentIdentityAction = { Get-InteractiveInstallIdentity },
+        [scriptblock]$ResolveInteractiveUserSidAction = { param($name) Resolve-InteractiveUserSid -InteractiveUser $name },
         [scriptblock]$TestAdministratorAction = { Test-IsAdministrator }
     )
     $current = & $GetCurrentIdentityAction
     if ([string]$current.Sid -ne $InteractiveSid -or -not (& $TestAdministratorAction)) {
         throw 'Installer elevation must use the same local-administrator account that runs QuickBooks.'
+    }
+    $resolvedSid = & $ResolveInteractiveUserSidAction $InteractiveUser
+    if ([string]$resolvedSid -ne $InteractiveSid) {
+        throw 'InteractiveUser must resolve to the verified InteractiveSid.'
+    }
+}
+
+function New-ServiceHostSecureAcl {
+    param([Parameter(Mandatory = $true)][bool]$IsContainer)
+
+    $acl = if ($IsContainer) {
+        New-Object Security.AccessControl.DirectorySecurity
+    }
+    else {
+        New-Object Security.AccessControl.FileSecurity
+    }
+    $administrators = New-Object Security.Principal.SecurityIdentifier 'S-1-5-32-544'
+    $system = New-Object Security.Principal.SecurityIdentifier 'S-1-5-18'
+    $acl.SetOwner($administrators)
+    $acl.SetAccessRuleProtection($true, $false)
+    $inheritance = if ($IsContainer) {
+        [Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [Security.AccessControl.InheritanceFlags]::ObjectInherit
+    }
+    else { [Security.AccessControl.InheritanceFlags]::None }
+    foreach ($sid in @($system, $administrators)) {
+        $rule = New-Object Security.AccessControl.FileSystemAccessRule(
+            $sid,
+            [Security.AccessControl.FileSystemRights]::FullControl,
+            $inheritance,
+            [Security.AccessControl.PropagationFlags]::None,
+            [Security.AccessControl.AccessControlType]::Allow)
+        $acl.AddAccessRule($rule)
+    }
+    return $acl
+}
+
+function Test-ServiceHostSecureAcl {
+    param(
+        [Parameter(Mandatory = $true)]$Acl,
+        [Parameter(Mandatory = $true)][bool]$IsContainer
+    )
+
+    $administratorsSid = 'S-1-5-32-544'
+    $allowedSids = @('S-1-5-18', $administratorsSid)
+    try { $owner = $Acl.GetOwner([Security.Principal.SecurityIdentifier]).Value }
+    catch { return $false }
+    if ($owner -ne $administratorsSid -or -not $Acl.AreAccessRulesProtected) { return $false }
+
+    $expectedInheritance = if ($IsContainer) {
+        [Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [Security.AccessControl.InheritanceFlags]::ObjectInherit
+    }
+    else { [Security.AccessControl.InheritanceFlags]::None }
+    $rules = @($Acl.GetAccessRules($true, $false, [Security.Principal.SecurityIdentifier]))
+    if ($rules.Count -ne 2) { return $false }
+    $actualSids = @()
+    foreach ($rule in $rules) {
+        $actualSids += $rule.IdentityReference.Value
+        if ($rule.AccessControlType -ne [Security.AccessControl.AccessControlType]::Allow -or
+            $rule.FileSystemRights -ne [Security.AccessControl.FileSystemRights]::FullControl -or
+            $rule.InheritanceFlags -ne $expectedInheritance -or
+            $rule.PropagationFlags -ne [Security.AccessControl.PropagationFlags]::None -or
+            $rule.IsInherited) {
+            return $false
+        }
+    }
+    return (($actualSids | Sort-Object) -join '|') -eq (($allowedSids | Sort-Object) -join '|')
+}
+
+function Assert-ServiceHostStateItemSafe {
+    param([Parameter(Mandatory = $true)]$Item)
+    if ($null -eq $Item) { throw 'A required service host state path does not exist.' }
+    if (([long]$Item.Attributes -band [long][IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw "Reparse points are not allowed in the service host state tree: $($Item.FullName)"
+    }
+}
+
+function Protect-ServiceHostStateTree {
+    param(
+        [Parameter(Mandatory = $true)][string]$StatePath,
+        [scriptblock]$EnsureDirectoryAction = { param($path) New-Item -ItemType Directory -Force -Path $path | Out-Null },
+        [scriptblock]$GetItemAction = { param($path) Get-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue },
+        [scriptblock]$GetChildrenAction = { param($path) @(Get-ChildItem -LiteralPath $path -Force -ErrorAction Stop) },
+        [scriptblock]$GetAclAction = { param($path) Get-Acl -LiteralPath $path },
+        [scriptblock]$SetAclAction = { param($path, $acl) Set-Acl -LiteralPath $path -AclObject $acl }
+    )
+
+    $protectEntry = {
+        param($item)
+        Assert-ServiceHostStateItemSafe -Item $item
+        $secureAcl = New-ServiceHostSecureAcl -IsContainer ([bool]$item.PSIsContainer)
+        & $SetAclAction $item.FullName $secureAcl | Out-Null
+        $verifiedAcl = & $GetAclAction $item.FullName
+        if (-not (Test-ServiceHostSecureAcl -Acl $verifiedAcl -IsContainer ([bool]$item.PSIsContainer))) {
+            throw "Service host state ACL verification failed: $($item.FullName)"
+        }
+    }.GetNewClosure()
+
+    $rootItem = & $GetItemAction $StatePath
+    if ($null -eq $rootItem) {
+        & $EnsureDirectoryAction $StatePath
+        $rootItem = & $GetItemAction $StatePath
+    }
+    if ($null -eq $rootItem -or -not [bool]$rootItem.PSIsContainer) { throw "State path is not a directory: $StatePath" }
+    & $protectEntry $rootItem
+
+    foreach ($name in @('Manager', 'Logs')) {
+        $requiredPath = Join-Path $StatePath $name
+        $requiredItem = & $GetItemAction $requiredPath
+        if ($null -eq $requiredItem) {
+            & $EnsureDirectoryAction $requiredPath
+            $requiredItem = & $GetItemAction $requiredPath
+        }
+        if ($null -eq $requiredItem -or -not [bool]$requiredItem.PSIsContainer) { throw "State path is not a directory: $requiredPath" }
+        & $protectEntry $requiredItem
+    }
+
+    $queue = New-Object 'Collections.Generic.Queue[object]'
+    $queue.Enqueue($rootItem)
+    $visited = @{}
+    while ($queue.Count -gt 0) {
+        $directory = $queue.Dequeue()
+        $key = ([string]$directory.FullName).ToLowerInvariant()
+        if ($visited.ContainsKey($key)) { continue }
+        $visited[$key] = $true
+        foreach ($child in @(& $GetChildrenAction $directory.FullName)) {
+            Assert-ServiceHostStateItemSafe -Item $child
+            & $protectEntry $child
+            if ([bool]$child.PSIsContainer) { $queue.Enqueue($child) }
+        }
+    }
+    return @($visited.Keys)
+}
+
+function Invoke-WithInstallerMutex {
+    param(
+        [Parameter(Mandatory = $true)][string]$Name,
+        [Parameter(Mandatory = $true)][int]$WaitMilliseconds,
+        [Parameter(Mandatory = $true)][scriptblock]$Action
+    )
+
+    $mutex = New-Object Threading.Mutex -ArgumentList $false, $Name
+    $acquired = $false
+    try {
+        try { $acquired = $mutex.WaitOne($WaitMilliseconds) }
+        catch [Threading.AbandonedMutexException] { $acquired = $true }
+        if (-not $acquired) { throw "Timed out waiting for service host update lock: $Name" }
+        return (& $Action)
+    }
+    finally {
+        if ($acquired) { $mutex.ReleaseMutex() }
+        $mutex.Dispose()
     }
 }
 
@@ -99,6 +258,7 @@ function Invoke-ServiceHostInstall {
         [Parameter(Mandatory = $true)][string]$InteractiveUser,
         [Parameter(Mandatory = $true)][string]$InteractiveSid,
         [scriptblock]$GetCurrentIdentityAction = { Get-InteractiveInstallIdentity },
+        [scriptblock]$ResolveInteractiveUserSidAction = { param($name) Resolve-InteractiveUserSid -InteractiveUser $name },
         [scriptblock]$TestAdministratorAction = { Test-IsAdministrator },
         [scriptblock]$ReadManifestAction = { param($path) Get-Content -Raw -LiteralPath $path | ConvertFrom-Json },
         [scriptblock]$EnsureDirectoryAction = { param($path) New-Item -ItemType Directory -Force -Path $path | Out-Null },
@@ -117,9 +277,14 @@ function Invoke-ServiceHostInstall {
         [scriptblock]$GetProcessesAction = { Get-CimInstance Win32_Process -Filter "Name='QuickBooksServiceHost.exe'" },
         [scriptblock]$StopProcessAction = { param($process) Stop-Process -Id $process.ProcessId -Force -ErrorAction Stop },
         [scriptblock]$WaitAction = { Start-Sleep -Milliseconds 250 },
+        [scriptblock]$ProtectStateTreeAction = { param($path) Protect-ServiceHostStateTree -StatePath $path | Out-Null },
+        [scriptblock]$MutexAction = { param($name, $waitMilliseconds, $action) Invoke-WithInstallerMutex -Name $name -WaitMilliseconds $waitMilliseconds -Action $action },
+        [ValidateRange(1, 300000)][int]$MutexWaitMilliseconds = 30000,
         [ValidateRange(1, 600)][int]$StopWaitAttempts = 40
     )
-    Assert-ElevatedIdentityMatches -InteractiveSid $InteractiveSid -GetCurrentIdentityAction $GetCurrentIdentityAction -TestAdministratorAction $TestAdministratorAction
+    Assert-ElevatedIdentityMatches -InteractiveUser $InteractiveUser -InteractiveSid $InteractiveSid `
+        -GetCurrentIdentityAction $GetCurrentIdentityAction -ResolveInteractiveUserSidAction $ResolveInteractiveUserSidAction `
+        -TestAdministratorAction $TestAdministratorAction
     if (-not (Test-Path -LiteralPath $SourcePath -PathType Container)) { throw "Source path does not exist: $SourcePath" }
     $manifestPath = Join-Path $SourcePath 'release.manifest.json'
     $manifest = & $ReadManifestAction $manifestPath
@@ -135,7 +300,15 @@ function Invoke-ServiceHostInstall {
         throw "Manager source verification failed: $($manifest.manager.path)"
     }
 
-    $hostPath = Join-Path $InstallPath 'QuickBooksServiceHost.exe'
+    $installState = [pscustomobject]@{
+        Plan = $null
+        HostPath = Join-Path $InstallPath 'QuickBooksServiceHost.exe'
+        ConnectorPath = ''
+        ManagerPath = ''
+        ShortcutPath = ''
+    }
+    $mutation = {
+    $hostPath = $installState.HostPath
     $installedProcesses = @(& $GetProcessesAction | Where-Object { (Get-ServiceHostProcessPath $_) -ieq $hostPath })
     foreach ($process in $installedProcesses) { & $StopProcessAction $process }
     if ($installedProcesses.Count -gt 0) {
@@ -152,6 +325,7 @@ function Invoke-ServiceHostInstall {
     }
 
     $managerDirectory = Join-Path $StatePath 'Manager'
+    & $ProtectStateTreeAction $StatePath
     if (Test-Path -LiteralPath $InstallPath -PathType Container) { & $RemovePathAction $InstallPath $true }
     & $EnsureDirectoryAction $InstallPath
     & $EnsureDirectoryAction $managerDirectory
@@ -180,6 +354,7 @@ function Invoke-ServiceHostInstall {
         & $RemovePathAction $managerStage $false
     }
     & $CopyFileAction $manifestPath (Join-Path $StatePath 'release.manifest.json')
+    & $ProtectStateTreeAction $StatePath
 
     $connectorPath = Join-Path $InstallPath 'QuickBooksConnectorCli.exe'
     if (-not (Test-Path -LiteralPath $hostPath -PathType Leaf)) { throw "Installed executable was not found: $hostPath" }
@@ -204,6 +379,15 @@ function Invoke-ServiceHostInstall {
 
     $plan = New-ServiceHostTaskPlan -InteractiveUser $InteractiveUser -ManagerPath $managerTarget
     Register-ServiceHostTask -Plan $plan -RegisterTaskAction $RegisterTaskAction
+    $installState.Plan = $plan
+    $installState.ConnectorPath = $connectorPath
+    $installState.ManagerPath = $managerTarget
+    $installState.ShortcutPath = $shortcutPath
+    }.GetNewClosure()
+    & $MutexAction 'Global\QuickBooksServiceHostAutoUpdate' $MutexWaitMilliseconds $mutation | Out-Null
+
+    $plan = $installState.Plan
+    $hostPath = $installState.HostPath
     & $StartTaskAction $plan.TaskName
     if ($null -eq (& $GetTaskAction $plan.TaskName)) { throw "Scheduled Task was not found after registration: $($plan.TaskName)" }
     $running = $false
@@ -214,10 +398,10 @@ function Invoke-ServiceHostInstall {
     if (-not $running) { throw "Installed host process was not found: $hostPath" }
     return [pscustomobject]@{
         TaskName = $plan.TaskName
-        HostPath = $hostPath
-        ConnectorPath = $connectorPath
-        ManagerPath = $managerTarget
-        ShortcutPath = $shortcutPath
+        HostPath = $installState.HostPath
+        ConnectorPath = $installState.ConnectorPath
+        ManagerPath = $installState.ManagerPath
+        ShortcutPath = $installState.ShortcutPath
     }
 }
 
@@ -235,7 +419,7 @@ if (-not (Test-IsAdministrator)) {
     if ($null -ne $process.ExitCode) { exit $process.ExitCode }
     exit 0
 }
-Assert-ElevatedIdentityMatches -InteractiveSid $InteractiveSid
+Assert-ElevatedIdentityMatches -InteractiveUser $InteractiveUser -InteractiveSid $InteractiveSid
 $sourcePath = $PSScriptRoot.Trim()
 $destinationPath = (Join-Path $env:ProgramFiles 'QuickBooksServiceHost').Trim()
 $statePath = (Join-Path $env:ProgramData 'QuickBooksServiceHost').Trim()

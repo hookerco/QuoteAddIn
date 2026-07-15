@@ -163,7 +163,22 @@ function Invoke-ServiceHostInstall {
         if ([long](Get-Item -LiteralPath $target).Length -ne [long]$entry.length -or (Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash -ne [string]$entry.sha256) { throw "Installed file verification failed: $($entry.path)" }
     }
     $managerTarget = Join-Path $managerDirectory 'service_host_manager.ps1'
-    & $CopyFileAction $managerSource $managerTarget
+    $managerStage = Join-Path $managerDirectory 'service_host_manager.ps1.stage'
+    & $CopyFileAction $managerSource $managerStage
+    try {
+        if ([long](Get-Item -LiteralPath $managerStage).Length -ne [long]$manifest.manager.length -or
+            (Get-FileHash -LiteralPath $managerStage -Algorithm SHA256).Hash -ne [string]$manifest.manager.sha256) {
+            throw "Staged manager verification failed: $($manifest.manager.path)"
+        }
+        & $CopyFileAction $managerStage $managerTarget
+        if ([long](Get-Item -LiteralPath $managerTarget).Length -ne [long]$manifest.manager.length -or
+            (Get-FileHash -LiteralPath $managerTarget -Algorithm SHA256).Hash -ne [string]$manifest.manager.sha256) {
+            throw "Installed manager verification failed: $($manifest.manager.path)"
+        }
+    }
+    finally {
+        & $RemovePathAction $managerStage $false
+    }
     & $CopyFileAction $manifestPath (Join-Path $StatePath 'release.manifest.json')
 
     $connectorPath = Join-Path $InstallPath 'QuickBooksConnectorCli.exe'

@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet('static', 'task-plan', 'identity-mismatch', 'manifest-install', 'corrupt-manager', 'stale-cleanup', 'stop-race', 'stop-timeout', 'reinstall-idempotent', 'all')]
+    [ValidateSet('static', 'task-plan', 'identity-mismatch', 'manifest-install', 'corrupt-manager', 'corrupt-installed-manager', 'stale-cleanup', 'stop-race', 'stop-timeout', 'reinstall-idempotent', 'all')]
     [string]$Scenario = 'all'
 )
 
@@ -267,6 +267,30 @@ function Run-Scenario {
             }
             finally { Remove-InstallerFixture $fixture }
         }
+        'corrupt-installed-manager' {
+            $fixture = New-InstallerFixture
+            try {
+                $actions = New-InjectedActions $fixture
+                $actions.CopyFile = {
+                    param($source, $destination)
+                    $actions.State.CopyCalls++
+                    $parent = Split-Path -Parent $destination
+                    if (-not (Test-Path -LiteralPath $parent -PathType Container)) {
+                        New-Item -ItemType Directory -Force -Path $parent | Out-Null
+                    }
+                    Copy-Item -LiteralPath $source -Destination $destination -Force
+                    if ($destination -ieq $fixture.ManagerPath) {
+                        [IO.File]::WriteAllText($destination, '# mangler')
+                    }
+                }.GetNewClosure()
+                Assert-ThrowsMessage {
+                    Invoke-FixtureInstall $fixture $actions
+                } 'Installed manager verification failed: service_host_manager.ps1' 'installed manager corruption rejected'
+                Assert-Equal 0 $actions.State.RegisterCalls 'installed manager verification precedes registration'
+                Assert-Equal 0 $actions.State.StartCalls 'installed manager verification precedes task startup'
+            }
+            finally { Remove-InstallerFixture $fixture }
+        }
         'stale-cleanup' {
             $fixture = New-InstallerFixture
             try {
@@ -335,7 +359,7 @@ function Run-Scenario {
     }
 }
 
-$allScenarios = @('static', 'task-plan', 'identity-mismatch', 'manifest-install', 'corrupt-manager', 'stale-cleanup', 'stop-race', 'stop-timeout', 'reinstall-idempotent')
+$allScenarios = @('static', 'task-plan', 'identity-mismatch', 'manifest-install', 'corrupt-manager', 'corrupt-installed-manager', 'stale-cleanup', 'stop-race', 'stop-timeout', 'reinstall-idempotent')
 if ($Scenario -eq 'all') { foreach ($name in $allScenarios) { Run-Scenario $name } }
 else { Run-Scenario $Scenario }
 Write-Host 'Install service host script checks passed.'

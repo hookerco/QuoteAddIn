@@ -18,9 +18,10 @@ if (-not (Test-Path -Path $connectorCliSourcePath -PathType Container)) {
     throw "Connector CLI Release output does not exist: $connectorCliSourcePath"
 }
 
-# Copy application files to network folder
-Copy-Item -Path "$hostSourcePath\*" -Destination $networkPath -Recurse -Force
+# Copy the CLI first because both outputs contain shared dependencies. The service-host
+# output is authoritative for the always-on bridge and must win filename collisions.
 Copy-Item -Path "$connectorCliSourcePath\*" -Destination $networkPath -Recurse -Force
+Copy-Item -Path "$hostSourcePath\*" -Destination $networkPath -Recurse -Force
 
 # Copy the install script to the network folder
 $installPSScript = "install_service_host.ps1"

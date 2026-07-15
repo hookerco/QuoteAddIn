@@ -32,13 +32,13 @@ namespace QuickBooksServiceHost
                 suggestedName, normalizedExtension);
             WorkstationSaveResult result = null;
             Exception failure = null;
+            IntPtr foregroundWindow = ForegroundWindowOwner.CaptureHandle();
 
             var thread = new Thread(() =>
             {
                 try
                 {
                     using (var dialog = new SaveFileDialog())
-                    using (var owner = new Form())
                     {
                         dialog.Title = "Save Quote File";
                         dialog.FileName = normalizedName;
@@ -50,16 +50,31 @@ namespace QuickBooksServiceHost
                         dialog.RestoreDirectory = true;
                         dialog.Filter = FilterFor(normalizedExtension);
 
-                        owner.TopMost = true;
-                        owner.ShowInTaskbar = false;
-                        owner.StartPosition = FormStartPosition.CenterScreen;
-                        owner.Width = 1;
-                        owner.Height = 1;
-                        owner.Opacity = 0;
-                        owner.Show();
-                        owner.Activate();
+                        DialogResult dialogResult;
+                        IWin32Window foregroundOwner =
+                            ForegroundWindowOwner.TryCreate(foregroundWindow);
+                        if (foregroundOwner != null)
+                        {
+                            dialogResult = dialog.ShowDialog(foregroundOwner);
+                        }
+                        else
+                        {
+                            using (var owner = new Form())
+                            {
+                                owner.TopMost = true;
+                                owner.ShowInTaskbar = false;
+                                owner.StartPosition = FormStartPosition.CenterScreen;
+                                owner.Width = 1;
+                                owner.Height = 1;
+                                owner.Opacity = 0;
+                                owner.Show();
+                                owner.Activate();
 
-                        if (dialog.ShowDialog(owner) != DialogResult.OK)
+                                dialogResult = dialog.ShowDialog(owner);
+                            }
+                        }
+
+                        if (dialogResult != DialogResult.OK)
                         {
                             result = new WorkstationSaveResult(true, null);
                             return;

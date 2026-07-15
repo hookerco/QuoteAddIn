@@ -953,6 +953,34 @@ function Run-Scenario {
             try {
                 Set-InstalledReleaseFixture $fixture
                 $actions = New-InjectedActions $fixture
+                $actions.State.Processes = @([pscustomobject]@{ ProcessName = 'QuickBooksServiceHost'; Id = 28; Path = $fixture.HostPath })
+                $originalNeutralize = $actions.NeutralizeTask
+                $neutralizeAttempt = [pscustomobject]@{ Count = 0 }
+                $actions.NeutralizeTask = {
+                    param($name)
+                    $neutralizeAttempt.Count++
+                    if ($neutralizeAttempt.Count -eq 2) { throw 'simulated rollback neutralize before unregister' }
+                    & $originalNeutralize $name
+                }.GetNewClosure()
+                $actions.StartTask = { param($name) $actions.State.StartCalls++; throw 'simulated candidate start failure' }.GetNewClosure()
+                $caught = $null
+                try { Invoke-FixtureInstall $fixture $actions } catch { $caught = $_ }
+                Assert-True ($null -ne $caught) 'rollback neutralize fail-closed case throws'
+                Assert-Equal 'simulated candidate start failure' $caught.Exception.Message 'candidate start failure remains primary'
+                Assert-Equal 'simulated rollback neutralize before unregister' $caught.Exception.Data['TaskNeutralizationFailure'] 'armed-task neutralization error is separate diagnostic'
+                Assert-True ([string]$caught.Exception.Data['RollbackFailure'] -match 'could not be confirmed absent') 'rollback reports armed task fail-closed state'
+                Assert-Equal 'host' ([IO.File]::ReadAllText($fixture.HostPath)) 'armed-task rollback does not mutate promoted runtime'
+                Assert-Equal 'old-host' ([IO.File]::ReadAllText((Join-Path $fixture.PreviousPath 'Payload\QuickBooksServiceHost.exe'))) 'armed-task rollback leaves retained old runtime available'
+                Assert-Equal 1 $actions.State.Tasks.Count 'armed candidate task remains visible for operator recovery'
+                Assert-Equal 1 $actions.State.StopCalls 'rollback does not stop processes after neutralization remains armed'
+                Assert-Equal 0 $actions.State.DirectStartCalls 'fail-closed rollback does not launch restored host'
+            }
+            finally { Remove-InstallerFixture $fixture }
+
+            $fixture = New-InstallerFixture
+            try {
+                Set-InstalledReleaseFixture $fixture
+                $actions = New-InjectedActions $fixture
                 $originalCopy = $actions.CopyFile
                 $actions.CopyFile = {
                     param($source, $destination)

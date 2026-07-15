@@ -626,8 +626,13 @@ function Invoke-ServiceHostInstall {
         try { & $NeutralizeTaskAction $taskName }
         catch { $neutralizationFailure = $_ }
         finally { $installState.TaskNeutralized = $null -eq (& $GetTaskAction $taskName) }
-        try {
-            & $stopExpectedHost
+        if (-not $installState.TaskNeutralized) {
+            try { throw "Rollback task neutralization could not be confirmed absent: $taskName" }
+            catch { $rollbackFailure = $_ }
+        }
+        else {
+            try {
+                & $stopExpectedHost
 
             if ($installState.PromotionHappened -and (Test-Path -LiteralPath $InstallPath)) {
                 & $RemovePathAction $InstallPath $true
@@ -665,9 +670,10 @@ function Invoke-ServiceHostInstall {
                 Register-ServiceHostTask -Plan $plan -RegisterTaskAction $RegisterTaskAction
                 $installState.RollbackPrepared = $true
             }
-            $installState.Phase = 'RollbackRestored'
+                $installState.Phase = 'RollbackRestored'
+            }
+            catch { $rollbackFailure = $_ }
         }
-        catch { $rollbackFailure = $_ }
         $cleanupFailure = $null
         try { & $cleanupStageLocked }
         catch { $cleanupFailure = $_ }

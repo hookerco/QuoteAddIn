@@ -155,7 +155,16 @@ function Invoke-ReleaseTransaction {
         [Parameter(Mandatory = $true)][string]$StatePath,
         [Parameter(Mandatory = $true)][scriptblock]$StopHost,
         [Parameter(Mandatory = $true)][scriptblock]$StartHost,
-        [Parameter(Mandatory = $true)][scriptblock]$TestHost
+        [Parameter(Mandatory = $true)][scriptblock]$TestHost,
+        [scriptblock]$TestCanStop = { $true },
+        [scriptblock]$RemovePathAction = {
+            param($path, [bool]$recurse)
+            Remove-Item -LiteralPath $path -Recurse:$recurse -Force -ErrorAction SilentlyContinue
+        },
+        [scriptblock]$MovePathAction = {
+            param($source, $destination)
+            Move-Item -LiteralPath $source -Destination $destination
+        }
     )
 
     New-Item -ItemType Directory -Force -Path $StatePath | Out-Null
@@ -170,15 +179,26 @@ function Invoke-ReleaseTransaction {
 
     Copy-VerifiedReleaseToStage -Manifest $Manifest -SharePath $SharePath -StagePath $stagePath
 
-    $stopped = $false
+    if (-not (& $TestCanStop)) {
+        & $RemovePathAction $stagePath $true | Out-Null
+        return 'deferred'
+    }
+
+    $stopCompleted = $false
+    $stopAttempted = $false
+    $currentMoved = $false
+    $stagePromoted = $false
     try {
+        $stopAttempted = $true
         & $StopHost
-        $stopped = $true
-        Remove-Item -LiteralPath $previousPath -Recurse -Force -ErrorAction SilentlyContinue
+        $stopCompleted = $true
+        & $RemovePathAction $previousPath $true
         if (Test-Path -LiteralPath $InstallPath -PathType Container) {
-            Move-Item -LiteralPath $InstallPath -Destination $previousPath
+            & $MovePathAction $InstallPath $previousPath
+            $currentMoved = $true
         }
-        Move-Item -LiteralPath $stagePath -Destination $InstallPath
+        & $MovePathAction $stagePath $InstallPath
+        $stagePromoted = $true
         $Manifest | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $manifestPath
         & $StartHost
         if (-not (& $TestHost)) {
@@ -186,16 +206,16 @@ function Invoke-ReleaseTransaction {
         }
     }
     catch {
-        if ($stopped) {
-            Remove-Item -LiteralPath $InstallPath -Recurse -Force -ErrorAction SilentlyContinue
+        if ($stagePromoted) {
+            & $RemovePathAction $InstallPath $true
             if (Test-Path -LiteralPath $previousPath -PathType Container) {
-                Move-Item -LiteralPath $previousPath -Destination $InstallPath
+                & $MovePathAction $previousPath $InstallPath
             }
             if ($hadManifest) {
                 Set-Content -LiteralPath $manifestPath -Value $previousManifest -NoNewline
             }
             else {
-                Remove-Item -LiteralPath $manifestPath -Force -ErrorAction SilentlyContinue
+                & $RemovePathAction $manifestPath $false
             }
             if (Test-Path -LiteralPath $InstallPath -PathType Container) {
                 & $StartHost
@@ -206,10 +226,28 @@ function Invoke-ReleaseTransaction {
                 throw 'Release failed; previous host restored.'
             }
         }
+        elseif ($currentMoved) {
+            if (Test-Path -LiteralPath $previousPath -PathType Container) {
+                & $MovePathAction $previousPath $InstallPath
+            }
+            if (Test-Path -LiteralPath $InstallPath -PathType Container) {
+                & $StartHost
+                if (-not (& $TestHost)) {
+                    throw 'Release failed and previous host failed to restart.'
+                }
+            }
+        }
+        elseif ($stopAttempted -and (Test-Path -LiteralPath $InstallPath -PathType Container)) {
+            & $StartHost
+            if (-not (& $TestHost)) {
+                throw 'Release failed and installed host failed to restart.'
+            }
+        }
         throw
     }
 
     Update-InstalledManager -Manifest $Manifest -SharePath $SharePath -StatePath $StatePath
+    return 'updated'
 }
 
 function Rotate-ManagerLogs {
@@ -361,13 +399,31 @@ function Invoke-ServiceHostManager {
             }
         }.GetNewClosure()
 
+        $activityContext = [pscustomobject]@{
+            Action = $GetProcessesAction
+        }
+        $testCanStop = {
+            $latestProcesses = @(& ([scriptblock]$activityContext.Action))
+            $quickBooksStarted = @($latestProcesses | Where-Object {
+                $_.ProcessName -ieq 'QBW32'
+            }).Count -gt 0
+            $connectorStarted = @($latestProcesses | Where-Object {
+                $_.ProcessName -ieq 'QuickBooksConnectorCli'
+            }).Count -gt 0
+            return (-not $quickBooksStarted -and -not $connectorStarted)
+        }.GetNewClosure()
+
         try {
             switch ($decision) {
                 'apply-update' {
-                    Invoke-ReleaseTransaction -Manifest $manifest -SharePath $SharePath `
+                    $transactionResult = Invoke-ReleaseTransaction -Manifest $manifest -SharePath $SharePath `
                         -InstallPath $InstallPath -StatePath $StatePath -StopHost $stopKnownHosts `
-                        -StartHost $StartHost -TestHost $TestHost | Out-Null
-                    $result = 'updated'
+                        -StartHost $StartHost -TestHost $TestHost -TestCanStop $testCanStop
+                    if ($transactionResult -eq 'deferred') {
+                        $decision = 'defer-update'
+                        $result = 'deferred'
+                    }
+                    else { $result = 'updated' }
                 }
                 'start-installed' {
                     & $stopKnownHosts
@@ -385,7 +441,14 @@ function Invoke-ServiceHostManager {
             throw
         }
         finally {
-            $hostForLog = $currentHosts | Select-Object -First 1
+            $logProcesses = @(& ([scriptblock]$activityContext.Action))
+            $hostForLog = $logProcesses | Where-Object {
+                $_.ProcessName -ieq 'QuickBooksServiceHost' -and
+                (Get-ServiceHostProcessPath $_) -ieq $expectedHostPath
+            } | Select-Object -First 1
+            if ($manifestValid) {
+                Update-InstalledManager -Manifest $manifest -SharePath $SharePath -StatePath $StatePath
+            }
             Write-ManagerLog -StatePath $StatePath -Record ([pscustomobject]@{
                 installed_release = $installedReleaseId
                 available_release = $availableReleaseId

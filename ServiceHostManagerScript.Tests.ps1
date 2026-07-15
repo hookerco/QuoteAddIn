@@ -486,6 +486,197 @@ function Run-Scenario {
                 Remove-TestTree $tree
             }
         }
+        'previous-cleanup-failure-preserves-install' {
+            $tree = New-TestTree
+            try {
+                $manifest = Write-TestRelease -Tree $tree
+                Write-InstalledRelease -Tree $tree
+                $previousPath = Join-Path $tree.StatePath 'Previous'
+                New-Item -ItemType Directory -Force -Path $previousPath | Out-Null
+                [IO.File]::WriteAllText((Join-Path $previousPath 'QuickBooksServiceHost.exe'), 'stale-previous')
+                $state = [pscustomobject]@{ Stops = 0; Starts = 0 }
+                $removeAction = {
+                    param($path, [bool]$recurse)
+                    if ($path -ieq $previousPath) { throw 'simulated previous cleanup failure' }
+                    Remove-Item -LiteralPath $path -Recurse:$recurse -Force -ErrorAction SilentlyContinue
+                }.GetNewClosure()
+                $moveAction = { param($source, $destination) Move-Item -LiteralPath $source -Destination $destination }.GetNewClosure()
+                $stop = { $state.Stops++ }.GetNewClosure()
+                $start = { $state.Starts++ }.GetNewClosure()
+                Assert-ThrowsMessage {
+                    Invoke-ReleaseTransaction -Manifest $manifest -SharePath $tree.Share `
+                        -InstallPath $tree.Install -StatePath $tree.StatePath `
+                        -StopHost $stop -StartHost $start -TestHost { $true } `
+                        -RemovePathAction $removeAction -MovePathAction $moveAction
+                } 'simulated previous cleanup failure' 'pre-promotion cleanup failure must remain the reported cause'
+                Assert-Equal 1 $state.Stops 'cleanup failure occurs after one completed stop'
+                Assert-Equal 1 $state.Starts 'cleanup failure restarts the untouched installed host'
+                Assert-Equal 'old-bytes' (Get-Content -Raw (Join-Path $tree.Install 'QuickBooksServiceHost.exe')) `
+                    'cleanup failure must not delete the still-good install'
+                Assert-Equal 'stale-previous' (Get-Content -Raw (Join-Path $previousPath 'QuickBooksServiceHost.exe')) `
+                    'cleanup failure must not restore stale Previous over the install'
+                Assert-Equal 'release-a' ((Get-Content -Raw (Join-Path $tree.StatePath 'installed.manifest.json') | ConvertFrom-Json).release_id) `
+                    'cleanup failure must preserve installed manifest'
+            }
+            finally { Remove-TestTree $tree }
+        }
+        'move-current-failure-preserves-install' {
+            $tree = New-TestTree
+            try {
+                $manifest = Write-TestRelease -Tree $tree
+                Write-InstalledRelease -Tree $tree
+                $previousPath = Join-Path $tree.StatePath 'Previous'
+                New-Item -ItemType Directory -Force -Path $previousPath | Out-Null
+                [IO.File]::WriteAllText((Join-Path $previousPath 'QuickBooksServiceHost.exe'), 'stale-previous')
+                $state = [pscustomobject]@{ Stops = 0; Starts = 0 }
+                $removeAction = {
+                    param($path, [bool]$recurse)
+                    Remove-Item -LiteralPath $path -Recurse:$recurse -Force -ErrorAction SilentlyContinue
+                }
+                $moveAction = {
+                    param($source, $destination)
+                    if ($source -ieq $tree.Install) { throw 'simulated current install move failure' }
+                    Move-Item -LiteralPath $source -Destination $destination
+                }.GetNewClosure()
+                $stop = { $state.Stops++ }.GetNewClosure()
+                $start = { $state.Starts++ }.GetNewClosure()
+                Assert-ThrowsMessage {
+                    Invoke-ReleaseTransaction -Manifest $manifest -SharePath $tree.Share `
+                        -InstallPath $tree.Install -StatePath $tree.StatePath `
+                        -StopHost $stop -StartHost $start -TestHost { $true } `
+                        -RemovePathAction $removeAction -MovePathAction $moveAction
+                } 'simulated current install move failure' 'current move failure must remain the reported cause'
+                Assert-Equal 1 $state.Stops 'current move failure occurs after one completed stop'
+                Assert-Equal 1 $state.Starts 'current move failure restarts the untouched installed host'
+                Assert-Equal 'old-bytes' (Get-Content -Raw (Join-Path $tree.Install 'QuickBooksServiceHost.exe')) `
+                    'current move failure must not delete the still-good install'
+                Assert-True (-not (Test-Path -LiteralPath $previousPath)) `
+                    'current move failure must not restore a stale Previous tree after cleanup'
+                Assert-Equal 'release-a' ((Get-Content -Raw (Join-Path $tree.StatePath 'installed.manifest.json') | ConvertFrom-Json).release_id) `
+                    'current move failure must preserve installed manifest'
+            }
+            finally { Remove-TestTree $tree }
+        }
+        'partial-stop-failure-restarts-installed' {
+            $tree = New-TestTree
+            try {
+                $manifest = Write-TestRelease -Tree $tree
+                Write-InstalledRelease -Tree $tree
+                $state = [pscustomobject]@{ Stops = 0; Starts = 0 }
+                $stop = {
+                    foreach ($hostId in @(1, 2)) {
+                        $state.Stops++
+                        if ($hostId -eq 2) { throw 'simulated second host stop failure' }
+                    }
+                }.GetNewClosure()
+                $start = { $state.Starts++ }.GetNewClosure()
+                Assert-ThrowsMessage {
+                    Invoke-ReleaseTransaction -Manifest $manifest -SharePath $tree.Share `
+                        -InstallPath $tree.Install -StatePath $tree.StatePath `
+                        -StopHost $stop -StartHost $start -TestHost { $true }
+                } 'simulated second host stop failure' 'partial multi-host stop failure remains the reported cause'
+                Assert-Equal 2 $state.Stops 'stop action reached the later host before failing'
+                Assert-Equal 1 $state.Starts 'partial stop failure restarts the installed host'
+                Assert-Equal 'old-bytes' (Get-Content -Raw (Join-Path $tree.Install 'QuickBooksServiceHost.exe')) `
+                    'partial stop failure preserves installed runtime'
+            }
+            finally { Remove-TestTree $tree }
+        }
+        'activity-race-defers-after-staging' {
+            $tree = New-TestTree
+            try {
+                Write-TestRelease -Tree $tree | Out-Null
+                Write-InstalledRelease -Tree $tree -ReleaseId 'release-a'
+                $expectedHost = [pscustomobject]@{
+                    ProcessName = 'QuickBooksServiceHost'
+                    Id = 62
+                    Path = (Join-Path $tree.Install 'QuickBooksServiceHost.exe')
+                }
+                $quickBooks = [pscustomobject]@{ ProcessName = 'QBW32'; Id = 63; Path = 'C:\QuickBooks\QBW32.exe' }
+                $state = [pscustomobject]@{ Calls = 0; Stops = 0; Starts = 0; MutexName = '' }
+                $getProcesses = {
+                    $state.Calls++
+                    if ($state.Calls -eq 1) { return @($expectedHost) }
+                    return @($expectedHost, $quickBooks)
+                }.GetNewClosure()
+                $stopProcess = { param($process) $state.Stops++ }.GetNewClosure()
+                $startHost = { $state.Starts++ }.GetNewClosure()
+                $mutex = {
+                    param($name, $action)
+                    $state.MutexName = $name
+                    & $action
+                }.GetNewClosure()
+
+                Invoke-ServiceHostManager -SharePath $tree.Share -InstallPath $tree.Install `
+                    -StatePath $tree.StatePath -GetProcessesAction $getProcesses `
+                    -StopProcessAction $stopProcess -StartHost $startHost -TestHost { $true } `
+                    -MutexAction $mutex | Out-Null
+
+                Assert-True ($state.Calls -ge 2) 'activity must be checked again after staging'
+                Assert-Equal 0 $state.Stops 'new QuickBooks activity defers before stopping the host'
+                Assert-Equal 0 $state.Starts 'deferred activity race does not restart the host'
+                Assert-Equal 'old-bytes' (Get-Content -Raw (Join-Path $tree.Install 'QuickBooksServiceHost.exe')) `
+                    'activity race preserves installed runtime'
+            }
+            finally { Remove-TestTree $tree }
+        }
+        'logs-refresh-host-after-action' {
+            $tree = New-TestTree
+            try {
+                Write-InstalledRelease -Tree $tree -ReleaseId 'release-a'
+                Remove-Item -LiteralPath $tree.Share -Recurse -Force
+                $state = [pscustomobject]@{ Calls = 0; Started = $false; MutexName = '' }
+                $expectedPath = Join-Path $tree.Install 'QuickBooksServiceHost.exe'
+                $hostProcess = [pscustomobject]@{
+                    ProcessName = 'QuickBooksServiceHost'
+                    Id = 71
+                    Path = $expectedPath
+                }
+                $getProcesses = {
+                    $state.Calls++
+                    if ($state.Started) { return @($hostProcess) }
+                    return @()
+                }.GetNewClosure()
+                $startHost = { $state.Started = $true }.GetNewClosure()
+                $mutex = {
+                    param($name, $action)
+                    $state.MutexName = $name
+                    & $action
+                }.GetNewClosure()
+
+                Invoke-ServiceHostManager -SharePath $tree.Share -InstallPath $tree.Install `
+                    -StatePath $tree.StatePath -GetProcessesAction $getProcesses `
+                    -StopProcessAction { param($process) } -StartHost $startHost -TestHost { $true } `
+                    -MutexAction $mutex | Out-Null
+
+                $record = Get-Content -Raw (Join-Path $tree.StatePath 'service-host-manager.log') | ConvertFrom-Json
+                Assert-True ($state.Calls -ge 2) 'logging refreshes the expected-path host state after the action'
+                Assert-Equal 71 $record.host_pid 'log records the host PID observed after startup'
+                Assert-Equal $expectedPath $record.host_path 'log records the expected host path observed after startup'
+            }
+            finally { Remove-TestTree $tree }
+        }
+        'manager-retries-when-runtime-current' {
+            $tree = New-TestTree
+            try {
+                Write-InstalledRelease -Tree $tree -ReleaseId 'release-a'
+                Write-TestRelease -Tree $tree -ReleaseId 'release-a' -ManagerBytes 'retried-manager' | Out-Null
+                $state = [pscustomobject]@{ Starts = 0; Stopped = @(); MutexName = '' }
+                $processes = @(
+                    [pscustomobject]@{ ProcessName = 'QuickBooksServiceHost'; Id = 61; Path = (Join-Path $tree.Install 'QuickBooksServiceHost.exe') }
+                )
+                $actions = New-OrchestrationActions -State $state -Processes $processes
+                Invoke-ServiceHostManager -SharePath $tree.Share -InstallPath $tree.Install `
+                    -StatePath $tree.StatePath -GetProcessesAction $actions.GetProcesses `
+                    -StopProcessAction $actions.StopProcess -StartHost $actions.StartHost `
+                    -TestHost $actions.TestHost -MutexAction $actions.Mutex | Out-Null
+                Assert-Equal 0 $state.Stopped.Count 'current runtime manager retry does not stop host'
+                Assert-Equal 0 $state.Starts 'current runtime manager retry does not start host'
+                Assert-Equal 'retried-manager' (Get-Content -Raw (Join-Path $tree.StatePath 'service_host_manager.ps1')) `
+                    'valid manifest retries manager replacement after an earlier manager failure'
+            }
+            finally { Remove-TestTree $tree }
+        }
         default {
             throw "Unknown scenario: $Name"
         }
@@ -519,7 +710,13 @@ $allScenarios = @(
     'logs-rotate',
     'logs-redact',
     'wrong-path-host-replaced',
-    'hidden-startup'
+    'hidden-startup',
+    'previous-cleanup-failure-preserves-install',
+    'move-current-failure-preserves-install',
+    'partial-stop-failure-restarts-installed',
+    'manager-retries-when-runtime-current',
+    'activity-race-defers-after-staging',
+    'logs-refresh-host-after-action'
 )
 
 if ($Scenario -eq 'all') {

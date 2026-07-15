@@ -253,7 +253,7 @@ function Run-Scenario {
                 $health = { $state.Healthy }.GetNewClosure()
                 Invoke-ReleaseTransaction -Manifest $manifest -SharePath $tree.Share `
                     -InstallPath $tree.Install -StatePath $tree.StatePath `
-                    -StopHost $stop -StartHost $start -TestHost $health
+                    -StopHost $stop -StartHost $start -TestHost $health | Out-Null
                 Assert-Equal 1 $state.Stops 'host stopped once after staging verifies'
                 Assert-Equal 1 $state.Starts 'new host started once'
                 Assert-Equal 'new-bytes' (Get-Content -Raw (Join-Path $tree.Install 'QuickBooksServiceHost.exe')) `
@@ -281,7 +281,7 @@ function Run-Scenario {
                         -StopHost $stop -StartHost $start -TestHost $health
                 } 'Release failed; previous host restored.' `
                     'failed replacement must report failure after restoring the previous host'
-                Assert-Equal 1 $state.Stops 'rollback transaction stops the old host once'
+                Assert-Equal 2 $state.Stops 'rollback stops old and failed candidate hosts before runtime movement'
                 Assert-Equal 2 $state.Starts 'rollback transaction starts new then previous host'
                 Assert-Equal 'old-bytes' (Get-Content -Raw (Join-Path $tree.Install 'QuickBooksServiceHost.exe')) `
                     'failed replacement restores old runtime bytes'
@@ -510,8 +510,9 @@ function Run-Scenario {
                     result = ('y' * 200); rollback = $false; host_pid = 1; host_path = 'C:\fake\host.exe'
                 })
                 Assert-True (Test-Path -LiteralPath "$logPath.1") 'oversized log rotates to .1'
-                Assert-True (Test-Path -LiteralPath "$logPath.5") 'log rotation retains fifth backup'
-                Assert-True (-not (Test-Path -LiteralPath "$logPath.6")) 'log rotation never creates sixth backup'
+                Assert-True (Test-Path -LiteralPath "$logPath.4") 'log rotation retains four backups'
+                Assert-True (-not (Test-Path -LiteralPath "$logPath.5")) 'log rotation removes the fifth backup'
+                Assert-Equal 5 @(Get-ChildItem -LiteralPath $logDirectory -Filter 'service-host-manager.log*').Count 'log retention is active plus .1 through .4'
                 Assert-True ((Get-Item -LiteralPath $logPath).Length -lt 1MB) 'active log remains bounded after rotation'
             }
             finally { Remove-TestTree $tree }
@@ -579,8 +580,8 @@ function Run-Scenario {
                         -StopHost $stop -StartHost $start -TestHost { $true } `
                         -RemovePathAction $removeAction -MovePathAction $moveAction
                 } 'simulated previous cleanup failure' 'pre-promotion cleanup failure must remain the reported cause'
-                Assert-Equal 1 $state.Stops 'cleanup failure occurs after one completed stop'
-                Assert-Equal 1 $state.Starts 'cleanup failure restarts the untouched installed host'
+                Assert-Equal 0 $state.Stops 'cleanup failure is detected before host stop'
+                Assert-Equal 0 $state.Starts 'pre-stop cleanup failure needs no recovery start'
                 Assert-Equal 'old-bytes' (Get-Content -Raw (Join-Path $tree.Install 'QuickBooksServiceHost.exe')) `
                     'cleanup failure must not delete the still-good install'
                 Assert-Equal 'stale-previous' (Get-Content -Raw (Join-Path $previousPath 'QuickBooksServiceHost.exe')) `
@@ -646,7 +647,7 @@ function Run-Scenario {
                         -StopHost $stop -StartHost $start -TestHost { $true }
                 } 'simulated second host stop failure' 'partial multi-host stop failure remains the reported cause'
                 Assert-Equal 2 $state.Stops 'stop action reached the later host before failing'
-                Assert-Equal 1 $state.Starts 'partial stop failure restarts the installed host'
+                Assert-Equal 0 $state.Starts 'partial stop failure does not duplicate a surviving healthy host'
                 Assert-Equal 'old-bytes' (Get-Content -Raw (Join-Path $tree.Install 'QuickBooksServiceHost.exe')) `
                     'partial stop failure preserves installed runtime'
             }
@@ -837,6 +838,334 @@ function Run-Scenario {
                 Remove-TestTree $tree
             }
         }
+        'phase3-cleanup-fails-closed' {
+            $tree = New-TestTree
+            try {
+                $manifest = Write-TestRelease -Tree $tree
+                Write-InstalledRelease -Tree $tree
+                $previousPath = Join-Path $tree.StatePath 'Previous'
+                New-Item -ItemType Directory -Force -Path $previousPath | Out-Null
+                [IO.File]::WriteAllText((Join-Path $previousPath 'stale.txt'), 'stale')
+                $state = [pscustomobject]@{ Stops = 0; Starts = 0 }
+                $removeAction = {
+                    param($path, [bool]$recurse)
+                    if ($path -ieq $previousPath) { return }
+                    Remove-Item -LiteralPath $path -Recurse:$recurse -Force -ErrorAction Stop
+                }.GetNewClosure()
+                $stop = { $state.Stops++ }.GetNewClosure()
+                $start = { $state.Starts++ }.GetNewClosure()
+                Assert-ThrowsMessage {
+                    Invoke-ReleaseTransaction -Manifest $manifest -SharePath $tree.Share `
+                        -InstallPath $tree.Install -StatePath $tree.StatePath `
+                        -StopHost $stop -StartHost $start -TestHost { $true } `
+                        -RemovePathAction $removeAction
+                } "Path cleanup could not be verified absent: $previousPath" `
+                    'Previous cleanup must fail closed before host stop'
+                Assert-Equal 0 $state.Stops 'failed Previous cleanup occurs before host stop'
+                Assert-Equal 'stale' ([IO.File]::ReadAllText((Join-Path $previousPath 'stale.txt'))) `
+                    'failed Previous cleanup preserves the retained tree'
+            }
+            finally { Remove-TestTree $tree }
+
+            $tree = New-TestTree
+            try {
+                $manifest = Write-TestRelease -Tree $tree
+                Write-InstalledRelease -Tree $tree
+                $state = [pscustomobject]@{ CleanupPath = '' }
+                $removeAction = {
+                    param($path, [bool]$recurse)
+                    $state.CleanupPath = $path
+                }.GetNewClosure()
+                $caught = $null
+                try {
+                    Update-InstalledManager -Manifest $manifest -SharePath $tree.Share `
+                        -StatePath $tree.StatePath -RemovePathAction $removeAction
+                }
+                catch { $caught = $_ }
+                Assert-True ($null -ne $caught) 'manager candidate cleanup failure must throw'
+                Assert-Equal "Path cleanup could not be verified absent: $($state.CleanupPath)" `
+                    $caught.Exception.Message 'manager cleanup failure is precise'
+                Assert-Equal $tree.StatePath (Split-Path -Parent $state.CleanupPath) `
+                    'manager candidate uses a direct protected StatePath child'
+                Assert-True ((Split-Path -Leaf $state.CleanupPath) -match '^[0-9a-f]{32}$') `
+                    'manager candidate uses an unpredictable GUID stage root'
+            }
+            finally { Remove-TestTree $tree }
+        }
+        'phase3-guid-stage-retains-previous' {
+            $tree = New-TestTree
+            try {
+                $manifest = Write-TestRelease -Tree $tree
+                Write-InstalledRelease -Tree $tree
+                $state = [pscustomobject]@{ StageRoot = ''; Stops = 0; Starts = 0 }
+                $moveAction = {
+                    param($source, $destination)
+                    if ($destination -ieq $tree.Install -and $source -ine $tree.StatePath) {
+                        $state.StageRoot = Split-Path -Parent $source
+                    }
+                    Move-Item -LiteralPath $source -Destination $destination
+                }.GetNewClosure()
+                Invoke-ReleaseTransaction -Manifest $manifest -SharePath $tree.Share `
+                    -InstallPath $tree.Install -StatePath $tree.StatePath `
+                    -StopHost { $state.Stops++ }.GetNewClosure() `
+                    -StartHost { $state.Starts++ }.GetNewClosure() -TestHost { $true } `
+                    -MovePathAction $moveAction | Out-Null
+                Assert-Equal $tree.StatePath (Split-Path -Parent $state.StageRoot) `
+                    'runtime stage is a direct protected StatePath child'
+                Assert-True ((Split-Path -Leaf $state.StageRoot) -match '^[0-9a-f]{32}$') `
+                    'runtime stage uses an unpredictable GUID root'
+                Assert-True (-not (Test-Path -LiteralPath $state.StageRoot)) `
+                    'runtime stage root is verified absent after success'
+                Assert-True (-not (Test-Path -LiteralPath (Join-Path $tree.StatePath 'Stage'))) `
+                    'predictable fixed Stage is never used'
+                Assert-Equal 'old-bytes' ([IO.File]::ReadAllText((Join-Path $tree.StatePath 'Previous\QuickBooksServiceHost.exe'))) `
+                    'success retains exactly the prior runtime in Previous'
+            }
+            finally { Remove-TestTree $tree }
+        }
+        'phase3-delayed-exit-before-move' {
+            $tree = New-TestTree
+            try {
+                Write-TestRelease -Tree $tree | Out-Null
+                Write-InstalledRelease -Tree $tree
+                $expectedPath = Join-Path $tree.Install 'QuickBooksServiceHost.exe'
+                $process = [pscustomobject]@{ ProcessName = 'QuickBooksServiceHost'; Id = 91; Path = $expectedPath }
+                $state = [pscustomobject]@{ ExitChecks = 0; Delays = 0; Stops = 0; Starts = 0; Moved = $false }
+                $testExited = {
+                    param($capturedProcess)
+                    $state.ExitChecks++
+                    return $state.ExitChecks -ge 3
+                }.GetNewClosure()
+                $delay = { param($milliseconds) $state.Delays++ }.GetNewClosure()
+                $moveAction = {
+                    param($source, $destination)
+                    if ($source -ieq $tree.Install) {
+                        Assert-True ($state.ExitChecks -ge 3) 'runtime must not move while a captured expected host is alive'
+                        $state.Moved = $true
+                    }
+                    Move-Item -LiteralPath $source -Destination $destination
+                }.GetNewClosure()
+                $mutex = { param($name, $action) & $action }
+                Invoke-ServiceHostManager -SharePath $tree.Share -InstallPath $tree.Install `
+                    -StatePath $tree.StatePath -GetProcessesAction { @($process) }.GetNewClosure() `
+                    -StopProcessAction { param($item) $state.Stops++ }.GetNewClosure() `
+                    -StartHost { $state.Starts++ }.GetNewClosure() -TestHost { $true } `
+                    -TestProcessExitedAction $testExited -DelayAction $delay `
+                    -HostExitTimeoutMilliseconds 1000 -HostExitPollMilliseconds 100 `
+                    -MovePathAction $moveAction -MutexAction $mutex | Out-Null
+                Assert-Equal 1 $state.Stops 'captured expected host is stopped once'
+                Assert-Equal 3 $state.ExitChecks 'exit polling continues until the delayed host exits'
+                Assert-Equal 2 $state.Delays 'bounded wait delays between failed exit checks'
+                Assert-True $state.Moved 'runtime moves after the captured expected host exits'
+                $unverifiable = New-Object psobject -Property @{ Id = 92 }
+                $unverifiable | Add-Member -MemberType ScriptProperty -Name HasExited -Value { throw 'access denied' }
+                Assert-True (-not (Test-CapturedHostProcessExited -Process $unverifiable)) `
+                    'an exit state that cannot be observed fails closed'
+            }
+            finally { Remove-TestTree $tree }
+        }
+        'phase3-default-health-is-strict-and-stable' {
+            $tree = New-TestTree
+            try {
+                $expectedPath = Join-Path $tree.Install 'QuickBooksServiceHost.exe'
+                $expectedOne = [pscustomobject]@{ ProcessName = 'QuickBooksServiceHost'; Id = 101; Path = $expectedPath }
+                $expectedTwo = [pscustomobject]@{ ProcessName = 'QuickBooksServiceHost'; Id = 102; Path = $expectedPath }
+                $wrong = [pscustomobject]@{ ProcessName = 'QuickBooksServiceHost'; Id = 103; Path = 'C:\Wrong\QuickBooksServiceHost.exe' }
+                Assert-True (-not (Test-InstalledHostStable -InstallPath $tree.Install `
+                    -GetProcessesAction { @($expectedOne, $expectedTwo) }.GetNewClosure() `
+                    -DelayAction { param($milliseconds) } -StabilityDelayMilliseconds 1)) `
+                    'duplicate expected-path final hosts are unhealthy'
+                Assert-True (-not (Test-InstalledHostStable -InstallPath $tree.Install `
+                    -GetProcessesAction { @($expectedOne, $wrong) }.GetNewClosure() `
+                    -DelayAction { param($milliseconds) } -StabilityDelayMilliseconds 1)) `
+                    'an expected host plus a wrong-path duplicate is unhealthy'
+
+                $state = [pscustomobject]@{ Snapshots = 0; Delays = 0 }
+                $snapshots = {
+                    $state.Snapshots++
+                    if ($state.Snapshots -eq 1) { return @($expectedOne) }
+                    return @($expectedOne, $wrong)
+                }.GetNewClosure()
+                $delay = { param($milliseconds) $state.Delays++ }.GetNewClosure()
+                Assert-True (-not (Test-InstalledHostStable -InstallPath $tree.Install `
+                    -GetProcessesAction $snapshots -DelayAction $delay -StabilityDelayMilliseconds 1)) `
+                    'host health must remain valid across the stability window'
+                Assert-Equal 2 $state.Snapshots 'stable health takes two injected snapshots'
+                Assert-Equal 1 $state.Delays 'stable health uses one injected delay window'
+                Assert-True (Test-InstalledHostStable -InstallPath $tree.Install `
+                    -GetProcessesAction { @($expectedOne) }.GetNewClosure() `
+                    -DelayAction { param($milliseconds) } -StabilityDelayMilliseconds 1) `
+                    'exactly one expected-path host across both snapshots is healthy'
+            }
+            finally { Remove-TestTree $tree }
+        }
+        'phase3-manager-failure-preserves-runtime-and-retries' {
+            $tree = New-TestTree
+            $originalUpdateManager = (Get-Command Update-InstalledManager).ScriptBlock
+            try {
+                Write-TestRelease -Tree $tree -ManagerBytes 'retry-manager' | Out-Null
+                Write-InstalledRelease -Tree $tree
+                $expectedPath = Join-Path $tree.Install 'QuickBooksServiceHost.exe'
+                $process = [pscustomobject]@{ ProcessName = 'QuickBooksServiceHost'; Id = 111; Path = $expectedPath }
+                $state = [pscustomobject]@{ ManagerCalls = 0; Stops = 0; Starts = 0 }
+                $replacement = {
+                    param($Manifest, $SharePath, $StatePath)
+                    $state.ManagerCalls++
+                    if ($state.ManagerCalls -eq 1) { throw 'simulated manager copy failure' }
+                    & $originalUpdateManager -Manifest $Manifest -SharePath $SharePath -StatePath $StatePath
+                }.GetNewClosure()
+                Set-Item -Path Function:\Update-InstalledManager -Value $replacement
+                $mutex = { param($name, $action) & $action }
+                $common = @{
+                    SharePath = $tree.Share; InstallPath = $tree.Install; StatePath = $tree.StatePath
+                    GetProcessesAction = { @($process) }.GetNewClosure()
+                    StopProcessAction = { param($item) $state.Stops++ }.GetNewClosure()
+                    StartHost = { $state.Starts++ }.GetNewClosure(); TestHost = { $true }
+                    MutexAction = $mutex
+                }
+                Invoke-ServiceHostManager @common | Out-Null
+                Assert-Equal 'new-bytes' ([IO.File]::ReadAllText((Join-Path $tree.Install 'QuickBooksServiceHost.exe'))) `
+                    'successful runtime remains installed when manager reconciliation fails'
+                Assert-Equal 'old-manager' ([IO.File]::ReadAllText((Join-Path $tree.StatePath 'Manager\service_host_manager.ps1'))) `
+                    'failed manager reconciliation leaves the prior manager for retry'
+                $logPath = Join-Path $tree.StatePath 'Logs\service-host-manager.log'
+                $record = @(Get-Content -LiteralPath $logPath | ForEach-Object { $_ | ConvertFrom-Json })[-1]
+                Assert-Equal 'updated' $record.result 'runtime success remains the structured result'
+                Assert-Equal 'failed' $record.manager_update 'manager failure is structured separately'
+                Assert-Equal $true $record.manager_retry 'manager failure explicitly remains retryable'
+
+                Invoke-ServiceHostManager @common | Out-Null
+                Assert-Equal 2 $state.ManagerCalls 'later manager invocation retries reconciliation'
+                Assert-Equal 'retry-manager' ([IO.File]::ReadAllText((Join-Path $tree.StatePath 'Manager\service_host_manager.ps1'))) `
+                    'later reconciliation installs the verified manager'
+                $record = @(Get-Content -LiteralPath $logPath | ForEach-Object { $_ | ConvertFrom-Json })[-1]
+                Assert-Equal 'succeeded' $record.manager_update 'successful retry is structured'
+                Assert-Equal $false $record.manager_retry 'successful retry clears retry posture'
+            }
+            finally {
+                Set-Item -Path Function:\Update-InstalledManager -Value $originalUpdateManager
+                Remove-TestTree $tree
+            }
+        }
+        'phase3-rollback-outcome-and-log' {
+            $tree = New-TestTree
+            try {
+                Write-TestRelease -Tree $tree | Out-Null
+                Write-InstalledRelease -Tree $tree
+                $expectedPath = Join-Path $tree.Install 'QuickBooksServiceHost.exe'
+                $process = [pscustomobject]@{ ProcessName = 'QuickBooksServiceHost'; Id = 121; Path = $expectedPath }
+                $state = [pscustomobject]@{ Stops = 0; Starts = 0 }
+                $caught = $null
+                try {
+                    Invoke-ServiceHostManager -SharePath $tree.Share -InstallPath $tree.Install `
+                        -StatePath $tree.StatePath -GetProcessesAction { @($process) }.GetNewClosure() `
+                        -StopProcessAction { param($item) $state.Stops++ }.GetNewClosure() `
+                        -StartHost { $state.Starts++ }.GetNewClosure() -TestHost { $false } `
+                        -MutexAction { param($name, $action) & $action } | Out-Null
+                }
+                catch { $caught = $_ }
+                Assert-True ($null -ne $caught) 'failed candidate and failed restoration report failure'
+                $logPath = Join-Path $tree.StatePath 'Logs\service-host-manager.log'
+                $record = @(Get-Content -LiteralPath $logPath | ForEach-Object { $_ | ConvertFrom-Json })[-1]
+                Assert-Equal 'failed' $record.result 'failed runtime outcome is structured'
+                Assert-Equal $true $record.rollback 'rollback is true whenever restoration was attempted'
+            }
+            finally { Remove-TestTree $tree }
+
+            $tree = New-TestTree
+            try {
+                $manifest = Write-TestRelease -Tree $tree
+                Write-InstalledRelease -Tree $tree
+                $state = [pscustomobject]@{ Starts = 0; Healthy = $false }
+                $outcome = [pscustomobject]@{ RollbackAttempted = $false; RollbackSucceeded = $false }
+                $start = {
+                    $state.Starts++
+                    if ($state.Starts -eq 2) { $state.Healthy = $true }
+                }.GetNewClosure()
+                $health = { $state.Healthy }.GetNewClosure()
+                Assert-Throws {
+                    Invoke-ReleaseTransaction -Manifest $manifest -SharePath $tree.Share `
+                        -InstallPath $tree.Install -StatePath $tree.StatePath -StopHost { } `
+                        -StartHost $start -TestHost $health -Outcome $outcome
+                } 'restored release still reports the failed candidate'
+                Assert-Equal $true $outcome.RollbackAttempted 'transaction outcome records attempted restoration'
+                Assert-Equal $true $outcome.RollbackSucceeded 'transaction outcome records successful restoration'
+            }
+            finally { Remove-TestTree $tree }
+
+            $tree = New-TestTree
+            try {
+                $manifest = Write-TestRelease -Tree $tree
+                Write-InstalledRelease -Tree $tree
+                $previousPath = Join-Path $tree.StatePath 'Previous'
+                $state = [pscustomobject]@{ Starts = 0; Healthy = $false }
+                $outcome = [pscustomobject]@{ RollbackAttempted = $false; RollbackSucceeded = $false }
+                $start = {
+                    $state.Starts++
+                    if ($state.Starts -eq 2) { $state.Healthy = $true }
+                }.GetNewClosure()
+                $health = { $state.Healthy }.GetNewClosure()
+                $moveAction = {
+                    param($source, $destination)
+                    Move-Item -LiteralPath $source -Destination $destination
+                    if ($source -ieq $previousPath -and $destination -ieq $tree.Install) {
+                        throw 'simulated restore move-then-throw'
+                    }
+                }.GetNewClosure()
+                Assert-ThrowsMessage {
+                    Invoke-ReleaseTransaction -Manifest $manifest -SharePath $tree.Share `
+                        -InstallPath $tree.Install -StatePath $tree.StatePath -StopHost { } `
+                        -StartHost $start -TestHost $health -MovePathAction $moveAction -Outcome $outcome
+                } 'Release failed; previous host restored.' `
+                    'rollback reconciles a successful restore move that throws afterward'
+                Assert-Equal $true $outcome.RollbackAttempted 'move-then-throw rollback remains attempted'
+                Assert-Equal $true $outcome.RollbackSucceeded 'move-then-throw rollback is recorded as successful'
+                Assert-Equal 'old-bytes' ([IO.File]::ReadAllText((Join-Path $tree.Install 'QuickBooksServiceHost.exe'))) `
+                    'move-then-throw rollback restores the old runtime'
+            }
+            finally { Remove-TestTree $tree }
+
+            $tree = New-TestTree
+            try {
+                $manifest = Write-TestRelease -Tree $tree
+                Write-InstalledRelease -Tree $tree
+                $target = Join-Path $tree.Root 'runtime-target'
+                Move-Item -LiteralPath $tree.Install -Destination $target
+                New-Item -ItemType Junction -Path $tree.Install -Target $target -ErrorAction Stop | Out-Null
+                $state = [pscustomobject]@{ Stops = 0 }
+                $stop = { $state.Stops++ }.GetNewClosure()
+                Assert-ThrowsMessage {
+                    Invoke-ReleaseTransaction -Manifest $manifest -SharePath $tree.Share `
+                        -InstallPath $tree.Install -StatePath $tree.StatePath `
+                        -StopHost $stop -StartHost { } -TestHost { $true }
+                } "Reparse points are not allowed in manager transaction state: $($tree.Install)" `
+                    'runtime reparse substitution fails before host stop or runtime movement'
+                Assert-Equal 0 $state.Stops 'runtime reparse substitution is rejected before host stop'
+                Assert-Equal 'old-bytes' ([IO.File]::ReadAllText((Join-Path $target 'QuickBooksServiceHost.exe'))) `
+                    'runtime reparse substitution leaves the target untouched'
+            }
+            finally { Remove-TestTree $tree }
+        }
+        'phase3-reparse-cleanup-is-rejected' {
+            $tree = New-TestTree
+            try {
+                $target = Join-Path $tree.Root 'reparse-target'
+                $link = Join-Path $tree.StatePath 'Previous'
+                New-Item -ItemType Directory -Force -Path $target | Out-Null
+                [IO.File]::WriteAllText((Join-Path $target 'sentinel.txt'), 'safe')
+                New-Item -ItemType Junction -Path $link -Target $target -ErrorAction Stop | Out-Null
+                $state = [pscustomobject]@{ Removes = 0 }
+                $removeAction = { param($path, [bool]$recurse) $state.Removes++ }.GetNewClosure()
+                Assert-ThrowsMessage {
+                    Remove-ManagerPathVerified -Path $link -Recurse $true -RemovePathAction $removeAction
+                } "Reparse points are not allowed in manager transaction state: $link" `
+                    'cleanup rejects a substituted reparse point before removal'
+                Assert-Equal 0 $state.Removes 'reparse cleanup invokes no removal action'
+                Assert-Equal 'safe' ([IO.File]::ReadAllText((Join-Path $target 'sentinel.txt'))) `
+                    'reparse cleanup leaves the target untouched'
+            }
+            finally { Remove-TestTree $tree }
+        }
         default {
             throw "Unknown scenario: $Name"
         }
@@ -881,7 +1210,14 @@ $allScenarios = @(
     'activity-race-defers-after-staging',
     'late-deferral-resnap-avoids-duplicate-host-start',
     'logs-refresh-host-after-action',
-    'manager-reconciliation-owned-once-after-update'
+    'manager-reconciliation-owned-once-after-update',
+    'phase3-cleanup-fails-closed',
+    'phase3-guid-stage-retains-previous',
+    'phase3-delayed-exit-before-move',
+    'phase3-default-health-is-strict-and-stable',
+    'phase3-manager-failure-preserves-runtime-and-retries',
+    'phase3-rollback-outcome-and-log',
+    'phase3-reparse-cleanup-is-rejected'
 )
 
 if ($Scenario -eq 'all') {

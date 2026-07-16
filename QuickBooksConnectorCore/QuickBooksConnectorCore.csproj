@@ -42,6 +42,7 @@
     <Compile Include="BridgeHttpResponse.cs" />
     <Compile Include="WorkstationFileSave.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
+    <Compile Include="QuickBooksPipeBindingFactory.cs" />
     <Compile Include="QuickBooksServiceConnection.cs" />
     <Compile Include="QuoteBridgeRouter.cs" />
     <Compile Include="QuoteRequestParseException.cs" />

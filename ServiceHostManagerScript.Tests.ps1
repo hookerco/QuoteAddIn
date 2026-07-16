@@ -1310,6 +1310,112 @@ public sealed class Phase3ThrowingExitProcess {
             }
             finally { Remove-TestTree $tree }
         }
+        'phase3-invalid-recovery-marker-fails-closed' {
+            $tree = New-TestTree
+            try {
+                Write-TestRelease -Tree $tree | Out-Null
+                Write-InstalledRelease -Tree $tree -ReleaseId 'release-b' -HostBytes 'new-bytes'
+                $markerPath = Join-Path $tree.StatePath 'Manager\manager-update-recovery.json'
+                New-Item -ItemType Directory -Path $markerPath | Out-Null
+                $process = [pscustomobject]@{ ProcessName = 'QuickBooksServiceHost'; Id = 151; Path = (Join-Path $tree.Install 'QuickBooksServiceHost.exe') }
+                Invoke-ServiceHostManager -SharePath $tree.Share -InstallPath $tree.Install -StatePath $tree.StatePath `
+                    -GetProcessesAction { @($process) }.GetNewClosure() -StopProcessAction { param($item) } `
+                    -StartHost { } -TestHost { $true } -MutexAction { param($name, $action) & $action } | Out-Null
+                $record = @(Get-Content (Join-Path $tree.StatePath 'Logs\service-host-manager.log') | ForEach-Object { $_ | ConvertFrom-Json })[-1]
+                Assert-Equal 'failed' $record.manager_update 'invalid marker object fails manager reconciliation'
+                Assert-Equal $true $record.manager_recovery_required 'invalid marker object requires recovery'
+                Assert-True ([string]$record.manager_recovery_diagnostic -match 'not a regular file') `
+                    'invalid marker diagnostic is structured'
+                Assert-Equal 0 @((Get-ChildItem $tree.StatePath -Directory) | Where-Object Name -Match '^[0-9a-f]{32}$').Count `
+                    'invalid marker creates no new transaction stage'
+            }
+            finally { Remove-TestTree $tree }
+        }
+        'phase3-recovery-marker-write-failure-is-explicit' {
+            $tree = New-TestTree
+            $originalUpdateManager = (Get-Command Update-InstalledManager).ScriptBlock
+            try {
+                Write-TestRelease -Tree $tree | Out-Null
+                Write-InstalledRelease -Tree $tree -ReleaseId 'release-b' -HostBytes 'new-bytes'
+                $state = [pscustomobject]@{ Calls = 0; RuntimeMoves = 0 }
+                $replacement = {
+                    param($Manifest, $SharePath, $StatePath)
+                    $state.Calls++
+                    $leaveOrphan = { param($path, [bool]$recurse) }
+                    $failMarker = { param($stateRoot, $marker, $stage) throw 'simulated marker write failure' }
+                    & $originalUpdateManager -Manifest $Manifest -SharePath $SharePath -StatePath $StatePath `
+                        -RemovePathAction $leaveOrphan -WriteRecoveryAction $failMarker
+                }.GetNewClosure()
+                Set-Item Function:\Update-InstalledManager $replacement
+                $process = [pscustomobject]@{ ProcessName = 'QuickBooksServiceHost'; Id = 152; Path = (Join-Path $tree.Install 'QuickBooksServiceHost.exe') }
+                $common = @{
+                    SharePath=$tree.Share; InstallPath=$tree.Install; StatePath=$tree.StatePath
+                    GetProcessesAction={ @($process) }.GetNewClosure(); StopProcessAction={ param($item) }
+                    StartHost={ }; TestHost={ $true }; MutexAction={ param($name,$action) & $action }
+                    MovePathAction={
+                        param($source,$destination)
+                        $state.RuntimeMoves++
+                        Move-Item -LiteralPath $source -Destination $destination
+                    }.GetNewClosure()
+                }
+                Invoke-ServiceHostManager @common | Out-Null
+                $logPath = Join-Path $tree.StatePath 'Logs\service-host-manager.log'
+                $record = @(Get-Content $logPath | ForEach-Object { $_ | ConvertFrom-Json })[-1]
+                Assert-Equal 'failed' $record.manager_update 'marker write failure is a manager failure'
+                Assert-Equal $false $record.manager_retry 'marker write failure is not reported as an ordinary retry'
+                Assert-Equal $true $record.manager_recovery_required 'marker write failure preserves fail-closed posture in-process'
+                Assert-Equal 'simulated marker write failure' $record.manager_recovery_state_write_failure `
+                    'marker write failure is structured exactly'
+                $orphanPath = [string]$record.manager_recovery_path
+                Assert-True (Test-Path $orphanPath -PathType Container) 'exact orphan path remains structured'
+                Assert-Equal 1 @((Get-ChildItem $tree.StatePath -Directory) | Where-Object Name -Match '^[0-9a-f]{32}$').Count `
+                    'one unrecorded orphan remains after marker failure'
+
+                Set-Item Function:\Update-InstalledManager $originalUpdateManager
+                $installedManifestPath = Join-Path $tree.StatePath 'release.manifest.json'
+                $installedManifest = Get-Content -Raw $installedManifestPath | ConvertFrom-Json
+                $installedManifest.release_id = 'release-a'
+                $installedManifest | ConvertTo-Json -Depth 5 | Set-Content $installedManifestPath
+                $blocked = $null
+                try { Invoke-ServiceHostManager @common | Out-Null }
+                catch { $blocked = $_ }
+                Assert-True ($null -ne $blocked) 'unrecorded recovery explicitly blocks a later runtime update'
+                Assert-True ($blocked.Exception.Message -match 'Outstanding manager recovery state blocks runtime update') `
+                    'later blocked update reports the recovery reason'
+                $record = @(Get-Content $logPath | ForEach-Object { $_ | ConvertFrom-Json })[-1]
+                Assert-Equal $true $record.manager_recovery_required 'later invocation detects unrecorded orphan'
+                Assert-Equal $orphanPath $record.manager_recovery_path 'later invocation reports the same exact orphan'
+                Assert-Equal 0 $state.RuntimeMoves 'unrecorded recovery blocks later runtime transaction staging'
+                Assert-Equal 1 @((Get-ChildItem $tree.StatePath -Directory) | Where-Object Name -Match '^[0-9a-f]{32}$').Count `
+                    'later invocation creates no additional stage'
+            }
+            finally {
+                Set-Item Function:\Update-InstalledManager $originalUpdateManager
+                Remove-TestTree $tree
+            }
+        }
+        'phase3-recovery-status-survives-share-gating' {
+            foreach ($mode in @('missing','invalid')) {
+                $tree = New-TestTree
+                try {
+                    Write-InstalledRelease -Tree $tree
+                    $orphan = Join-Path $tree.StatePath ([guid]::NewGuid().ToString('N'))
+                    New-Item -ItemType Directory -Path $orphan | Out-Null
+                    @{ schema_version=1; stage_root=$orphan } | ConvertTo-Json -Compress | Set-Content `
+                        (Join-Path $tree.StatePath 'Manager\manager-update-recovery.json')
+                    if ($mode -eq 'missing') { Remove-Item $tree.Share -Recurse -Force }
+                    else { [IO.File]::WriteAllText((Join-Path $tree.Share 'release.manifest.json'), '{invalid') }
+                    $process = [pscustomobject]@{ ProcessName='QuickBooksServiceHost'; Id=153; Path=(Join-Path $tree.Install 'QuickBooksServiceHost.exe') }
+                    Invoke-ServiceHostManager -SharePath $tree.Share -InstallPath $tree.Install -StatePath $tree.StatePath `
+                        -GetProcessesAction { @($process) }.GetNewClosure() -StopProcessAction { param($item) } `
+                        -StartHost { } -TestHost { $true } -MutexAction { param($name,$action) & $action } | Out-Null
+                    $record = @(Get-Content (Join-Path $tree.StatePath 'Logs\service-host-manager.log') | ForEach-Object { $_ | ConvertFrom-Json })[-1]
+                    Assert-Equal $true $record.manager_recovery_required "$mode share gating retains recovery posture"
+                    Assert-Equal $orphan $record.manager_recovery_path "$mode share gating retains exact recovery path"
+                }
+                finally { Remove-TestTree $tree }
+            }
+        }
         default {
             throw "Unknown scenario: $Name"
         }
@@ -1364,7 +1470,10 @@ $allScenarios = @(
     'phase3-reparse-cleanup-is-rejected',
     'phase3-manager-cleanup-orphan-recovers',
     'phase3-nested-reparse-cleanup-is-rejected',
-    'phase3-no-prior-install-rollback-is-accurate'
+    'phase3-no-prior-install-rollback-is-accurate',
+    'phase3-invalid-recovery-marker-fails-closed',
+    'phase3-recovery-marker-write-failure-is-explicit',
+    'phase3-recovery-status-survives-share-gating'
 )
 
 if ($Scenario -eq 'all') {

@@ -194,11 +194,82 @@ function Set-ManagerRecoveryFailureData {
     param(
         [Parameter(Mandatory = $true)]$Failure,
         [Parameter(Mandatory = $true)][string]$RecoveryPath,
-        [Parameter(Mandatory = $true)][string]$RecoveryStatePath
+        [Parameter(Mandatory = $true)][string]$RecoveryStatePath,
+        [string]$Diagnostic = '',
+        [string]$StateWriteFailure = ''
     )
     $Failure.Exception.Data['ManagerRecoveryRequired'] = $true
     $Failure.Exception.Data['ManagerRecoveryPath'] = $RecoveryPath
     $Failure.Exception.Data['ManagerRecoveryStatePath'] = $RecoveryStatePath
+    $Failure.Exception.Data['ManagerRecoveryDiagnostic'] = $Diagnostic
+    $Failure.Exception.Data['RecoveryStateWriteFailure'] = $StateWriteFailure
+}
+
+function Get-InstalledManagerRecoveryStatus {
+    param(
+        [Parameter(Mandatory = $true)][string]$StatePath,
+        [Parameter(Mandatory = $true)][string]$RecoveryStatePath
+    )
+
+    $status = [pscustomobject]@{
+        Required = $false
+        RecoveryPath = ''
+        MarkerValid = $false
+        Diagnostic = ''
+    }
+    $markerItem = $null
+    $managerDirectory = Split-Path -Parent $RecoveryStatePath
+    if (Test-Path -LiteralPath $managerDirectory -PathType Container) {
+        try {
+            Assert-ManagerPathNotReparse -Path $managerDirectory
+            $markerItem = Get-ChildItem -LiteralPath $managerDirectory -Force -ErrorAction Stop |
+                Where-Object { $_.Name -ieq (Split-Path -Leaf $RecoveryStatePath) } |
+                Select-Object -First 1
+        }
+        catch {
+            $status.Required = $true
+            $status.RecoveryPath = $RecoveryStatePath
+            $status.Diagnostic = "Manager recovery marker could not be inspected: $($_.Exception.Message)"
+            return $status
+        }
+    }
+    if ($null -ne $markerItem) {
+        $status.Required = $true
+        $status.RecoveryPath = $RecoveryStatePath
+        if ($markerItem.PSIsContainer) {
+            $status.Diagnostic = "Manager recovery marker is not a regular file: $RecoveryStatePath"
+            return $status
+        }
+        try {
+            Assert-ManagerPathNotReparse -Path $RecoveryStatePath
+            $recovery = Get-Content -Raw -LiteralPath $RecoveryStatePath -ErrorAction Stop | ConvertFrom-Json
+            if ([int]$recovery.schema_version -ne 1) { throw 'Unsupported manager recovery state schema.' }
+            $recoveryPath = [string]$recovery.stage_root
+            $fullStatePath = [IO.Path]::GetFullPath($StatePath).TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
+            $fullRecoveryPath = [IO.Path]::GetFullPath($recoveryPath).TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
+            if ((Split-Path -Parent $fullRecoveryPath) -ine $fullStatePath -or
+                (Split-Path -Leaf $fullRecoveryPath) -notmatch '^[0-9a-fA-F]{32}$') {
+                throw "Unsafe manager recovery stage path: $recoveryPath"
+            }
+            $status.RecoveryPath = $fullRecoveryPath
+            $status.MarkerValid = $true
+            return $status
+        }
+        catch {
+            $status.Diagnostic = $_.Exception.Message
+            return $status
+        }
+    }
+
+    $orphans = @(Get-ChildItem -LiteralPath $StatePath -Directory -Force -ErrorAction Stop |
+        Where-Object { $_.Name -match '^[0-9a-fA-F]{32}$' })
+    if ($orphans.Count -gt 0) {
+        $paths = @($orphans | ForEach-Object { $_.FullName })
+        $status.Required = $true
+        $status.RecoveryPath = ($paths -join ';')
+        $status.Diagnostic = "Unrecorded manager transaction state detected: $($paths -join ', ')"
+    }
+    return $status
 }
 
 function Resolve-InstalledManagerRecovery {
@@ -208,20 +279,20 @@ function Resolve-InstalledManagerRecovery {
         [Parameter(Mandatory = $true)][scriptblock]$RemovePathAction
     )
 
-    if (-not (Test-Path -LiteralPath $RecoveryStatePath -PathType Leaf)) { return }
+    $status = Get-InstalledManagerRecoveryStatus -StatePath $StatePath -RecoveryStatePath $RecoveryStatePath
+    if (-not $status.Required) { return }
+    if (-not $status.MarkerValid) {
+        $failure = [InvalidOperationException]::new([string]$status.Diagnostic)
+        $errorRecord = [Management.Automation.ErrorRecord]::new($failure, 'ManagerRecoveryInvalid', `
+            [Management.Automation.ErrorCategory]::InvalidData, $RecoveryStatePath)
+        Set-ManagerRecoveryFailureData -Failure $errorRecord -RecoveryPath ([string]$status.RecoveryPath) `
+            -RecoveryStatePath $RecoveryStatePath -Diagnostic ([string]$status.Diagnostic)
+        throw $errorRecord
+    }
     $recoveryPath = ''
     try {
-        Assert-ManagerPathNotReparse -Path $RecoveryStatePath
-        $recovery = Get-Content -Raw -LiteralPath $RecoveryStatePath -ErrorAction Stop | ConvertFrom-Json
-        if ([int]$recovery.schema_version -ne 1) { throw 'Unsupported manager recovery state schema.' }
-        $recoveryPath = [string]$recovery.stage_root
-        $fullStatePath = [IO.Path]::GetFullPath($StatePath).TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
-        $fullRecoveryPath = [IO.Path]::GetFullPath($recoveryPath).TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
-        if ((Split-Path -Parent $fullRecoveryPath) -ine $fullStatePath -or
-            (Split-Path -Leaf $fullRecoveryPath) -notmatch '^[0-9a-fA-F]{32}$') {
-            throw "Unsafe manager recovery stage path: $recoveryPath"
-        }
-        Remove-ManagerPathVerified -Path $fullRecoveryPath -Recurse $true -RemovePathAction $RemovePathAction
+        $recoveryPath = [string]$status.RecoveryPath
+        Remove-ManagerPathVerified -Path $recoveryPath -Recurse $true -RemovePathAction $RemovePathAction
         Remove-ManagerPathVerified -Path $RecoveryStatePath -Recurse $false -RemovePathAction $RemovePathAction
     }
     catch {
@@ -269,6 +340,10 @@ function Update-InstalledManager {
         [scriptblock]$MoveFileAction = {
             param($source, $destination)
             Move-Item -LiteralPath $source -Destination $destination -Force -ErrorAction Stop
+        },
+        [scriptblock]$WriteRecoveryAction = {
+            param($stateRoot, $markerPath, $stagePath)
+            Write-InstalledManagerRecovery -StatePath $stateRoot -RecoveryStatePath $markerPath -StageRoot $stagePath
         }
     )
 
@@ -316,15 +391,18 @@ function Update-InstalledManager {
     }
     catch {
         $cleanupFailure = $_
-        try { Write-InstalledManagerRecovery -StatePath $StatePath `
-            -RecoveryStatePath $recoveryStatePath -StageRoot $stageRoot }
-        catch { $cleanupFailure.Exception.Data['RecoveryStateWriteFailure'] = $_.Exception.Message }
+        $stateWriteFailure = ''
+        try { & $WriteRecoveryAction $StatePath $recoveryStatePath $stageRoot }
+        catch {
+            $stateWriteFailure = $_.Exception.Message
+            $cleanupFailure.Exception.Data['RecoveryStateWriteFailure'] = $stateWriteFailure
+        }
         Set-ManagerRecoveryFailureData -Failure $cleanupFailure -RecoveryPath $stageRoot `
-            -RecoveryStatePath $recoveryStatePath
+            -RecoveryStatePath $recoveryStatePath -StateWriteFailure $stateWriteFailure
         if ($null -eq $primaryFailure) { throw $cleanupFailure }
         $primaryFailure.Exception.Data['StageCleanupFailure'] = $cleanupFailure.Exception.Message
         Set-ManagerRecoveryFailureData -Failure $primaryFailure -RecoveryPath $stageRoot `
-            -RecoveryStatePath $recoveryStatePath
+            -RecoveryStatePath $recoveryStatePath -StateWriteFailure $stateWriteFailure
     }
     if ($null -ne $primaryFailure) { throw $primaryFailure }
 }
@@ -541,6 +619,8 @@ function Write-ManagerLog {
         manager_retry = [bool]$Record.manager_retry
         manager_recovery_required = [bool]$Record.manager_recovery_required
         manager_recovery_path = [string]$Record.manager_recovery_path
+        manager_recovery_diagnostic = [string]$Record.manager_recovery_diagnostic
+        manager_recovery_state_write_failure = [string]$Record.manager_recovery_state_write_failure
         host_pid = $Record.host_pid
         host_path = [string]$Record.host_path
     }
@@ -678,6 +758,9 @@ function Invoke-ServiceHostManager {
     $body = {
         $gate.Executed = $true
         Assert-ManagerStatePathTrusted -StatePath $StatePath
+        $managerRecoveryStatePath = Get-ManagerRecoveryStatePath -StatePath $StatePath
+        $managerRecoveryStatus = Get-InstalledManagerRecoveryStatus -StatePath $StatePath `
+            -RecoveryStatePath $managerRecoveryStatePath
         $processes = @(& $GetProcessesAction)
         $hostProcesses = @($processes | Where-Object { $_.ProcessName -ieq 'QuickBooksServiceHost' })
         $quickBooksRunning = @($processes | Where-Object { $_.ProcessName -ieq 'QBW32' }).Count -gt 0
@@ -763,6 +846,9 @@ function Invoke-ServiceHostManager {
         try {
             switch ($decision) {
                 'apply-update' {
+                    if ($managerRecoveryStatus.Required -and -not $managerRecoveryStatus.MarkerValid) {
+                        throw "Outstanding manager recovery state blocks runtime update: $($managerRecoveryStatus.Diagnostic)"
+                    }
                     $transactionResult = Invoke-ReleaseTransaction -Manifest $manifest -SharePath $SharePath `
                         -InstallPath $InstallPath -StatePath $StatePath -StopHost $stopKnownHosts `
                         -StartHost $StartHost -TestHost $TestHost -TestCanStop $testCanStop `
@@ -817,13 +903,20 @@ function Invoke-ServiceHostManager {
 
         $managerUpdate = 'skipped'
         $managerRetry = $false
-        $managerRecoveryRequired = $false
-        $managerRecoveryPath = ''
+        $managerRecoveryRequired = [bool]$managerRecoveryStatus.Required
+        $managerRecoveryPath = [string]$managerRecoveryStatus.RecoveryPath
+        $managerRecoveryDiagnostic = [string]$managerRecoveryStatus.Diagnostic
+        $managerRecoveryStateWriteFailure = ''
         $managerFailure = $null
         if ($manifestValid) {
             try {
                 Update-InstalledManager -Manifest $manifest -SharePath $SharePath -StatePath $StatePath
                 $managerUpdate = 'succeeded'
+                $managerRecoveryStatus = Get-InstalledManagerRecoveryStatus -StatePath $StatePath `
+                    -RecoveryStatePath $managerRecoveryStatePath
+                $managerRecoveryRequired = [bool]$managerRecoveryStatus.Required
+                $managerRecoveryPath = [string]$managerRecoveryStatus.RecoveryPath
+                $managerRecoveryDiagnostic = [string]$managerRecoveryStatus.Diagnostic
             }
             catch {
                 $managerUpdate = 'failed'
@@ -831,7 +924,15 @@ function Invoke-ServiceHostManager {
                 $managerFailure = $_
                 if ($_.Exception.Data.Contains('ManagerRecoveryRequired')) {
                     $managerRecoveryRequired = [bool]$_.Exception.Data['ManagerRecoveryRequired']
-                    $managerRecoveryPath = [string]$_.Exception.Data['ManagerRecoveryPath']
+                    $failureRecoveryPath = [string]$_.Exception.Data['ManagerRecoveryPath']
+                    $failureRecoveryDiagnostic = [string]$_.Exception.Data['ManagerRecoveryDiagnostic']
+                    if ($failureRecoveryPath -ne '') { $managerRecoveryPath = $failureRecoveryPath }
+                    if ($failureRecoveryDiagnostic -ne '') { $managerRecoveryDiagnostic = $failureRecoveryDiagnostic }
+                    if ($managerRecoveryDiagnostic -ne '') { $managerRetry = $false }
+                }
+                if ($_.Exception.Data.Contains('RecoveryStateWriteFailure')) {
+                    $managerRecoveryStateWriteFailure = [string]$_.Exception.Data['RecoveryStateWriteFailure']
+                    if ($managerRecoveryStateWriteFailure -ne '') { $managerRetry = $false }
                 }
             }
         }
@@ -849,6 +950,8 @@ function Invoke-ServiceHostManager {
                 manager_retry = $managerRetry
                 manager_recovery_required = $managerRecoveryRequired
                 manager_recovery_path = $managerRecoveryPath
+                manager_recovery_diagnostic = $managerRecoveryDiagnostic
+                manager_recovery_state_write_failure = $managerRecoveryStateWriteFailure
                 host_pid = if ($null -ne $hostForLog) { $hostForLog.Id } else { $null }
                 host_path = if ($null -ne $hostForLog) { Get-ServiceHostProcessPath $hostForLog } else { '' }
             })

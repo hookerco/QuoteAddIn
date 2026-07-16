@@ -95,6 +95,28 @@ function Assert-ManagerPathNotReparse {
     }
 }
 
+function Assert-ManagerCleanupTreeSafe {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [bool]$Recurse
+    )
+
+    Assert-ManagerPathNotReparse -Path $Path
+    if (-not $Recurse -or -not (Test-Path -LiteralPath $Path -PathType Container)) { return }
+
+    $pending = New-Object 'Collections.Generic.Queue[string]'
+    $pending.Enqueue($Path)
+    while ($pending.Count -gt 0) {
+        $directory = $pending.Dequeue()
+        foreach ($child in @(Get-ChildItem -LiteralPath $directory -Force -ErrorAction Stop)) {
+            if (([long]$child.Attributes -band [long][IO.FileAttributes]::ReparsePoint) -ne 0) {
+                throw "Reparse points are not allowed in manager transaction state: $($child.FullName)"
+            }
+            if ($child.PSIsContainer) { $pending.Enqueue($child.FullName) }
+        }
+    }
+}
+
 function Remove-ManagerPathVerified {
     param(
         [Parameter(Mandatory = $true)][string]$Path,
@@ -106,7 +128,7 @@ function Remove-ManagerPathVerified {
     )
 
     if (-not (Test-Path -LiteralPath $Path)) { return }
-    Assert-ManagerPathNotReparse -Path $Path
+    Assert-ManagerCleanupTreeSafe -Path $Path -Recurse $Recurse
     & $RemovePathAction $Path $Recurse | Out-Null
     if (Test-Path -LiteralPath $Path) {
         throw "Path cleanup could not be verified absent: $Path"
@@ -163,6 +185,74 @@ function Start-InstalledHost {
     return (& $StartProcessAction $exe $InstallPath 'Hidden')
 }
 
+function Get-ManagerRecoveryStatePath {
+    param([Parameter(Mandatory = $true)][string]$StatePath)
+    return (Join-Path (Join-Path $StatePath 'Manager') 'manager-update-recovery.json')
+}
+
+function Set-ManagerRecoveryFailureData {
+    param(
+        [Parameter(Mandatory = $true)]$Failure,
+        [Parameter(Mandatory = $true)][string]$RecoveryPath,
+        [Parameter(Mandatory = $true)][string]$RecoveryStatePath
+    )
+    $Failure.Exception.Data['ManagerRecoveryRequired'] = $true
+    $Failure.Exception.Data['ManagerRecoveryPath'] = $RecoveryPath
+    $Failure.Exception.Data['ManagerRecoveryStatePath'] = $RecoveryStatePath
+}
+
+function Resolve-InstalledManagerRecovery {
+    param(
+        [Parameter(Mandatory = $true)][string]$StatePath,
+        [Parameter(Mandatory = $true)][string]$RecoveryStatePath,
+        [Parameter(Mandatory = $true)][scriptblock]$RemovePathAction
+    )
+
+    if (-not (Test-Path -LiteralPath $RecoveryStatePath -PathType Leaf)) { return }
+    $recoveryPath = ''
+    try {
+        Assert-ManagerPathNotReparse -Path $RecoveryStatePath
+        $recovery = Get-Content -Raw -LiteralPath $RecoveryStatePath -ErrorAction Stop | ConvertFrom-Json
+        if ([int]$recovery.schema_version -ne 1) { throw 'Unsupported manager recovery state schema.' }
+        $recoveryPath = [string]$recovery.stage_root
+        $fullStatePath = [IO.Path]::GetFullPath($StatePath).TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
+        $fullRecoveryPath = [IO.Path]::GetFullPath($recoveryPath).TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
+        if ((Split-Path -Parent $fullRecoveryPath) -ine $fullStatePath -or
+            (Split-Path -Leaf $fullRecoveryPath) -notmatch '^[0-9a-fA-F]{32}$') {
+            throw "Unsafe manager recovery stage path: $recoveryPath"
+        }
+        Remove-ManagerPathVerified -Path $fullRecoveryPath -Recurse $true -RemovePathAction $RemovePathAction
+        Remove-ManagerPathVerified -Path $RecoveryStatePath -Recurse $false -RemovePathAction $RemovePathAction
+    }
+    catch {
+        Set-ManagerRecoveryFailureData -Failure $_ -RecoveryPath $recoveryPath -RecoveryStatePath $RecoveryStatePath
+        throw
+    }
+}
+
+function Write-InstalledManagerRecovery {
+    param(
+        [Parameter(Mandatory = $true)][string]$StatePath,
+        [Parameter(Mandatory = $true)][string]$RecoveryStatePath,
+        [Parameter(Mandatory = $true)][string]$StageRoot
+    )
+    $fullStatePath = [IO.Path]::GetFullPath($StatePath).TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
+    $expectedRecoveryStatePath = [IO.Path]::GetFullPath((Get-ManagerRecoveryStatePath -StatePath $fullStatePath))
+    if ([IO.Path]::GetFullPath($RecoveryStatePath) -ine $expectedRecoveryStatePath) {
+        throw "Unsafe manager recovery state path: $RecoveryStatePath"
+    }
+    if (Test-Path -LiteralPath $RecoveryStatePath) {
+        Assert-ManagerPathNotReparse -Path $RecoveryStatePath
+    }
+    $fullStageRoot = [IO.Path]::GetFullPath($StageRoot).TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
+    if ((Split-Path -Parent $fullStageRoot) -ine $fullStatePath -or
+        (Split-Path -Leaf $fullStageRoot) -notmatch '^[0-9a-fA-F]{32}$') {
+        throw "Unsafe manager recovery stage path: $StageRoot"
+    }
+    [pscustomobject]@{ schema_version = 1; stage_root = $fullStageRoot } |
+        ConvertTo-Json -Compress | Set-Content -LiteralPath $RecoveryStatePath -NoNewline -ErrorAction Stop
+}
+
 function Update-InstalledManager {
     param(
         [Parameter(Mandatory = $true)]$Manifest,
@@ -191,6 +281,9 @@ function Update-InstalledManager {
     }
     Assert-ManagerPathNotReparse -Path $managerDirectory
 
+    $recoveryStatePath = Get-ManagerRecoveryStatePath -StatePath $StatePath
+    Resolve-InstalledManagerRecovery -StatePath $StatePath -RecoveryStatePath $recoveryStatePath `
+        -RemovePathAction $RemovePathAction
     $stageRoot = New-ManagerStageRoot -StatePath $StatePath
     $stage = Join-Path $stageRoot 'service_host_manager.ps1'
     $target = Join-Path $managerDirectory 'service_host_manager.ps1'
@@ -222,8 +315,16 @@ function Update-InstalledManager {
         Remove-ManagerPathVerified -Path $stageRoot -Recurse $true -RemovePathAction $RemovePathAction
     }
     catch {
-        if ($null -eq $primaryFailure) { throw }
-        $primaryFailure.Exception.Data['StageCleanupFailure'] = $_.Exception.Message
+        $cleanupFailure = $_
+        try { Write-InstalledManagerRecovery -StatePath $StatePath `
+            -RecoveryStatePath $recoveryStatePath -StageRoot $stageRoot }
+        catch { $cleanupFailure.Exception.Data['RecoveryStateWriteFailure'] = $_.Exception.Message }
+        Set-ManagerRecoveryFailureData -Failure $cleanupFailure -RecoveryPath $stageRoot `
+            -RecoveryStatePath $recoveryStatePath
+        if ($null -eq $primaryFailure) { throw $cleanupFailure }
+        $primaryFailure.Exception.Data['StageCleanupFailure'] = $cleanupFailure.Exception.Message
+        Set-ManagerRecoveryFailureData -Failure $primaryFailure -RecoveryPath $stageRoot `
+            -RecoveryStatePath $recoveryStatePath
     }
     if ($null -ne $primaryFailure) { throw $primaryFailure }
 }
@@ -264,6 +365,7 @@ function Invoke-ReleaseTransaction {
     $stagePayloadPath = Join-Path $stageRoot 'Payload'
     $previousPath = Join-Path $StatePath 'Previous'
     $manifestPath = Join-Path $StatePath 'release.manifest.json'
+    $hadInstall = Test-Path -LiteralPath $InstallPath -PathType Container
     $previousManifest = $null
     $hadManifest = Test-Path -LiteralPath $manifestPath -PathType Leaf
     if ($hadManifest) { $previousManifest = Get-Content -Raw -LiteralPath $manifestPath -ErrorAction Stop }
@@ -347,14 +449,14 @@ function Invoke-ReleaseTransaction {
                 else {
                     Remove-ManagerPathVerified -Path $manifestPath -Recurse $false -RemovePathAction $RemovePathAction
                 }
-                if (Test-Path -LiteralPath $InstallPath -PathType Container) {
+                if ($hadInstall -and (Test-Path -LiteralPath $InstallPath -PathType Container)) {
                     $healthyHostSurvived = (-not $stopCompleted) -and (& $TestHost)
                     if (-not $healthyHostSurvived) {
                         & $StartHost | Out-Null
                         if (-not (& $TestHost)) { throw 'Previous host failed its health check after restoration.' }
                     }
+                    $Outcome.RollbackSucceeded = $true
                 }
-                $Outcome.RollbackSucceeded = $true
             }
             catch { $rollbackFailure = $_ }
         }
@@ -434,8 +536,11 @@ function Write-ManagerLog {
         decision = [string]$Record.decision
         result = [string]$Record.result
         rollback = [bool]$Record.rollback
+        rollback_succeeded = [bool]$Record.rollback_succeeded
         manager_update = [string]$Record.manager_update
         manager_retry = [bool]$Record.manager_retry
+        manager_recovery_required = [bool]$Record.manager_recovery_required
+        manager_recovery_path = [string]$Record.manager_recovery_path
         host_pid = $Record.host_pid
         host_path = [string]$Record.host_path
     }
@@ -462,10 +567,13 @@ function Test-InstalledHostStable {
     )
 
     $expectedPath = Join-Path $InstallPath 'QuickBooksServiceHost.exe'
+    $observedPid = $null
     foreach ($snapshotIndex in 0..1) {
         $hosts = @(& $GetProcessesAction | Where-Object { $_.ProcessName -ieq 'QuickBooksServiceHost' })
         $expectedHosts = @($hosts | Where-Object { (Get-ServiceHostProcessPath $_) -ieq $expectedPath })
         if ($hosts.Count -ne 1 -or $expectedHosts.Count -ne 1) { return $false }
+        if ($snapshotIndex -eq 0) { $observedPid = [long]$expectedHosts[0].Id }
+        elseif ([long]$expectedHosts[0].Id -ne $observedPid) { return $false }
         if ($snapshotIndex -eq 0) { & $DelayAction $StabilityDelayMilliseconds | Out-Null }
     }
     return $true
@@ -474,12 +582,12 @@ function Test-InstalledHostStable {
 function Test-CapturedHostProcessExited {
     param([Parameter(Mandatory = $true)]$Process)
 
-    if ($null -eq $Process.PSObject.Properties['HasExited']) { return $true }
+    if ($null -eq $Process.PSObject.Properties['HasExited']) { return $false }
     try {
         if ($null -ne $Process.PSObject.Methods['Refresh']) { $Process.Refresh() }
         return [bool]$Process.HasExited
     }
-    catch { return $true }
+    catch { return $false }
 }
 
 function Wait-CapturedHostProcessesExited {
@@ -709,6 +817,8 @@ function Invoke-ServiceHostManager {
 
         $managerUpdate = 'skipped'
         $managerRetry = $false
+        $managerRecoveryRequired = $false
+        $managerRecoveryPath = ''
         $managerFailure = $null
         if ($manifestValid) {
             try {
@@ -719,6 +829,10 @@ function Invoke-ServiceHostManager {
                 $managerUpdate = 'failed'
                 $managerRetry = $true
                 $managerFailure = $_
+                if ($_.Exception.Data.Contains('ManagerRecoveryRequired')) {
+                    $managerRecoveryRequired = [bool]$_.Exception.Data['ManagerRecoveryRequired']
+                    $managerRecoveryPath = [string]$_.Exception.Data['ManagerRecoveryPath']
+                }
             }
         }
 
@@ -730,8 +844,11 @@ function Invoke-ServiceHostManager {
                 decision = $decision
                 result = $result
                 rollback = $rollback
+                rollback_succeeded = [bool]$transactionOutcome.RollbackSucceeded
                 manager_update = $managerUpdate
                 manager_retry = $managerRetry
+                manager_recovery_required = $managerRecoveryRequired
+                manager_recovery_path = $managerRecoveryPath
                 host_pid = if ($null -ne $hostForLog) { $hostForLog.Id } else { $null }
                 host_path = if ($null -ne $hostForLog) { Get-ServiceHostProcessPath $hostForLog } else { '' }
             })

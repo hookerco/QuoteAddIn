@@ -1416,6 +1416,50 @@ public sealed class Phase3ThrowingExitProcess {
                 finally { Remove-TestTree $tree }
             }
         }
+        'phase3-recovery-marker-must-own-sole-orphan' {
+            foreach ($mode in @('missing','additional')) {
+                $tree = New-TestTree
+                $originalUpdateManager = (Get-Command Update-InstalledManager).ScriptBlock
+                try {
+                    Write-TestRelease -Tree $tree | Out-Null
+                    Write-InstalledRelease -Tree $tree -ReleaseId 'release-b' -HostBytes 'new-bytes'
+                    $referenced = Join-Path $tree.StatePath ([guid]::NewGuid().ToString('N'))
+                    if ($mode -eq 'additional') {
+                        New-Item -ItemType Directory -Path $referenced | Out-Null
+                        New-Item -ItemType Directory -Path (Join-Path $tree.StatePath ([guid]::NewGuid().ToString('N'))) | Out-Null
+                    }
+                    $markerPath = Join-Path $tree.StatePath 'Manager\manager-update-recovery.json'
+                    @{ schema_version=1; stage_root=$referenced } | ConvertTo-Json -Compress | Set-Content $markerPath
+                    $beforeGuids = @((Get-ChildItem $tree.StatePath -Directory) | Where-Object Name -Match '^[0-9a-f]{32}$' | Select-Object -ExpandProperty FullName)
+                    $state = [pscustomobject]@{ Moves=0 }
+                    $replacement = {
+                        param($Manifest,$SharePath,$StatePath)
+                        $move = { param($source,$destination) $state.Moves++ }.GetNewClosure()
+                        & $originalUpdateManager -Manifest $Manifest -SharePath $SharePath -StatePath $StatePath `
+                            -MoveFileAction $move
+                    }.GetNewClosure()
+                    Set-Item Function:\Update-InstalledManager $replacement
+                    $process = [pscustomobject]@{ ProcessName='QuickBooksServiceHost'; Id=161; Path=(Join-Path $tree.Install 'QuickBooksServiceHost.exe') }
+                    Invoke-ServiceHostManager -SharePath $tree.Share -InstallPath $tree.Install -StatePath $tree.StatePath `
+                        -GetProcessesAction { @($process) }.GetNewClosure() -StopProcessAction { param($item) } `
+                        -StartHost { } -TestHost { $true } -MutexAction { param($name,$action) & $action } | Out-Null
+                    $record = @(Get-Content (Join-Path $tree.StatePath 'Logs\service-host-manager.log') | ForEach-Object { $_ | ConvertFrom-Json })[-1]
+                    Assert-Equal 'failed' $record.manager_update "$mode marker ownership fails manager reconciliation"
+                    Assert-Equal $true $record.manager_recovery_required "$mode marker ownership remains recovery required"
+                    Assert-True ([string]$record.manager_recovery_diagnostic -match 'exactly one existing GUID transaction directory') `
+                        "$mode marker ownership diagnostic is structured"
+                    Assert-Equal 0 $state.Moves "$mode marker ownership performs zero manager moves"
+                    Assert-True (Test-Path $markerPath -PathType Leaf) "$mode marker ownership retains marker"
+                    $afterGuids = @((Get-ChildItem $tree.StatePath -Directory) | Where-Object Name -Match '^[0-9a-f]{32}$' | Select-Object -ExpandProperty FullName)
+                    Assert-Equal ($beforeGuids -join ';') ($afterGuids -join ';') `
+                        "$mode marker ownership creates or removes no transaction directory"
+                }
+                finally {
+                    Set-Item Function:\Update-InstalledManager $originalUpdateManager
+                    Remove-TestTree $tree
+                }
+            }
+        }
         default {
             throw "Unknown scenario: $Name"
         }
@@ -1473,7 +1517,8 @@ $allScenarios = @(
     'phase3-no-prior-install-rollback-is-accurate',
     'phase3-invalid-recovery-marker-fails-closed',
     'phase3-recovery-marker-write-failure-is-explicit',
-    'phase3-recovery-status-survives-share-gating'
+    'phase3-recovery-status-survives-share-gating',
+    'phase3-recovery-marker-must-own-sole-orphan'
 )
 
 if ($Scenario -eq 'all') {

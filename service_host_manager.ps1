@@ -217,6 +217,8 @@ function Get-InstalledManagerRecoveryStatus {
         MarkerValid = $false
         Diagnostic = ''
     }
+    $orphans = @(Get-ChildItem -LiteralPath $StatePath -Directory -Force -ErrorAction Stop |
+        Where-Object { $_.Name -match '^[0-9a-fA-F]{32}$' })
     $markerItem = $null
     $managerDirectory = Split-Path -Parent $RecoveryStatePath
     if (Test-Path -LiteralPath $managerDirectory -PathType Container) {
@@ -251,6 +253,12 @@ function Get-InstalledManagerRecoveryStatus {
                 (Split-Path -Leaf $fullRecoveryPath) -notmatch '^[0-9a-fA-F]{32}$') {
                 throw "Unsafe manager recovery stage path: $recoveryPath"
             }
+            if ($orphans.Count -ne 1 -or $orphans[0].FullName -ine $fullRecoveryPath) {
+                $status.RecoveryPath = $fullRecoveryPath
+                $status.Diagnostic = "Manager recovery marker must reference exactly one existing GUID transaction directory: $fullRecoveryPath"
+                return $status
+            }
+            Assert-ManagerPathNotReparse -Path $fullRecoveryPath
             $status.RecoveryPath = $fullRecoveryPath
             $status.MarkerValid = $true
             return $status
@@ -261,8 +269,6 @@ function Get-InstalledManagerRecoveryStatus {
         }
     }
 
-    $orphans = @(Get-ChildItem -LiteralPath $StatePath -Directory -Force -ErrorAction Stop |
-        Where-Object { $_.Name -match '^[0-9a-fA-F]{32}$' })
     if ($orphans.Count -gt 0) {
         $paths = @($orphans | ForEach-Object { $_.FullName })
         $status.Required = $true
@@ -359,6 +365,17 @@ function Update-InstalledManager {
     $recoveryStatePath = Get-ManagerRecoveryStatePath -StatePath $StatePath
     Resolve-InstalledManagerRecovery -StatePath $StatePath -RecoveryStatePath $recoveryStatePath `
         -RemovePathAction $RemovePathAction
+    $postRecoveryStatus = Get-InstalledManagerRecoveryStatus -StatePath $StatePath `
+        -RecoveryStatePath $recoveryStatePath
+    if ($postRecoveryStatus.Required) {
+        $failure = [InvalidOperationException]::new([string]$postRecoveryStatus.Diagnostic)
+        $errorRecord = [Management.Automation.ErrorRecord]::new($failure, 'ManagerRecoveryReappeared', `
+            [Management.Automation.ErrorCategory]::InvalidData, $recoveryStatePath)
+        Set-ManagerRecoveryFailureData -Failure $errorRecord `
+            -RecoveryPath ([string]$postRecoveryStatus.RecoveryPath) `
+            -RecoveryStatePath $recoveryStatePath -Diagnostic ([string]$postRecoveryStatus.Diagnostic)
+        throw $errorRecord
+    }
     $stageRoot = New-ManagerStageRoot -StatePath $StatePath
     $stage = Join-Path $stageRoot 'service_host_manager.ps1'
     $target = Join-Path $managerDirectory 'service_host_manager.ps1'

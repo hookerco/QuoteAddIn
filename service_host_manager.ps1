@@ -25,18 +25,19 @@ function Test-ReleaseManifest {
         throw 'Release ID is required.'
     }
 
+    if ($null -eq $Manifest.manager) { throw 'Unsupported release manifest.' }
     $entries = @($Manifest.files) + @($Manifest.manager)
     $seen = @{}
+    $fileKeys = @{}
     foreach ($entry in $entries) {
         $path = [string]$entry.path
-        if ([string]::IsNullOrWhiteSpace($path) -or
-            [IO.Path]::IsPathRooted($path) -or
-            $path.Split('\') -contains '..' -or
-            $path.Split('/') -contains '..') {
+        $segments = @($path -split '[\\/]')
+        if ([string]::IsNullOrWhiteSpace($path) -or [IO.Path]::IsPathRooted($path) -or
+            $segments.Count -eq 0 -or @($segments | Where-Object { $_ -eq '' -or $_ -eq '.' -or $_ -eq '..' }).Count -gt 0) {
             throw "Unsafe manifest path: $path"
         }
 
-        $pathKey = $path.ToLowerInvariant()
+        $pathKey = ($segments -join '\').ToLowerInvariant()
         if ($seen.ContainsKey($pathKey)) {
             throw "Duplicate manifest path: $path"
         }
@@ -48,6 +49,20 @@ function Test-ReleaseManifest {
         if ([string]$entry.sha256 -notmatch '^[0-9A-Fa-f]{64}$') {
             throw "Invalid manifest hash: $path"
         }
+    }
+
+    foreach ($entry in @($Manifest.files)) {
+        $fileKey = ((@([string]$entry.path -split '[\\/]') -join '\')).ToLowerInvariant()
+        $fileKeys[$fileKey] = $true
+    }
+    foreach ($required in @('QuickBooksServiceHost.exe', 'QuickBooksConnectorCli.exe')) {
+        if (-not $fileKeys.ContainsKey($required.ToLowerInvariant())) {
+            throw "Required manifest file is missing: $required"
+        }
+    }
+    $managerKey = ((@([string]$Manifest.manager.path -split '[\\/]') -join '\')).ToLowerInvariant()
+    if ($managerKey -ne 'service_host_manager.ps1') {
+        throw 'Required manager entry must be canonical: service_host_manager.ps1'
     }
 
     return $true
@@ -203,6 +218,99 @@ function Set-ManagerRecoveryFailureData {
     $Failure.Exception.Data['ManagerRecoveryStatePath'] = $RecoveryStatePath
     $Failure.Exception.Data['ManagerRecoveryDiagnostic'] = $Diagnostic
     $Failure.Exception.Data['RecoveryStateWriteFailure'] = $StateWriteFailure
+}
+
+function New-ManagerRuntimeAcl {
+    param([Parameter(Mandatory = $true)][bool]$IsContainer)
+
+    $acl = if ($IsContainer) { New-Object Security.AccessControl.DirectorySecurity }
+        else { New-Object Security.AccessControl.FileSecurity }
+    $administrators = New-Object Security.Principal.SecurityIdentifier 'S-1-5-32-544'
+    $system = New-Object Security.Principal.SecurityIdentifier 'S-1-5-18'
+    $users = New-Object Security.Principal.SecurityIdentifier 'S-1-5-32-545'
+    $acl.SetOwner($administrators)
+    $acl.SetAccessRuleProtection($true, $false)
+    $inheritance = if ($IsContainer) {
+        [Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [Security.AccessControl.InheritanceFlags]::ObjectInherit
+    } else { [Security.AccessControl.InheritanceFlags]::None }
+    foreach ($entry in @(
+        [pscustomobject]@{ Sid = $system; Rights = [Security.AccessControl.FileSystemRights]::FullControl },
+        [pscustomobject]@{ Sid = $administrators; Rights = [Security.AccessControl.FileSystemRights]::FullControl },
+        [pscustomobject]@{ Sid = $users; Rights = [Security.AccessControl.FileSystemRights]::ReadAndExecute }
+    )) {
+        $rule = New-Object Security.AccessControl.FileSystemAccessRule(
+            $entry.Sid, $entry.Rights, $inheritance,
+            [Security.AccessControl.PropagationFlags]::None,
+            [Security.AccessControl.AccessControlType]::Allow)
+        $acl.AddAccessRule($rule)
+    }
+    return $acl
+}
+
+function Test-ManagerRuntimeAcl {
+    param([Parameter(Mandatory = $true)]$Acl, [Parameter(Mandatory = $true)][bool]$IsContainer)
+
+    try { $owner = $Acl.GetOwner([Security.Principal.SecurityIdentifier]).Value } catch { return $false }
+    if ($owner -ne 'S-1-5-32-544' -or -not $Acl.AreAccessRulesProtected) { return $false }
+    $expectedInheritance = if ($IsContainer) {
+        [Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [Security.AccessControl.InheritanceFlags]::ObjectInherit
+    } else { [Security.AccessControl.InheritanceFlags]::None }
+    $expected = @{
+        'S-1-5-18' = [Security.AccessControl.FileSystemRights]::FullControl
+        'S-1-5-32-544' = [Security.AccessControl.FileSystemRights]::FullControl
+        'S-1-5-32-545' = ([Security.AccessControl.FileSystemRights]::ReadAndExecute -bor [Security.AccessControl.FileSystemRights]::Synchronize)
+    }
+    $rules = @($Acl.GetAccessRules($true, $false, [Security.Principal.SecurityIdentifier]))
+    if ($rules.Count -ne $expected.Count) { return $false }
+    foreach ($rule in $rules) {
+        $sid = $rule.IdentityReference.Value
+        if (-not $expected.ContainsKey($sid) -or
+            $rule.AccessControlType -ne [Security.AccessControl.AccessControlType]::Allow -or
+            $rule.FileSystemRights -ne $expected[$sid] -or $rule.InheritanceFlags -ne $expectedInheritance -or
+            $rule.PropagationFlags -ne [Security.AccessControl.PropagationFlags]::None -or $rule.IsInherited) { return $false }
+    }
+    return $true
+}
+
+function Protect-ManagerRuntimeTree {
+    param(
+        [Parameter(Mandatory = $true)][string]$InstallPath,
+        [scriptblock]$GetItemAction = { param($path) Get-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue },
+        [scriptblock]$GetChildrenAction = { param($path) @(Get-ChildItem -LiteralPath $path -Force -ErrorAction Stop) },
+        [scriptblock]$SetAclAction = { param($path, $acl) Set-Acl -LiteralPath $path -AclObject $acl },
+        [scriptblock]$GetAclAction = { param($path) Get-Acl -LiteralPath $path }
+    )
+
+    $rootItem = & $GetItemAction $InstallPath
+    if ($null -eq $rootItem -or -not [bool]$rootItem.PSIsContainer) { throw "Install path is not a directory: $InstallPath" }
+    $queue = New-Object 'Collections.Generic.Queue[object]'
+    $queue.Enqueue($rootItem)
+    $visited = @{}
+    while ($queue.Count -gt 0) {
+        $item = $queue.Dequeue()
+        $freshItem = & $GetItemAction $item.FullName
+        if ($null -eq $freshItem) { throw "Runtime path disappeared during ACL protection: $($item.FullName)" }
+        Assert-ManagerPathNotReparse -Path $freshItem.FullName
+        $key = ([string]$freshItem.FullName).ToLowerInvariant()
+        if ($visited.ContainsKey($key)) { continue }
+        $visited[$key] = $true
+        $runtimeAcl = New-ManagerRuntimeAcl -IsContainer ([bool]$freshItem.PSIsContainer)
+        & $SetAclAction $freshItem.FullName $runtimeAcl | Out-Null
+        $freshItem = & $GetItemAction $freshItem.FullName
+        if ($null -eq $freshItem) { throw "Runtime path disappeared during ACL verification: $($item.FullName)" }
+        Assert-ManagerPathNotReparse -Path $freshItem.FullName
+        $verifiedAcl = & $GetAclAction $freshItem.FullName
+        if (-not (Test-ManagerRuntimeAcl -Acl $verifiedAcl -IsContainer ([bool]$freshItem.PSIsContainer))) {
+            throw "Service host runtime ACL verification failed: $($freshItem.FullName)"
+        }
+        if ([bool]$freshItem.PSIsContainer) {
+            foreach ($child in @(& $GetChildrenAction $freshItem.FullName)) {
+                Assert-ManagerPathNotReparse -Path $child.FullName
+                $queue.Enqueue($child)
+            }
+        }
+    }
+    return @($visited.Keys)
 }
 
 function Get-InstalledManagerRecoveryStatus {
@@ -442,6 +550,7 @@ function Invoke-ReleaseTransaction {
             param($source, $destination)
             Move-Item -LiteralPath $source -Destination $destination -ErrorAction Stop
         },
+        [scriptblock]$ProtectRuntimeTreeAction = { param($path) Protect-ManagerRuntimeTree -InstallPath $path | Out-Null },
         $Outcome
     )
 
@@ -503,6 +612,8 @@ function Invoke-ReleaseTransaction {
         }
         if (-not $stagePromoted) { throw 'Staged runtime promotion could not be reconciled.' }
 
+        & $ProtectRuntimeTreeAction $InstallPath
+
         $Manifest | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $manifestPath -ErrorAction Stop
         Remove-ManagerPathVerified -Path $stageRoot -Recurse $true -RemovePathAction $RemovePathAction
         $candidateStartAttempted = $true
@@ -537,6 +648,7 @@ function Invoke-ReleaseTransaction {
                     if ($null -ne $restoreMoveFailure) {
                         $primaryFailure.Exception.Data['RestoreMoveDiagnostic'] = $restoreMoveFailure.Exception.Message
                     }
+                    & $ProtectRuntimeTreeAction $InstallPath
                 }
                 if ($hadManifest) {
                     Set-Content -LiteralPath $manifestPath -Value $previousManifest -NoNewline -ErrorAction Stop
@@ -750,6 +862,7 @@ function Invoke-ServiceHostManager {
             param($source, $destination)
             Move-Item -LiteralPath $source -Destination $destination -ErrorAction Stop
         },
+        [scriptblock]$ProtectRuntimeTreeAction = { param($path) Protect-ManagerRuntimeTree -InstallPath $path | Out-Null },
         [scriptblock]$MutexAction = { param($name, $action) Invoke-WithManagerMutex -Name $name -Action $action }
     )
 
@@ -869,7 +982,8 @@ function Invoke-ServiceHostManager {
                     $transactionResult = Invoke-ReleaseTransaction -Manifest $manifest -SharePath $SharePath `
                         -InstallPath $InstallPath -StatePath $StatePath -StopHost $stopKnownHosts `
                         -StartHost $StartHost -TestHost $TestHost -TestCanStop $testCanStop `
-                        -MovePathAction $MovePathAction -Outcome $transactionOutcome
+                        -MovePathAction $MovePathAction -ProtectRuntimeTreeAction $ProtectRuntimeTreeAction `
+                        -Outcome $transactionOutcome
                     if ($transactionResult.Result -eq 'deferred') {
                         $decision = 'defer-update'
                         $result = 'deferred'

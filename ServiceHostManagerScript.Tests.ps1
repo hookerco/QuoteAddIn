@@ -46,6 +46,11 @@ function New-ValidManifest {
                 path = 'QuickBooksServiceHost.exe'
                 length = 123
                 sha256 = ('A' * 64)
+            },
+            [pscustomobject]@{
+                path = 'QuickBooksConnectorCli.exe'
+                length = 234
+                sha256 = ('C' * 64)
             }
         )
         manager = [pscustomobject]@{
@@ -83,8 +88,10 @@ function Write-TestRelease {
     )
 
     $hostPath = Join-Path $Tree.Share 'QuickBooksServiceHost.exe'
+    $connectorPath = Join-Path $Tree.Share 'QuickBooksConnectorCli.exe'
     $managerPath = Join-Path $Tree.Share 'service_host_manager.ps1'
     [IO.File]::WriteAllText($hostPath, $HostBytes)
+    [IO.File]::WriteAllText($connectorPath, 'connector-bytes')
     [IO.File]::WriteAllText($managerPath, $ManagerBytes)
     $manifest = [pscustomobject]@{
         schema_version = 1
@@ -95,6 +102,11 @@ function Write-TestRelease {
                 path = 'QuickBooksServiceHost.exe'
                 length = [long](Get-Item -LiteralPath $hostPath).Length
                 sha256 = (Get-FileHash -LiteralPath $hostPath -Algorithm SHA256).Hash
+            },
+            [pscustomobject]@{
+                path = 'QuickBooksConnectorCli.exe'
+                length = [long](Get-Item -LiteralPath $connectorPath).Length
+                sha256 = (Get-FileHash -LiteralPath $connectorPath -Algorithm SHA256).Hash
             }
         )
         manager = [pscustomobject]@{
@@ -253,7 +265,7 @@ function Run-Scenario {
                 $health = { $state.Healthy }.GetNewClosure()
                 Invoke-ReleaseTransaction -Manifest $manifest -SharePath $tree.Share `
                     -InstallPath $tree.Install -StatePath $tree.StatePath `
-                    -StopHost $stop -StartHost $start -TestHost $health | Out-Null
+                    -StopHost $stop -StartHost $start -TestHost $health -ProtectRuntimeTreeAction { } | Out-Null
                 Assert-Equal 1 $state.Stops 'host stopped once after staging verifies'
                 Assert-Equal 1 $state.Starts 'new host started once'
                 Assert-Equal 'new-bytes' (Get-Content -Raw (Join-Path $tree.Install 'QuickBooksServiceHost.exe')) `
@@ -278,7 +290,7 @@ function Run-Scenario {
                 Assert-ThrowsMessage {
                     Invoke-ReleaseTransaction -Manifest $manifest -SharePath $tree.Share `
                         -InstallPath $tree.Install -StatePath $tree.StatePath `
-                        -StopHost $stop -StartHost $start -TestHost $health
+                        -StopHost $stop -StartHost $start -TestHost $health -ProtectRuntimeTreeAction { }
                 } 'Release failed; previous host restored.' `
                     'failed replacement must report failure after restoring the previous host'
                 Assert-Equal 2 $state.Stops 'rollback stops old and failed candidate hosts before runtime movement'
@@ -304,7 +316,7 @@ function Run-Scenario {
                 Assert-Throws {
                     Invoke-ReleaseTransaction -Manifest $manifest -SharePath $tree.Share `
                         -InstallPath $tree.Install -StatePath $tree.StatePath `
-                        -StopHost $stop -StartHost $start -TestHost { $true }
+                        -StopHost $stop -StartHost $start -TestHost { $true } -ProtectRuntimeTreeAction { }
                 } 'corrupt staged bytes must reject the release'
                 Assert-Equal 0 $state.Stops 'staging verification failure must not stop host'
                 Assert-Equal 0 $state.Starts 'staging verification failure must not start host'
@@ -325,7 +337,7 @@ function Run-Scenario {
                     -StatePath $tree.StatePath -GetProcessesAction $actions.GetProcesses `
                     -StopProcessAction $actions.StopProcess -StartHost $actions.StartHost `
                     -TestHost $actions.TestHost -TestProcessExitedAction { param($item) $true } `
-                    -MutexAction $actions.Mutex | Out-Null
+                    -ProtectRuntimeTreeAction { } -MutexAction $actions.Mutex | Out-Null
                 Assert-Equal 'new-manager' (Get-Content -Raw (Join-Path $tree.StatePath 'Manager\service_host_manager.ps1')) `
                     'verified manager entry replaces local manager after runtime result is final'
             }
@@ -579,7 +591,7 @@ function Run-Scenario {
                     Invoke-ReleaseTransaction -Manifest $manifest -SharePath $tree.Share `
                         -InstallPath $tree.Install -StatePath $tree.StatePath `
                         -StopHost $stop -StartHost $start -TestHost { $true } `
-                        -RemovePathAction $removeAction -MovePathAction $moveAction
+                        -RemovePathAction $removeAction -MovePathAction $moveAction -ProtectRuntimeTreeAction { }
                 } 'simulated previous cleanup failure' 'pre-promotion cleanup failure must remain the reported cause'
                 Assert-Equal 0 $state.Stops 'cleanup failure is detected before host stop'
                 Assert-Equal 0 $state.Starts 'pre-stop cleanup failure needs no recovery start'
@@ -616,7 +628,7 @@ function Run-Scenario {
                     Invoke-ReleaseTransaction -Manifest $manifest -SharePath $tree.Share `
                         -InstallPath $tree.Install -StatePath $tree.StatePath `
                         -StopHost $stop -StartHost $start -TestHost { $true } `
-                        -RemovePathAction $removeAction -MovePathAction $moveAction
+                        -RemovePathAction $removeAction -MovePathAction $moveAction -ProtectRuntimeTreeAction { }
                 } 'simulated current install move failure' 'current move failure must remain the reported cause'
                 Assert-Equal 1 $state.Stops 'current move failure occurs after one completed stop'
                 Assert-Equal 1 $state.Starts 'current move failure restarts the untouched installed host'
@@ -645,7 +657,7 @@ function Run-Scenario {
                 Assert-ThrowsMessage {
                     Invoke-ReleaseTransaction -Manifest $manifest -SharePath $tree.Share `
                         -InstallPath $tree.Install -StatePath $tree.StatePath `
-                        -StopHost $stop -StartHost $start -TestHost { $true }
+                        -StopHost $stop -StartHost $start -TestHost { $true } -ProtectRuntimeTreeAction { }
                 } 'simulated second host stop failure' 'partial multi-host stop failure remains the reported cause'
                 Assert-Equal 2 $state.Stops 'stop action reached the later host before failing'
                 Assert-Equal 0 $state.Starts 'partial stop failure does not duplicate a surviving healthy host'
@@ -824,7 +836,7 @@ function Run-Scenario {
                     -StatePath $tree.StatePath -GetProcessesAction $actions.GetProcesses `
                     -StopProcessAction $actions.StopProcess -StartHost $actions.StartHost `
                     -TestHost $actions.TestHost -TestProcessExitedAction { param($item) $true } `
-                    -MutexAction $actions.Mutex | Out-Null
+                    -ProtectRuntimeTreeAction { } -MutexAction $actions.Mutex | Out-Null
 
                 Assert-Equal 1 $state.ManagerCalls 'manager reconciliation has one owner after runtime outcome is final'
                 Assert-Equal 'new-bytes' (Get-Content -Raw (Join-Path $tree.Install 'QuickBooksServiceHost.exe')) `
@@ -860,7 +872,7 @@ function Run-Scenario {
                     Invoke-ReleaseTransaction -Manifest $manifest -SharePath $tree.Share `
                         -InstallPath $tree.Install -StatePath $tree.StatePath `
                         -StopHost $stop -StartHost $start -TestHost { $true } `
-                        -RemovePathAction $removeAction
+                        -RemovePathAction $removeAction -ProtectRuntimeTreeAction { }
                 } "Path cleanup could not be verified absent: $previousPath" `
                     'Previous cleanup must fail closed before host stop'
                 Assert-Equal 0 $state.Stops 'failed Previous cleanup occurs before host stop'
@@ -911,7 +923,7 @@ function Run-Scenario {
                     -InstallPath $tree.Install -StatePath $tree.StatePath `
                     -StopHost { $state.Stops++ }.GetNewClosure() `
                     -StartHost { $state.Starts++ }.GetNewClosure() -TestHost { $true } `
-                    -MovePathAction $moveAction | Out-Null
+                    -MovePathAction $moveAction -ProtectRuntimeTreeAction { } | Out-Null
                 Assert-Equal $tree.StatePath (Split-Path -Parent $state.StageRoot) `
                     'runtime stage is a direct protected StatePath child'
                 Assert-True ((Split-Path -Leaf $state.StageRoot) -match '^[0-9a-f]{32}$') `
@@ -954,7 +966,7 @@ function Run-Scenario {
                     -StartHost { $state.Starts++ }.GetNewClosure() -TestHost { $true } `
                     -TestProcessExitedAction $testExited -DelayAction $delay `
                     -HostExitTimeoutMilliseconds 1000 -HostExitPollMilliseconds 100 `
-                    -MovePathAction $moveAction -MutexAction $mutex | Out-Null
+                    -MovePathAction $moveAction -ProtectRuntimeTreeAction { } -MutexAction $mutex | Out-Null
                 Assert-Equal 1 $state.Stops 'captured expected host is stopped once'
                 Assert-Equal 3 $state.ExitChecks 'exit polling continues until the delayed host exits'
                 Assert-Equal 2 $state.Delays 'bounded wait delays between failed exit checks'
@@ -1052,6 +1064,7 @@ public sealed class Phase3ThrowingExitProcess {
                     StopProcessAction = { param($item) $state.Stops++ }.GetNewClosure()
                     TestProcessExitedAction = { param($item) $true }
                     StartHost = { $state.Starts++ }.GetNewClosure(); TestHost = { $true }
+                    ProtectRuntimeTreeAction = { }
                     MutexAction = $mutex
                 }
                 Invoke-ServiceHostManager @common | Out-Null
@@ -1092,7 +1105,7 @@ public sealed class Phase3ThrowingExitProcess {
                         -StatePath $tree.StatePath -GetProcessesAction { @($process) }.GetNewClosure() `
                         -StopProcessAction { param($item) $state.Stops++ }.GetNewClosure() `
                         -StartHost { $state.Starts++ }.GetNewClosure() -TestHost { $false } `
-                        -MutexAction { param($name, $action) & $action } | Out-Null
+                        -ProtectRuntimeTreeAction { } -MutexAction { param($name, $action) & $action } | Out-Null
                 }
                 catch { $caught = $_ }
                 Assert-True ($null -ne $caught) 'failed candidate and failed restoration report failure'
@@ -1117,7 +1130,7 @@ public sealed class Phase3ThrowingExitProcess {
                 Assert-Throws {
                     Invoke-ReleaseTransaction -Manifest $manifest -SharePath $tree.Share `
                         -InstallPath $tree.Install -StatePath $tree.StatePath -StopHost { } `
-                        -StartHost $start -TestHost $health -Outcome $outcome
+                        -StartHost $start -TestHost $health -Outcome $outcome -ProtectRuntimeTreeAction { }
                 } 'restored release still reports the failed candidate'
                 Assert-Equal $true $outcome.RollbackAttempted 'transaction outcome records attempted restoration'
                 Assert-Equal $true $outcome.RollbackSucceeded 'transaction outcome records successful restoration'
@@ -1146,7 +1159,7 @@ public sealed class Phase3ThrowingExitProcess {
                 Assert-ThrowsMessage {
                     Invoke-ReleaseTransaction -Manifest $manifest -SharePath $tree.Share `
                         -InstallPath $tree.Install -StatePath $tree.StatePath -StopHost { } `
-                        -StartHost $start -TestHost $health -MovePathAction $moveAction -Outcome $outcome
+                        -StartHost $start -TestHost $health -MovePathAction $moveAction -Outcome $outcome -ProtectRuntimeTreeAction { }
                 } 'Release failed; previous host restored.' `
                     'rollback reconciles a successful restore move that throws afterward'
                 Assert-Equal $true $outcome.RollbackAttempted 'move-then-throw rollback remains attempted'
@@ -1168,7 +1181,7 @@ public sealed class Phase3ThrowingExitProcess {
                 Assert-ThrowsMessage {
                     Invoke-ReleaseTransaction -Manifest $manifest -SharePath $tree.Share `
                         -InstallPath $tree.Install -StatePath $tree.StatePath `
-                        -StopHost $stop -StartHost { } -TestHost { $true }
+                        -StopHost $stop -StartHost { } -TestHost { $true } -ProtectRuntimeTreeAction { }
                 } "Reparse points are not allowed in manager transaction state: $($tree.Install)" `
                     'runtime reparse substitution fails before host stop or runtime movement'
                 Assert-Equal 0 $state.Stops 'runtime reparse substitution is rejected before host stop'
@@ -1228,6 +1241,7 @@ public sealed class Phase3ThrowingExitProcess {
                     TestProcessExitedAction = { param($item) $true }
                     StartHost = { }; TestHost = { $true }
                     MutexAction = { param($name, $action) & $action }
+                    ProtectRuntimeTreeAction = { }
                 }
 
                 Invoke-ServiceHostManager @common | Out-Null
@@ -1292,7 +1306,7 @@ public sealed class Phase3ThrowingExitProcess {
                         -StatePath $tree.StatePath -GetProcessesAction { @() } `
                         -StopProcessAction { param($item) } `
                         -StartHost { $state.Starts++ }.GetNewClosure() -TestHost { $false } `
-                        -MutexAction { param($name, $action) & $action } | Out-Null
+                        -ProtectRuntimeTreeAction { } -MutexAction { param($name, $action) & $action } | Out-Null
                 }
                 catch { $caught = $_ }
                 Assert-True ($null -ne $caught) 'failed first install reports the candidate failure'
@@ -1351,7 +1365,7 @@ public sealed class Phase3ThrowingExitProcess {
                 $common = @{
                     SharePath=$tree.Share; InstallPath=$tree.Install; StatePath=$tree.StatePath
                     GetProcessesAction={ @($process) }.GetNewClosure(); StopProcessAction={ param($item) }
-                    StartHost={ }; TestHost={ $true }; MutexAction={ param($name,$action) & $action }
+                    StartHost={ }; TestHost={ $true }; ProtectRuntimeTreeAction={ }; MutexAction={ param($name,$action) & $action }
                     MovePathAction={
                         param($source,$destination)
                         $state.RuntimeMoves++
@@ -1460,6 +1474,147 @@ public sealed class Phase3ThrowingExitProcess {
                 }
             }
         }
+        'phase4-manifest-canonical-completeness' {
+            $missing = New-ValidManifest
+            $missing.files = @($missing.files | Where-Object { $_.path -ne 'QuickBooksConnectorCli.exe' })
+            Assert-ThrowsMessage { Test-ReleaseManifest $missing } `
+                'Required manifest file is missing: QuickBooksConnectorCli.exe' 'missing connector is rejected'
+
+            $duplicate = New-ValidManifest
+            $duplicate.files += [pscustomobject]@{ path='quickbooksconnectorcli.EXE'; length=1; sha256=('D' * 64) }
+            Assert-ThrowsMessage { Test-ReleaseManifest $duplicate } `
+                'Duplicate manifest path: quickbooksconnectorcli.EXE' 'normalized duplicate connector is rejected'
+
+            $wrongManager = New-ValidManifest
+            $wrongManager.manager.path = 'nested/service_host_manager.ps1'
+            Assert-ThrowsMessage { Test-ReleaseManifest $wrongManager } `
+                'Required manager entry must be canonical: service_host_manager.ps1' 'noncanonical manager path is rejected'
+        }
+        'phase4-invalid-manifest-has-zero-mutation' {
+            foreach ($mode in @('missing','duplicate','manager')) {
+                $tree = New-TestTree
+                try {
+                    $manifest = Write-TestRelease $tree
+                    Write-InstalledRelease $tree
+                    if ($mode -eq 'missing') {
+                        $manifest.files = @($manifest.files | Where-Object { $_.path -ne 'QuickBooksConnectorCli.exe' })
+                    }
+                    elseif ($mode -eq 'duplicate') {
+                        $manifest.files += $manifest.files[0].PSObject.Copy()
+                    }
+                    else { $manifest.manager.path = 'nested/service_host_manager.ps1' }
+                    $manifest | ConvertTo-Json -Depth 5 | Set-Content (Join-Path $tree.Share 'release.manifest.json')
+                    $state = [pscustomobject]@{ Stops=0; Moves=0 }
+                    $process = [pscustomobject]@{ ProcessName='QuickBooksServiceHost'; Id=171; Path=(Join-Path $tree.Install 'QuickBooksServiceHost.exe') }
+                    Invoke-ServiceHostManager -SharePath $tree.Share -InstallPath $tree.Install -StatePath $tree.StatePath `
+                        -GetProcessesAction { @($process) }.GetNewClosure() `
+                        -StopProcessAction { param($item) $state.Stops++ }.GetNewClosure() `
+                        -StartHost { } -TestHost { $true } `
+                        -MovePathAction { param($source,$destination) $state.Moves++ }.GetNewClosure() `
+                        -MutexAction { param($name,$action) & $action } | Out-Null
+                    Assert-Equal 0 $state.Stops "$mode invalid manifest stops no host"
+                    Assert-Equal 0 $state.Moves "$mode invalid manifest moves no runtime"
+                }
+                finally { Remove-TestTree $tree }
+            }
+        }
+        'phase4-runtime-acl-applies-on-promotion-and-rollback' {
+            $tree = New-TestTree
+            try {
+                $manifest = Write-TestRelease $tree
+                Write-InstalledRelease $tree
+                $state = [pscustomobject]@{ Protects=@(); Starts=0 }
+                Invoke-ReleaseTransaction -Manifest $manifest -SharePath $tree.Share -InstallPath $tree.Install `
+                    -StatePath $tree.StatePath -StopHost { } `
+                    -StartHost { $state.Starts++ }.GetNewClosure() -TestHost { $true } `
+                    -ProtectRuntimeTreeAction { param($path) $state.Protects += $path }.GetNewClosure() | Out-Null
+                Assert-Equal $tree.Install ($state.Protects -join ';') 'successful promotion applies runtime ACL once'
+            }
+            finally { Remove-TestTree $tree }
+
+            $tree = New-TestTree
+            try {
+                $manifest = Write-TestRelease $tree
+                Write-InstalledRelease $tree
+                $protects = New-Object Collections.ArrayList
+                $healthCalls = [ref]0
+                $health = { $healthCalls.Value++; return $healthCalls.Value -ge 2 }.GetNewClosure()
+                $protectAction = { param($path) [void]$protects.Add($path) }.GetNewClosure()
+                Assert-ThrowsMessage {
+                    Invoke-ReleaseTransaction -Manifest $manifest -SharePath $tree.Share -InstallPath $tree.Install `
+                        -StatePath $tree.StatePath -StopHost { } -StartHost { } -TestHost $health `
+                        -ProtectRuntimeTreeAction $protectAction | Out-Null
+                } 'Release failed; previous host restored.' 'failed candidate rolls back after ACL application'
+                Assert-Equal "$($tree.Install);$($tree.Install)" ($protects -join ';') `
+                    'candidate and restored runtime both receive verified ACL'
+                Assert-Equal 'old-bytes' ([IO.File]::ReadAllText((Join-Path $tree.Install 'QuickBooksServiceHost.exe'))) `
+                    'rollback restores previous runtime bytes'
+            }
+            finally { Remove-TestTree $tree }
+        }
+        'phase4-runtime-acl-object-contract' {
+            $administratorSid = 'S-1-5-32-544'
+            $systemSid = 'S-1-5-18'
+            $usersSid = 'S-1-5-32-545'
+            foreach ($isContainer in @($true, $false)) {
+                $acl = New-ManagerRuntimeAcl -IsContainer $isContainer
+                Assert-True (Test-ManagerRuntimeAcl -Acl $acl -IsContainer $isContainer) "manager runtime ACL validates (container=$isContainer)"
+                Assert-Equal $administratorSid $acl.GetOwner([Security.Principal.SecurityIdentifier]).Value 'manager runtime owner is Administrators'
+                $rules = @($acl.GetAccessRules($true, $false, [Security.Principal.SecurityIdentifier]))
+                Assert-Equal 3 $rules.Count 'manager runtime ACL has exactly three explicit rules'
+                foreach ($privilegedSid in @($administratorSid, $systemSid)) {
+                    $rule = @($rules | Where-Object { $_.IdentityReference.Value -eq $privilegedSid })
+                    Assert-Equal 1 $rule.Count "one privileged manager runtime rule for $privilegedSid"
+                    Assert-Equal ([Security.AccessControl.FileSystemRights]::FullControl) $rule[0].FileSystemRights "privileged manager runtime rule is FullControl for $privilegedSid"
+                }
+                $usersRule = @($rules | Where-Object { $_.IdentityReference.Value -eq $usersSid })
+                Assert-Equal 1 $usersRule.Count 'one BUILTIN Users manager runtime rule'
+                Assert-True (($usersRule[0].FileSystemRights -band [Security.AccessControl.FileSystemRights]::Write) -eq 0) 'BUILTIN Users receive no runtime Write'
+                Assert-True ($usersRule[0].FileSystemRights -ne [Security.AccessControl.FileSystemRights]::Modify) 'BUILTIN Users receive no runtime Modify'
+            }
+
+            $root = Join-Path ([IO.Path]::GetTempPath()) ("manager-runtime-acl-" + [guid]::NewGuid().ToString('N'))
+            $nested = Join-Path $root 'nested'
+            $leaf = Join-Path $nested 'host.exe'
+            New-Item -ItemType Directory -Path $nested -Force | Out-Null
+            Set-Content -LiteralPath $leaf -Value 'host'
+            try {
+                $applied = @{}
+                Protect-ManagerRuntimeTree -InstallPath $root `
+                    -GetItemAction { param($path) Get-Item -LiteralPath $path -Force } `
+                    -GetChildrenAction { param($path) @(Get-ChildItem -LiteralPath $path -Force) } `
+                    -SetAclAction { param($path, $acl) $applied[$path] = $acl }.GetNewClosure() `
+                    -GetAclAction { param($path) $applied[$path] }.GetNewClosure() | Out-Null
+                foreach ($path in @($root, $nested, $leaf)) {
+                    Assert-True $applied.ContainsKey($path) "manager runtime ACL applied to $path"
+                    Assert-True (Test-ManagerRuntimeAcl -Acl $applied[$path] -IsContainer ([bool](Get-Item -LiteralPath $path).PSIsContainer)) "manager runtime ACL verified for $path"
+                }
+            }
+            finally { Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue }
+
+            $root = Join-Path ([IO.Path]::GetTempPath()) ("manager-runtime-reparse-" + [guid]::NewGuid().ToString('N'))
+            $target = Join-Path ([IO.Path]::GetTempPath()) ("manager-runtime-target-" + [guid]::NewGuid().ToString('N'))
+            $link = Join-Path $root 'linked'
+            New-Item -ItemType Directory -Path $root, $target -Force | Out-Null
+            [IO.File]::WriteAllText((Join-Path $target 'sentinel.txt'), 'safe')
+            New-Item -ItemType Junction -Path $link -Target $target -ErrorAction Stop | Out-Null
+            try {
+                $applied = @{}
+                $setAcl = { param($path, $acl) $applied[$path] = $acl }.GetNewClosure()
+                $getAcl = { param($path) $applied[$path] }.GetNewClosure()
+                Assert-ThrowsMessage {
+                    Protect-ManagerRuntimeTree -InstallPath $root `
+                        -SetAclAction $setAcl -GetAclAction $getAcl | Out-Null
+                } "Reparse points are not allowed in manager transaction state: $link" `
+                    'manager runtime ACL traversal rejects a nested reparse point'
+                Assert-Equal 'safe' ([IO.File]::ReadAllText((Join-Path $target 'sentinel.txt'))) `
+                    'manager runtime ACL rejection leaves the reparse target untouched'
+            }
+            finally {
+                Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+                Remove-Item -LiteralPath $target -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
         default {
             throw "Unknown scenario: $Name"
         }
@@ -1518,7 +1673,11 @@ $allScenarios = @(
     'phase3-invalid-recovery-marker-fails-closed',
     'phase3-recovery-marker-write-failure-is-explicit',
     'phase3-recovery-status-survives-share-gating',
-    'phase3-recovery-marker-must-own-sole-orphan'
+    'phase3-recovery-marker-must-own-sole-orphan',
+    'phase4-manifest-canonical-completeness',
+    'phase4-invalid-manifest-has-zero-mutation',
+    'phase4-runtime-acl-applies-on-promotion-and-rollback',
+    'phase4-runtime-acl-object-contract'
 )
 
 if ($Scenario -eq 'all') {

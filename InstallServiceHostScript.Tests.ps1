@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet('static', 'task-plan', 'state-security', 'runtime-acl', 'native-takeown', 'identity-mismatch', 'identity-binding', 'task-neutralization', 'late-failure-neutralization', 'critical-state-revalidation', 'installer-mutex', 'manifest-install', 'corrupt-manager', 'corrupt-installed-manager', 'stale-cleanup', 'stop-race', 'stop-timeout', 'transactional-install', 'transaction-hardening', 'reinstall-idempotent', 'all')]
+    [ValidateSet('static', 'task-plan', 'state-security', 'runtime-acl', 'native-takeown', 'identity-mismatch', 'identity-binding', 'task-neutralization', 'late-failure-neutralization', 'critical-state-revalidation', 'installer-mutex', 'manifest-install', 'corrupt-manager', 'corrupt-installed-manager', 'stale-cleanup', 'stop-race', 'stop-timeout', 'transactional-install', 'transaction-hardening', 'reinstall-idempotent', 'manifest-completeness', 'all')]
     [string]$Scenario = 'all'
 )
 
@@ -1480,11 +1480,39 @@ function Run-Scenario {
             }
             finally { Remove-InstallerFixture $fixture }
         }
+        'manifest-completeness' {
+            foreach ($mode in @('missing','duplicate','manager')) {
+                $fixture = New-InstallerFixture
+                try {
+                    $manifestPath = Join-Path $fixture.Source 'release.manifest.json'
+                    $manifest = Get-Content -Raw $manifestPath | ConvertFrom-Json
+                    if ($mode -eq 'missing') {
+                        $manifest.files = @($manifest.files | Where-Object { $_.path -ne 'QuickBooksConnectorCli.exe' })
+                        $expected = 'Required manifest file is missing: QuickBooksConnectorCli.exe'
+                    }
+                    elseif ($mode -eq 'duplicate') {
+                        $manifest.files += $manifest.files[0].PSObject.Copy()
+                        $expected = 'Duplicate manifest path: QuickBooksServiceHost.exe'
+                    }
+                    else {
+                        $manifest.manager.path = 'nested/service_host_manager.ps1'
+                        $expected = 'Required manager entry must be canonical: service_host_manager.ps1'
+                    }
+                    $manifest | ConvertTo-Json -Depth 5 | Set-Content $manifestPath
+                    $actions = New-InjectedActions $fixture
+                    Assert-ThrowsMessage { Invoke-FixtureInstall $fixture $actions } $expected "$mode manifest rejected"
+                    Assert-Equal 0 $actions.State.StopCalls "$mode manifest stops no host"
+                    Assert-Equal 0 $actions.State.MoveCalls "$mode manifest moves no path"
+                    Assert-Equal 0 $actions.State.NeutralizeCalls "$mode manifest does not neutralize task"
+                }
+                finally { Remove-InstallerFixture $fixture }
+            }
+        }
         default { throw "Unknown scenario: $Name" }
     }
 }
 
-$allScenarios = @('static', 'task-plan', 'state-security', 'runtime-acl', 'native-takeown', 'identity-mismatch', 'identity-binding', 'task-neutralization', 'late-failure-neutralization', 'critical-state-revalidation', 'installer-mutex', 'manifest-install', 'corrupt-manager', 'corrupt-installed-manager', 'stale-cleanup', 'stop-race', 'stop-timeout', 'transactional-install', 'transaction-hardening', 'reinstall-idempotent')
+$allScenarios = @('static', 'task-plan', 'state-security', 'runtime-acl', 'native-takeown', 'identity-mismatch', 'identity-binding', 'task-neutralization', 'late-failure-neutralization', 'critical-state-revalidation', 'installer-mutex', 'manifest-install', 'corrupt-manager', 'corrupt-installed-manager', 'stale-cleanup', 'stop-race', 'stop-timeout', 'transactional-install', 'transaction-hardening', 'reinstall-idempotent', 'manifest-completeness')
 if ($Scenario -eq 'all') { foreach ($name in $allScenarios) { Run-Scenario $name } }
 else { Run-Scenario $Scenario }
 Write-Host 'Install service host script checks passed.'

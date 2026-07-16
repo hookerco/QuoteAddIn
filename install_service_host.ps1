@@ -424,6 +424,44 @@ function Test-SafeReleasePath {
     return (-not [string]::IsNullOrWhiteSpace($Path) -and -not [IO.Path]::IsPathRooted($Path) -and -not ($Path -split '[\\/]' -contains '..'))
 }
 
+function Test-ServiceHostReleaseManifest {
+    param([Parameter(Mandatory = $true)]$Manifest)
+
+    if ([int]$Manifest.schema_version -ne 1 -or $null -eq $Manifest.manager) {
+        throw 'Unsupported release manifest.'
+    }
+    if ([string]::IsNullOrWhiteSpace([string]$Manifest.release_id)) { throw 'Release ID is required.' }
+    $seen = @{}
+    $fileKeys = @{}
+    foreach ($entry in @($Manifest.files) + @($Manifest.manager)) {
+        $path = [string]$entry.path
+        $segments = @($path -split '[\\/]')
+        if ([string]::IsNullOrWhiteSpace($path) -or [IO.Path]::IsPathRooted($path) -or
+            $segments.Count -eq 0 -or @($segments | Where-Object { $_ -eq '' -or $_ -eq '.' -or $_ -eq '..' }).Count -gt 0) {
+            throw "Unsafe manifest path: $path"
+        }
+        $key = ($segments -join '\').ToLowerInvariant()
+        if ($seen.ContainsKey($key)) { throw "Duplicate manifest path: $path" }
+        $seen[$key] = $true
+        if ([long]$entry.length -lt 0) { throw "Invalid manifest length: $path" }
+        if ([string]$entry.sha256 -notmatch '^[0-9A-Fa-f]{64}$') { throw "Invalid manifest hash: $path" }
+    }
+    foreach ($entry in @($Manifest.files)) {
+        $key = ((@([string]$entry.path -split '[\\/]') -join '\')).ToLowerInvariant()
+        $fileKeys[$key] = $true
+    }
+    foreach ($required in @('QuickBooksServiceHost.exe', 'QuickBooksConnectorCli.exe')) {
+        if (-not $fileKeys.ContainsKey($required.ToLowerInvariant())) {
+            throw "Required manifest file is missing: $required"
+        }
+    }
+    $managerKey = ((@([string]$Manifest.manager.path -split '[\\/]') -join '\')).ToLowerInvariant()
+    if ($managerKey -ne 'service_host_manager.ps1') {
+        throw 'Required manager entry must be canonical: service_host_manager.ps1'
+    }
+    return $true
+}
+
 function Get-ServiceHostProcessPath {
     param($Process)
     if ($null -ne $Process.Path) { return [string]$Process.Path }
@@ -703,14 +741,7 @@ function Invoke-ServiceHostInstall {
             if ($manifestLengthBeforeRead -ne $manifestSourceLength -or $manifestHashBeforeRead -ne $manifestSourceHash) {
                 throw 'Release manifest changed during validation: release.manifest.json'
             }
-            if ([int]$manifest.schema_version -ne 1 -or $null -eq $manifest.manager) {
-                throw 'Unsupported release manifest.'
-            }
-            foreach ($entry in @($manifest.files) + @($manifest.manager)) {
-                if (-not (Test-SafeReleasePath -Path ([string]$entry.path))) {
-                    throw "Unsafe manifest path: $($entry.path)"
-                }
-            }
+            Test-ServiceHostReleaseManifest -Manifest $manifest | Out-Null
             $installState.Manifest = $manifest
 
             $installState.HadCurrentInstall = Test-Path -LiteralPath $InstallPath -PathType Container

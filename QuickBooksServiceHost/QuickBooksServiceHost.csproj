@@ -96,6 +96,7 @@
     <Compile Include="QbBridge.cs" />
     <Compile Include="ForegroundWindowOwner.cs" />
     <Compile Include="WorkstationSaveDialog.cs" />
+    <Compile Include="WorkstationSaveFolder.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
   </ItemGroup>
   <ItemGroup>

@@ -67,6 +67,14 @@ namespace QuickBooksConnectorCore
                 return Json(200, headers, "{\"status\":\"authorized\"}");
             }
 
+            if ((path == "/save-folder" &&
+                    string.Equals(method, "GET", StringComparison.OrdinalIgnoreCase)) ||
+                ((path == "/save-folder/choose" || path == "/save-folder/reset") &&
+                    string.Equals(method, "POST", StringComparison.OrdinalIgnoreCase)))
+            {
+                return Json(200, headers, "{\"status\":\"authorized\"}");
+            }
+
             if (path == "/submit-quote" && string.Equals(method, "POST", StringComparison.OrdinalIgnoreCase))
             {
                 try

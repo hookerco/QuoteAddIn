@@ -46,6 +46,7 @@ namespace QuickBooksServiceHost
                         dialog.AddExtension = true;
                         dialog.OverwritePrompt = true;
                         dialog.CheckPathExists = true;
+                        dialog.InitialDirectory = WorkstationSaveFolder.Read() ?? string.Empty;
                         dialog.ValidateNames = true;
                         dialog.RestoreDirectory = true;
                         dialog.Filter = FilterFor(normalizedExtension);
@@ -98,6 +99,7 @@ namespace QuickBooksServiceHost
                 {
                     failure = ex;
                 }
+
             });
             thread.IsBackground = true;
             thread.SetApartmentState(ApartmentState.STA);
@@ -111,6 +113,74 @@ namespace QuickBooksServiceHost
             }
             return result ?? throw new InvalidOperationException(
                 "Workstation Save As did not return a result.");
+        }
+        internal static WorkstationSaveResult ChooseFolder()
+        {
+            WorkstationSaveResult result = null;
+            Exception failure = null;
+            IntPtr foregroundWindow = ForegroundWindowOwner.CaptureHandle();
+
+            var thread = new Thread(() =>
+            {
+                try
+                {
+                    using (var dialog = new FolderBrowserDialog())
+                    {
+                        dialog.Description = "Choose the default quote save folder";
+                        dialog.ShowNewFolderButton = true;
+                        dialog.SelectedPath = WorkstationSaveFolder.Read() ?? string.Empty;
+
+                        DialogResult dialogResult;
+                        IWin32Window foregroundOwner =
+                            ForegroundWindowOwner.TryCreate(foregroundWindow);
+                        if (foregroundOwner != null)
+                        {
+                            dialogResult = dialog.ShowDialog(foregroundOwner);
+                        }
+                        else
+                        {
+                            using (var owner = new Form())
+                            {
+                                owner.TopMost = true;
+                                owner.ShowInTaskbar = false;
+                                owner.StartPosition = FormStartPosition.CenterScreen;
+                                owner.Width = 1;
+                                owner.Height = 1;
+                                owner.Opacity = 0;
+                                owner.Show();
+                                owner.Activate();
+                                dialogResult = dialog.ShowDialog(owner);
+                            }
+                        }
+
+                        if (dialogResult != DialogResult.OK)
+                        {
+                            result = new WorkstationSaveResult(true, null);
+                            return;
+                        }
+
+                        WorkstationSaveFolder.Write(dialog.SelectedPath);
+                        result = new WorkstationSaveResult(
+                            false, WorkstationSaveFolder.DisplayName(dialog.SelectedPath));
+                    }
+                }
+                catch (Exception ex)
+                {
+                    failure = ex;
+                }
+            });
+            thread.IsBackground = true;
+            thread.SetApartmentState(ApartmentState.STA);
+            thread.Start();
+            thread.Join();
+
+            if (failure != null)
+            {
+                throw new InvalidOperationException(
+                    "Workstation folder selection failed: " + failure.Message, failure);
+            }
+            return result ?? throw new InvalidOperationException(
+                "Workstation folder selection did not return a result.");
         }
 
         private static string FilterFor(string extension)

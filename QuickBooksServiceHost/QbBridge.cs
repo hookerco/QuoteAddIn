@@ -122,6 +122,46 @@ namespace QuickBooksServiceHost
                     return;
                 }
 
+                if (path == "/save-folder" ||
+                    path == "/save-folder/choose" ||
+                    path == "/save-folder/reset")
+                {
+                    BridgeHttpResponse authorization = _router.Route(
+                        ctx.Request.HttpMethod, path, token, null);
+                    if (authorization.StatusCode != 200)
+                    {
+                        Write(ctx.Response, authorization);
+                        return;
+                    }
+
+                    string resultBody;
+                    if (path == "/save-folder")
+                    {
+                        string folder = WorkstationSaveFolder.Read();
+                        string name = folder == null
+                            ? string.Empty
+                            : WorkstationSaveFolder.DisplayName(folder);
+                        resultBody = "{\"name\":\"" + Escape(name) + "\"}";
+                    }
+                    else if (path == "/save-folder/choose")
+                    {
+                        WorkstationSaveResult folderResult =
+                            WorkstationSaveDialog.ChooseFolder();
+                        resultBody = folderResult.Cancelled
+                            ? "{\"status\":\"cancelled\"}"
+                            : "{\"status\":\"selected\",\"name\":\"" +
+                                Escape(folderResult.Filename) + "\"}";
+                    }
+                    else
+                    {
+                        WorkstationSaveFolder.Clear();
+                        resultBody = "{\"status\":\"reset\"}";
+                    }
+                    Write(
+                        ctx.Response,
+                        new BridgeHttpResponse(200, resultBody, authorization.Headers));
+                    return;
+                }
                 string body = ReadBody(ctx.Request);
 
                 BridgeHttpResponse response = _router.Route(

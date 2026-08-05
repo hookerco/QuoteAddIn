@@ -109,6 +109,9 @@
     <Compile Include="..\QuoteItemResolution\ItemLookupKey.cs">
       <Link>ItemLookupKey.cs</Link>
     </Compile>
+    <Compile Include="..\QuickBooksServiceHost\WorkstationSaveFolder.cs">
+      <Link>WorkstationSaveFolder.cs</Link>
+    </Compile>
     <Compile Include="SalesOrderItemResolutionTests.cs" />
     <Compile Include="..\ExcelAddIn1\SendToQb\SalesOrderItemResolution.cs">
       <Link>SalesOrderItemResolution.cs</Link>

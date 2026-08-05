@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Linq;
 using NUnit.Framework;
+using QuickBooksServiceHost;
 using QuickBooksConnectorCore;
 
 namespace QuickbooksIPCUnitTests
@@ -45,6 +46,45 @@ namespace QuickbooksIPCUnitTests
             finally
             {
                 Directory.Delete(directory, true);
+            }
+        }
+
+        [Test]
+        public void WorkstationSaveFolder_PersistsReadsAndClearsExistingDirectory()
+        {
+            string root = Path.Combine(
+                Path.GetTempPath(), "quote-folder-test-" + Guid.NewGuid().ToString("N"));
+            string selected = Path.Combine(root, "Quotes");
+            string statePath = Path.Combine(root, "save-folder.txt");
+            Directory.CreateDirectory(selected);
+            try
+            {
+                WorkstationSaveFolder.Write(statePath, selected);
+
+                Assert.AreEqual(selected, WorkstationSaveFolder.Read(statePath));
+                Assert.AreEqual("Quotes", WorkstationSaveFolder.DisplayName(selected));
+
+                WorkstationSaveFolder.Clear(statePath);
+                Assert.IsNull(WorkstationSaveFolder.Read(statePath));
+            }
+            finally
+            {
+                Directory.Delete(root, true);
+            }
+        }
+
+        [Test]
+        public void WorkstationSaveFolder_IgnoresDeletedDirectory()
+        {
+            string statePath = Path.GetTempFileName();
+            try
+            {
+                File.WriteAllText(statePath, Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N")));
+                Assert.IsNull(WorkstationSaveFolder.Read(statePath));
+            }
+            finally
+            {
+                File.Delete(statePath);
             }
         }
     }

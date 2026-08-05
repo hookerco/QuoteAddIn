@@ -110,6 +110,27 @@ namespace QuickbooksIPCUnitTests
             Assert.AreEqual("{\"status\":\"authorized\"}", response.Body);
         }
 
+        [TestCase("GET", "/save-folder")]
+        [TestCase("POST", "/save-folder/choose")]
+        [TestCase("POST", "/save-folder/reset")]
+        public void SaveFolder_WithValidToken_AuthorizesTransportHandler(
+            string method,
+            string path)
+        {
+            BridgeHttpResponse response = OkRouter().Route(method, path, Token, null);
+
+            Assert.AreEqual(200, response.StatusCode);
+            Assert.AreEqual("{\"status\":\"authorized\"}", response.Body);
+        }
+
+        [Test]
+        public void SaveFolder_WithoutValidToken_IsForbidden()
+        {
+            BridgeHttpResponse response = OkRouter().Route("GET", "/save-folder", null, null);
+
+            Assert.AreEqual(403, response.StatusCode);
+        }
+
         [Test]
         public void SubmitQuote_WithValidToken_WrapsConnectorResponse()
         {

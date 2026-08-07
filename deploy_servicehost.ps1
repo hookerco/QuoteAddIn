@@ -184,7 +184,6 @@ New-Item -Path $networkInstallPath, $networkPath -ItemType Directory -Force | Ou
 
 # Installer artifacts and operator-owned settings are outside the runtime manifest.
 Copy-Item -LiteralPath (Join-Path $currentDirectory 'install_service_host.ps1') -Destination $networkPath -Force
-Copy-Item -LiteralPath (Join-Path $currentDirectory 'install_service_host.bat') -Destination $networkInstallPath -Force
 
 $bridgeSettingsTemplate = Join-Path $currentDirectory 'bridge.settings.template.psd1'
 $bridgeSettingsTarget = Join-Path $networkPath 'bridge.settings.psd1'

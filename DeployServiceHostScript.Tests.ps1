@@ -10,6 +10,10 @@ $deployScriptContent = Get-Content -Raw -LiteralPath $deployScriptPath
 if ($deployScriptContent -notmatch '(?s)\bparam\s*\([\s\S]*\[switch\]\s*\$AsLibrary') {
     throw 'Deploy script does not provide the required -AsLibrary safety boundary.'
 }
+if ((Test-Path -LiteralPath (Join-Path $PSScriptRoot 'install_service_host.bat')) -or
+    $deployScriptContent -match 'install_service_host\.bat') {
+    throw 'Legacy mapped-drive installer wrapper must not be shipped or published.'
+}
 . $deployScriptPath -AsLibrary
 
 function Assert-Equal($Expected, $Actual, [string]$Because) {

@@ -27,7 +27,7 @@ namespace QuickBooksServiceLibrary.Tests
         }
 
         [Test]
-        public void SalesOrderRequest_BuildsRefNumberFromQuoteNumber()
+        public void SalesOrderRequest_LetsQuickBooksAssignNextRefNumber()
         {
             var request = new TestableSalesOrderRequest(CreateOrder("Q-100"));
             var msgSetRequest = new Mock<IMsgSetRequest>();
@@ -36,7 +36,7 @@ namespace QuickBooksServiceLibrary.Tests
             // Embedded QBFC date setters do not mock cleanly; verify before that boundary.
             Assert.Throws<MissingMethodException>(() => request.BuildInto(msgSetRequest.Object));
 
-            refNumber.Verify(value => value.SetValue("Q-100"), Times.Once);
+            refNumber.Verify(value => value.SetValue(It.IsAny<string>()), Times.Never);
         }
 
         [Test]

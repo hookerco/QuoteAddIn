@@ -158,10 +158,6 @@ namespace QBRequestLibrary
 
             SalesOrderAddRq.CustomerRef.FullName.SetValue(_value.Customer.Name);
             SalesOrderAddRq.PONumber.SetValue(_value.Customer.PO);
-            if (!string.IsNullOrWhiteSpace(_value.QuoteNumber))
-            {
-                SalesOrderAddRq.RefNumber.SetValue(_value.QuoteNumber);
-            }
             SalesOrderAddRq.DueDate.SetValue(_value.DueDate);
             SalesOrderAddRq.ShipDate.SetValue(_value.DueDate);
 

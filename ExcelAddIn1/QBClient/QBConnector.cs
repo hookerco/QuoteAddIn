@@ -1,9 +1,9 @@
 ﻿using QuickBooksIPCContracts;
 using System;
 using System.ServiceModel;
-using System.Xml;
 using System.Threading; 
 using System.Configuration;
+using QuickBooksConnectorCore;
 
 namespace ExcelAddIn1.SendToQb
 {
@@ -32,18 +32,7 @@ namespace ExcelAddIn1.SendToQb
             //}
 
             // Set up the WCF client
-            var binding = new NetNamedPipeBinding
-            {
-                MaxReceivedMessageSize = int.MaxValue,
-                ReaderQuotas = new XmlDictionaryReaderQuotas
-                {
-                    MaxDepth = 32,
-                    MaxStringContentLength = int.MaxValue,
-                    MaxArrayLength = int.MaxValue,
-                    MaxBytesPerRead = 4096,
-                    MaxNameTableCharCount = int.MaxValue
-                }
-            };
+            var binding = QuickBooksPipeBindingFactory.CreateClientBinding();
 
             var endpointAddress = new EndpointAddress(ServiceBaseAddress);
             _channelFactory = new ChannelFactory<IQuickBooksService>(binding, endpointAddress);

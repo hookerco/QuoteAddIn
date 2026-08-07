@@ -1,6 +1,5 @@
 using System;
 using System.ServiceModel;
-using System.Xml;
 using QuickBooksIPCContracts;
 
 namespace QuickBooksConnectorCore
@@ -20,22 +19,7 @@ namespace QuickBooksConnectorCore
 
         public QuickBooksServiceConnection()
         {
-            var binding = new NetNamedPipeBinding
-            {
-                OpenTimeout = TimeSpan.FromSeconds(30),
-                CloseTimeout = TimeSpan.FromSeconds(30),
-                SendTimeout = ServiceOperationTimeout,
-                ReceiveTimeout = ServiceOperationTimeout,
-                MaxReceivedMessageSize = int.MaxValue,
-                ReaderQuotas = new XmlDictionaryReaderQuotas
-                {
-                    MaxDepth = 32,
-                    MaxStringContentLength = int.MaxValue,
-                    MaxArrayLength = int.MaxValue,
-                    MaxBytesPerRead = 4096,
-                    MaxNameTableCharCount = int.MaxValue
-                }
-            };
+            var binding = QuickBooksPipeBindingFactory.CreateClientBinding();
 
             _channelFactory = new ChannelFactory<IQuickBooksService>(binding, new EndpointAddress(ServiceBaseAddress));
             Client = _channelFactory.CreateChannel();

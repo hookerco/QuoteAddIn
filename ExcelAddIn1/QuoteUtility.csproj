@@ -292,6 +292,10 @@
     <Content Include="notes.txt" />
   </ItemGroup>
   <ItemGroup>
+    <ProjectReference Include="..\QuickBooksConnectorCore\QuickBooksConnectorCore.csproj">
+      <Project>{C7E3B5A1-2D4F-4A8B-9E6C-1F0A2B3C4D5E}</Project>
+      <Name>QuickBooksConnectorCore</Name>
+    </ProjectReference>
     <ProjectReference Include="..\QuickBooksIPCContracts\QuickBooksIPCContracts.csproj">
       <Project>{500e69e0-4ab5-41ad-8468-1584e27725f6}</Project>
       <Name>QuickBooksIPCContracts</Name>

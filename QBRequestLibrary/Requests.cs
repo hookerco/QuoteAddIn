@@ -145,6 +145,51 @@ namespace QBRequestLibrary
         }
     }
 
+    public class CustomerAccountNumberQueryRequest
+        : Request<string, QBCustomer>, ICustomerAccountNumberQueryRequest
+    {
+        public CustomerAccountNumberQueryRequest(string accountNumber)
+        {
+            Set(accountNumber);
+        }
+
+        protected override void BuildHelper()
+        {
+            ICustomerQuery request = _msgSetRequest.AppendCustomerQueryRq();
+            request.IncludeRetElementList.Add("AccountNumber");
+            request.IncludeRetElementList.Add("FullName");
+        }
+
+        protected override QBCustomer ConvertResponse(IMsgSetResponse responseSet)
+        {
+            IResponse response = GetFirstResponse(responseSet);
+            if ((ENResponseType)response.Type.GetValue() != ENResponseType.rtCustomerQueryRs)
+            {
+                throw new QBRequestLibraryRuntimeError("Not a customerQueryResponse");
+            }
+
+            ICustomerRetList customers = (ICustomerRetList)response.Detail;
+            for (int index = 0; index < customers.Count; index++)
+            {
+                ICustomerRet customer = customers.GetAt(index);
+                string accountNumber = customer.AccountNumber?.GetValue();
+                if (string.Equals(
+                    accountNumber?.Trim(),
+                    _value?.Trim(),
+                    StringComparison.OrdinalIgnoreCase))
+                {
+                    return new QBCustomer
+                    {
+                        AccountNumber = accountNumber,
+                        Name = customer.FullName.GetValue()
+                    };
+                }
+            }
+
+            return null;
+        }
+    }
+
     public class SalesOrderRequest : Request<QBOrder, QBStatusResponse<string>>, ISalesOrderRequest
     {
         public SalesOrderRequest(QBOrder salesOrder)

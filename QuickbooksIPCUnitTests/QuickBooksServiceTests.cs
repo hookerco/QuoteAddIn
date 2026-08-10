@@ -254,10 +254,10 @@ namespace QuickBooksServiceLibrary.Tests
                 }
             };
 
-            var mockCustomerRequest = new Mock<ICustomerQueryRequest>();
+            var mockCustomerRequest = new Mock<ICustomerAccountNumberQueryRequest>();
             mockCustomerRequest.Setup(r => r.SendRequest()).Returns((QBCustomer)null);
             _mockRequestFactory
-                .Setup(f => f.CreateCustomerQueryRequest("404"))
+                .Setup(f => f.CreateCustomerAccountNumberQueryRequest("404"))
                 .Returns(mockCustomerRequest.Object);
 
             QBStatusResponse<QBQuoteUploadResult> result = _service.SubmitQuote(request);
@@ -265,6 +265,10 @@ namespace QuickBooksServiceLibrary.Tests
             Assert.AreNotEqual(0, result.StatusCode);
             StringAssert.Contains("Customer not found", result.StatusMessage);
             Assert.IsNull(result.Data);
+            _mockRequestFactory.Verify(
+                f => f.CreateCustomerAccountNumberQueryRequest("404"), Times.Once);
+            _mockRequestFactory.Verify(
+                f => f.CreateCustomerQueryRequest(It.IsAny<string>()), Times.Never);
             _mockRequestFactory.Verify(f => f.CreateEstimateRequest(It.IsAny<QBOrder>()), Times.Never);
             _mockRequestFactory.Verify(f => f.CreateSalesOrderRequest(It.IsAny<QBOrder>()), Times.Never);
         }

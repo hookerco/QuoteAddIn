@@ -52,6 +52,45 @@ namespace QuickBooksServiceLibrary.Tests
             refNumber.Verify(value => value.SetValue("Q-200"), Times.Once);
         }
 
+        [Test]
+        public void CustomerAccountNumberQueryRequest_LimitsResponseToAccountNumberAndFullName()
+        {
+            var request = new TestableCustomerAccountNumberQueryRequest("TEST-4242");
+            var msgSetRequest = new Mock<IMsgSetRequest>();
+            var customerQuery = new Mock<ICustomerQuery> { DefaultValue = DefaultValue.Mock };
+            msgSetRequest.Setup(value => value.AppendCustomerQueryRq())
+                .Returns(customerQuery.Object);
+
+            Assert.DoesNotThrow(() => request.BuildInto(msgSetRequest.Object));
+
+            var includeRetElements = Mock.Get(customerQuery.Object.IncludeRetElementList);
+            includeRetElements.Verify(value => value.Add("AccountNumber"), Times.Once);
+            includeRetElements.Verify(value => value.Add("FullName"), Times.Once);
+        }
+
+        [Test]
+        public void CustomerAccountNumberQueryRequest_SkipsMissingAccountNumberAndSelectsMatch()
+        {
+            var request = new TestableCustomerAccountNumberQueryRequest("TEST-4242");
+            var customers = new Mock<ICustomerRetList>();
+            customers.SetupGet(value => value.Count).Returns(2);
+            customers.Setup(value => value.GetAt(0))
+                .Returns(CreateCustomerWithoutAccountNumber("Unnumbered Customer"));
+            customers.Setup(value => value.GetAt(1))
+                .Returns(CreateCustomer("Example Fabrication LLC", "TEST-4242"));
+            var responseSet = CreateResponseSet(
+                CreateResponse(
+                    ENResponseType.rtCustomerQueryRs,
+                    0,
+                    "Status OK",
+                    customers.Object));
+
+            QBCustomer result = request.Convert(responseSet);
+
+            Assert.AreEqual("TEST-4242", result.AccountNumber);
+            Assert.AreEqual("Example Fabrication LLC", result.Name);
+        }
+
         private static QBOrder CreateOrder(string quoteNumber)
         {
             return new QBOrder
@@ -173,7 +212,11 @@ namespace QuickBooksServiceLibrary.Tests
             return responseSet.Object;
         }
 
-        private static IResponse CreateResponse(ENResponseType responseType, int statusCode, string statusMessage)
+        private static IResponse CreateResponse(
+            ENResponseType responseType,
+            int statusCode,
+            string statusMessage,
+            IQBBase detail = null)
         {
             var type = new Mock<IResponseType>();
             type.Setup(t => t.GetValue()).Returns((short)responseType);
@@ -182,8 +225,30 @@ namespace QuickBooksServiceLibrary.Tests
             response.SetupGet(r => r.Type).Returns(type.Object);
             response.SetupGet(r => r.StatusCode).Returns(statusCode);
             response.SetupGet(r => r.StatusMessage).Returns(statusMessage);
-            response.SetupGet(r => r.Detail).Returns((IQBBase)null);
+            response.SetupGet(r => r.Detail).Returns(detail);
             return response.Object;
+        }
+
+        private static ICustomerRet CreateCustomer(string fullName, string accountNumber)
+        {
+            var name = new Mock<IQBStringType>();
+            name.Setup(value => value.GetValue()).Returns(fullName);
+            var account = new Mock<IQBStringType>();
+            account.Setup(value => value.GetValue()).Returns(accountNumber);
+            var customer = new Mock<ICustomerRet>();
+            customer.SetupGet(value => value.FullName).Returns(name.Object);
+            customer.SetupGet(value => value.AccountNumber).Returns(account.Object);
+            return customer.Object;
+        }
+
+        private static ICustomerRet CreateCustomerWithoutAccountNumber(string fullName)
+        {
+            var name = new Mock<IQBStringType>();
+            name.Setup(value => value.GetValue()).Returns(fullName);
+            var customer = new Mock<ICustomerRet>();
+            customer.SetupGet(value => value.FullName).Returns(name.Object);
+            customer.SetupGet(value => value.AccountNumber).Returns((IQBStringType)null);
+            return customer.Object;
         }
 
         private sealed class TestableAllItemNonInvQueryRequest : AllItemNonInvQueryRequest
@@ -223,6 +288,28 @@ namespace QuickBooksServiceLibrary.Tests
             {
                 _msgSetRequest = msgSetRequest;
                 BuildHelper();
+            }
+        }
+
+        private sealed class TestableCustomerAccountNumberQueryRequest
+            : CustomerAccountNumberQueryRequest
+        {
+            public TestableCustomerAccountNumberQueryRequest(string accountNumber)
+                : base(accountNumber)
+            {
+                GC.SuppressFinalize(this);
+                GC.SuppressFinalize(_connection);
+            }
+
+            public void BuildInto(IMsgSetRequest msgSetRequest)
+            {
+                _msgSetRequest = msgSetRequest;
+                BuildHelper();
+            }
+
+            public QBCustomer Convert(IMsgSetResponse responseSet)
+            {
+                return ConvertResponse(responseSet);
             }
         }
     }

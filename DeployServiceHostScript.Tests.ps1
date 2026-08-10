@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet('manifest-contract', 'host-wins', 'settings-excluded', 'manager-entry', 'copy-corruption', 'manifest-written-last', 'release-id-unborn-fallback', 'manager-source-change', 'all')]
+    [ValidateSet('manifest-contract', 'host-wins', 'settings-excluded', 'manager-entry', 'migration-published', 'copy-corruption', 'manifest-written-last', 'release-id-unborn-fallback', 'manager-source-change', 'all')]
     [string]$Scenario = 'all'
 )
 
@@ -125,6 +125,13 @@ function Run-Scenario {
                 Assert-Equal ((Get-FileHash -LiteralPath $fixture.Manager -Algorithm SHA256).Hash) $manifest.manager.sha256 'manager hash'
                 Assert-Equal $manifest.manager.sha256 ((Get-FileHash -LiteralPath $publishedManager -Algorithm SHA256).Hash) 'published manager verification'
             }
+            'migration-published' {
+                Assert-True (Test-Path -LiteralPath (Join-Path $PSScriptRoot 'migrate_legacy_service_host.ps1') -PathType Leaf) 'administrator cleanup script must exist'
+                Assert-Matches "Copy-Item[\s\S]*migrate_legacy_service_host\.ps1" $deployScriptContent 'publisher must include the one-time administrator cleanup script'
+                $template = Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot 'bridge.settings.template.psd1')
+                Assert-True ($template -match 'user env') 'bridge template must describe user-level settings'
+                Assert-True ($template -notmatch 'machine env var') 'bridge template must not direct operators to machine-level settings'
+            }
             'copy-corruption' {
                 $manifestPath = Join-Path $fixture.Destination 'release.manifest.json'
                 [IO.File]::WriteAllBytes($manifestPath, [Text.Encoding]::UTF8.GetBytes('pre-existing manifest bytes'))
@@ -217,6 +224,7 @@ $allScenarios = @(
     'host-wins',
     'settings-excluded',
     'manager-entry',
+    'migration-published',
     'copy-corruption',
     'manifest-written-last',
     'release-id-unborn-fallback',

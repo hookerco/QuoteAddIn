@@ -10,6 +10,7 @@ namespace QBRequestLibrary
     public interface IRequestFactory
     {
         ICustomerQueryRequest CreateCustomerQueryRequest(string accountNumber);
+        ICustomerAccountNumberQueryRequest CreateCustomerAccountNumberQueryRequest(string accountNumber);
         ISalesOrderRequest CreateSalesOrderRequest(QBOrder order);
         IEstimateRequest CreateEstimateRequest(QBOrder order);
         IAddItemNonInventoryRequest CreateAddItemNonInventoryRequest(List<QBItem> items);

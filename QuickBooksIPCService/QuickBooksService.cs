@@ -188,6 +188,12 @@ namespace QuickBooksIPCService
             return response;
         }
 
+        private QBCustomer GetCustomerByAccountNumber(string accountNumber)
+        {
+            var req = _requestFactory.CreateCustomerAccountNumberQueryRequest(accountNumber);
+            return req.SendRequest();
+        }
+
         private string ValidateQuoteUploadRequest(QBQuoteUploadRequest request)
         {
             if (request == null)
@@ -251,7 +257,7 @@ namespace QuickBooksIPCService
             {
                 try
                 {
-                    customer = GetCustomer(request.CustomerAccountNumber);
+                    customer = GetCustomerByAccountNumber(request.CustomerAccountNumber);
                 }
                 catch (Exception ex)
                 {

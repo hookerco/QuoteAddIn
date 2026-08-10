@@ -10,6 +10,8 @@ namespace QBRequestLibrary
 {
     public interface ICustomerQueryRequest : IRequest<string, QBCustomer> { }
 
+    public interface ICustomerAccountNumberQueryRequest : IRequest<string, QBCustomer> { }
+
     public interface ISalesOrderRequest : IRequest<QBOrder, QBStatusResponse<string>> { }
 
     public interface IEstimateRequest : IRequest<QBOrder, QBStatusResponse<string>> { }

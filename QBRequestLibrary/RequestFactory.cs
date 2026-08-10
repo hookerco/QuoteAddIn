@@ -15,6 +15,11 @@ namespace QBRequestLibrary
             return new CustomerQueryRequest(accountNumber);
         }
 
+        public ICustomerAccountNumberQueryRequest CreateCustomerAccountNumberQueryRequest(string accountNumber)
+        {
+            return new CustomerAccountNumberQueryRequest(accountNumber);
+        }
+
         public ISalesOrderRequest CreateSalesOrderRequest(QBOrder order)
         {
             return new SalesOrderRequest(order);

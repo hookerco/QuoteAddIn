@@ -1,6 +1,9 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.IO;
+using System.Security.Cryptography;
+using System.Text;
 using System.Web.Script.Serialization;
 using NUnit.Framework;
 using QuickBooksConnectorCore;
@@ -17,6 +20,8 @@ namespace QuickbooksIPCUnitTests
     {
         private const string Origin = "http://APPSRV01:8742";
         private const string Token = "s3cr3t-token";
+        private const string SubmitQuoteGoldenSha256 =
+            "a01f356449385cd17697a3fb6ef2b73eb06b80295fa3ba28fdd3396dc5e809fc";
 
         private static QuoteBridgeRouter RouterWith(Func<string, string> submitHandler)
         {
@@ -525,6 +530,52 @@ namespace QuickbooksIPCUnitTests
 
             StringAssert.Contains("\"TransactionId\":\"TXN-SO-1\"", json);
             StringAssert.Contains("\"AssignedReference\":\"SO-9001\"", json);
+        }
+
+        [Test]
+        public void SubmitQuote_RealHandlerAndRouterMatchVersionedGoldenContract()
+        {
+            string goldenPath = Path.Combine(
+                AppDomain.CurrentDomain.BaseDirectory,
+                "Fixtures",
+                "submit_quote_success_v1.json");
+            string golden = File.ReadAllText(goldenPath).Trim();
+            using (SHA256 sha = SHA256.Create())
+            {
+                string hash = BitConverter.ToString(
+                        sha.ComputeHash(Encoding.UTF8.GetBytes(golden)))
+                    .Replace("-", string.Empty)
+                    .ToLowerInvariant();
+                Assert.AreEqual(SubmitQuoteGoldenSha256, hash);
+            }
+
+            string bare = null;
+            Func<QBQuoteUploadRequest, QBStatusResponse<QBQuoteUploadResult>> submit =
+                _ => new QBStatusResponse<QBQuoteUploadResult>
+                {
+                    StatusCode = 0,
+                    StatusMessage = "OK",
+                    Data = new QBQuoteUploadResult
+                    {
+                        TransactionType = QBQuoteTransactionType.Estimate,
+                        CustomerName = "Invented Customer",
+                        QuoteNumber = "120050",
+                        TransactionId = "SYNTH-TXN-1",
+                        AssignedReference = "120050",
+                        Lines = new List<QBQuoteUploadResolvedLine>()
+                    }
+                };
+            var router = RouterWith(body =>
+            {
+                bare = SubmitQuoteHandler.Handle(body, submit);
+                return bare;
+            });
+
+            BridgeHttpResponse response = router.Route(
+                "POST", "/submit-quote", Token, "{}");
+
+            Assert.AreEqual(golden, bare);
+            Assert.AreEqual("{\"response\":" + golden + "}", response.Body);
         }
 
         [Test]

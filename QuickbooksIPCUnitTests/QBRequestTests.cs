@@ -91,6 +91,78 @@ namespace QuickBooksServiceLibrary.Tests
             Assert.AreEqual("Example Fabrication LLC", result.Name);
         }
 
+        [Test]
+        public void CommercialTermsQueryRequest_ReturnsOnlyTermAndShipMethodNames()
+        {
+            Type requestType = typeof(RequestFactory).Assembly.GetType(
+                "QBRequestLibrary.CommercialTermsQueryRequest");
+            Assert.IsNotNull(requestType, "CommercialTermsQueryRequest must exist");
+            object request = FormatterServices.GetUninitializedObject(requestType);
+            GC.SuppressFinalize(request);
+
+            var standardTerms = new Mock<IStandardTermsRet>();
+            standardTerms.SetupGet(value => value.Name).Returns(CreateString("Net 30").Object);
+            var termChoice = new Mock<IORTermsRet>();
+            termChoice.SetupGet(value => value.StandardTermsRet).Returns(standardTerms.Object);
+            var terms = new Mock<IORTermsRetList>();
+            terms.SetupGet(value => value.Count).Returns(1);
+            terms.Setup(value => value.GetAt(0)).Returns(termChoice.Object);
+
+            var shipMethod = new Mock<IShipMethodRet>();
+            shipMethod.SetupGet(value => value.Name).Returns(CreateString("UPS Ground").Object);
+            var shipMethods = new Mock<IShipMethodRetList>();
+            shipMethods.SetupGet(value => value.Count).Returns(1);
+            shipMethods.Setup(value => value.GetAt(0)).Returns(shipMethod.Object);
+
+            IMsgSetResponse responseSet = CreateResponseSet(
+                CreateResponse(ENResponseType.rtTermsQueryRs, 0, "Status OK", terms.Object),
+                CreateResponse(ENResponseType.rtShipMethodQueryRs, 0, "Status OK", shipMethods.Object));
+            var convert = requestType.GetMethod(
+                "ConvertResponse",
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+            object result = convert.Invoke(request, new object[] { responseSet });
+
+            Assert.AreEqual(0, result.GetType().GetProperty("StatusCode").GetValue(result));
+            object catalog = result.GetType().GetProperty("Data").GetValue(result);
+            CollectionAssert.AreEqual(
+                new[] { "Net 30" },
+                (IEnumerable<string>)catalog.GetType().GetProperty("CreditTerms").GetValue(catalog));
+            CollectionAssert.AreEqual(
+                new[] { "UPS Ground" },
+                (IEnumerable<string>)catalog.GetType().GetProperty("ShippingMethods").GetValue(catalog));
+        }
+
+        [Test]
+        public void CustomerCommercialTermsQueryRequest_ReturnsOnlyMatchedCustomerDefaults()
+        {
+            Type requestType = typeof(RequestFactory).Assembly.GetType(
+                "QBRequestLibrary.CustomerCommercialTermsQueryRequest");
+            Assert.IsNotNull(requestType, "CustomerCommercialTermsQueryRequest must exist");
+
+            object request = FormatterServices.GetUninitializedObject(requestType);
+            GC.SuppressFinalize(request);
+            requestType.GetMethod("Set").Invoke(request, new object[] { "EX-1042" });
+            var customer = new Mock<ICustomerRet>();
+            customer.SetupGet(value => value.AccountNumber).Returns(CreateString("EX-1042").Object);
+            customer.SetupGet(value => value.TermsRef).Returns(CreateNamedRef("Net 30").Object);
+            var customers = new Mock<ICustomerRetList>();
+            customers.SetupGet(value => value.Count).Returns(1);
+            customers.Setup(value => value.GetAt(0)).Returns(customer.Object);
+
+            IMsgSetResponse responseSet = CreateResponseSet(
+                CreateResponse(ENResponseType.rtCustomerQueryRs, 0, "Status OK", customers.Object));
+            var convert = requestType.GetMethod(
+                "ConvertResponse",
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+
+            object response = convert.Invoke(request, new object[] { responseSet });
+            object data = response.GetType().GetProperty("Data").GetValue(response);
+
+            Assert.AreEqual(0, response.GetType().GetProperty("StatusCode").GetValue(response));
+            Assert.AreEqual("Net 30", data.GetType().GetProperty("CreditTerms").GetValue(data));
+            Assert.IsNull(data.GetType().GetProperty("AccountNumber"));
+        }
+
         private static QBOrder CreateOrder(string quoteNumber)
         {
             return new QBOrder
@@ -179,6 +251,13 @@ namespace QuickBooksServiceLibrary.Tests
             return baseRef;
         }
 
+        private static Mock<IQBBaseRef> CreateNamedRef(string fullName)
+        {
+            var result = new Mock<IQBBaseRef>();
+            result.SetupGet(value => value.FullName).Returns(CreateString(fullName).Object);
+            return result;
+        }
+
         private static Mock<IORRatePriceLevel> CreateRatePriceLevel()
         {
             var ratePriceLevel = new Mock<IORRatePriceLevel>();
@@ -249,6 +328,13 @@ namespace QuickBooksServiceLibrary.Tests
             customer.SetupGet(value => value.FullName).Returns(name.Object);
             customer.SetupGet(value => value.AccountNumber).Returns((IQBStringType)null);
             return customer.Object;
+        }
+
+        private static Mock<IQBStringType> CreateString(string value)
+        {
+            var result = new Mock<IQBStringType>();
+            result.Setup(field => field.GetValue()).Returns(value);
+            return result;
         }
 
         private sealed class TestableAllItemNonInvQueryRequest : AllItemNonInvQueryRequest

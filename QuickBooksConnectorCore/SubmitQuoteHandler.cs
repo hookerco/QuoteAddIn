@@ -310,4 +310,188 @@ namespace QuickBooksConnectorCore
             return Regex.Replace(value, @"[\s_\-]", string.Empty).ToLowerInvariant();
         }
     }
+
+    /// <summary>
+    /// Produces the schema-validated browser catalog. Its inputs are already limited to
+    /// QuickBooks list names, so customer, company-file, transaction, and ListID data cannot
+    /// cross the localhost bridge.
+    /// </summary>
+    public static class CommercialTermsHandler
+    {
+        private static readonly JavaScriptSerializer JsonSerializer = new JavaScriptSerializer();
+
+        public static string Handle()
+        {
+            try
+            {
+                using (var connection = new QuickBooksServiceConnection())
+                {
+                    return Handle(() => connection.Client.GetCommercialTerms());
+                }
+            }
+            catch
+            {
+                throw Unavailable();
+            }
+        }
+
+        public static string Handle(
+            Func<QBStatusResponse<QBCommercialTermsCatalog>> fetch)
+        {
+            try
+            {
+                QBStatusResponse<QBCommercialTermsCatalog> response = fetch?.Invoke();
+                if (response == null || response.StatusCode != 0 || response.Data == null)
+                {
+                    throw Unavailable();
+                }
+                return SerializeCatalog(
+                    response.Data.CreditTerms,
+                    response.Data.ShippingMethods,
+                    response.Data.RefreshedAtUtc);
+            }
+            catch
+            {
+                throw Unavailable();
+            }
+        }
+
+        public static string SerializeCatalog(
+            IEnumerable<string> creditTerms,
+            IEnumerable<string> shippingMethods,
+            DateTime refreshedAtUtc)
+        {
+            return JsonSerializer.Serialize(new Dictionary<string, object>
+            {
+                { "schema_version", 1 },
+                { "credit_terms", SanitizeNames(creditTerms) },
+                { "shipping_methods", SanitizeNames(shippingMethods) },
+                { "refreshed_at", refreshedAtUtc.ToUniversalTime().ToString("o") }
+            });
+        }
+
+        private static List<string> SanitizeNames(IEnumerable<string> values)
+        {
+            var names = new List<string>();
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (string value in values ?? new string[0])
+            {
+                string name = (value ?? string.Empty).Trim();
+                if (name.Length > 0 && seen.Add(name))
+                {
+                    names.Add(name);
+                }
+            }
+            names.Sort(StringComparer.OrdinalIgnoreCase);
+            return names;
+        }
+
+        private static InvalidOperationException Unavailable()
+        {
+            return new InvalidOperationException(
+                "QuickBooks commercial terms are unavailable.");
+        }
+    }
+
+    public static class CustomerCommercialTermsHandler
+    {
+        private static readonly JavaScriptSerializer JsonSerializer = new JavaScriptSerializer();
+
+        public static string Handle(string json)
+        {
+            CustomerCommercialTermsRequest request = Parse(json);
+            try
+            {
+                using (var connection = new QuickBooksServiceConnection())
+                {
+                    return Handle(
+                        request.AccountNumber,
+                        request.Refresh,
+                        connection.Client.GetCustomerCommercialTerms);
+                }
+            }
+            catch (QuoteRequestParseException)
+            {
+                throw;
+            }
+            catch
+            {
+                throw Unavailable();
+            }
+        }
+
+        public static string Handle(
+            string accountNumber,
+            bool refresh,
+            Func<string, bool, QBStatusResponse<QBCustomerCommercialTerms>> fetch)
+        {
+            try
+            {
+                QBStatusResponse<QBCustomerCommercialTerms> response =
+                    fetch?.Invoke(accountNumber, refresh);
+                if (response == null || response.StatusCode != 0 || response.Data == null)
+                {
+                    throw Unavailable();
+                }
+
+                return JsonSerializer.Serialize(new Dictionary<string, object>
+                {
+                    { "schema_version", 1 },
+                    { "credit_terms", Clean(response.Data.CreditTerms) }
+                });
+            }
+            catch
+            {
+                throw Unavailable();
+            }
+        }
+
+        private static CustomerCommercialTermsRequest Parse(string json)
+        {
+            Dictionary<string, object> body;
+            try
+            {
+                body = JsonSerializer.DeserializeObject(json) as Dictionary<string, object>;
+            }
+            catch
+            {
+                throw new QuoteRequestParseException("Request body is not valid JSON.");
+            }
+
+            object accountValue;
+            string accountNumber = body != null && body.TryGetValue("account_number", out accountValue)
+                ? Convert.ToString(accountValue)
+                : null;
+            if (string.IsNullOrWhiteSpace(accountNumber))
+            {
+                throw new QuoteRequestParseException("account_number is required.");
+            }
+
+            object refreshValue;
+            bool refresh = body.TryGetValue("refresh", out refreshValue) &&
+                Convert.ToBoolean(refreshValue);
+            return new CustomerCommercialTermsRequest
+            {
+                AccountNumber = accountNumber.Trim(),
+                Refresh = refresh
+            };
+        }
+
+        private static string Clean(string value)
+        {
+            return (value ?? string.Empty).Trim();
+        }
+
+        private static InvalidOperationException Unavailable()
+        {
+            return new InvalidOperationException(
+                "QuickBooks customer commercial terms are unavailable.");
+        }
+
+        private sealed class CustomerCommercialTermsRequest
+        {
+            public string AccountNumber { get; set; }
+            public bool Refresh { get; set; }
+        }
+    }
 }

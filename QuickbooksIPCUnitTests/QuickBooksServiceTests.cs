@@ -331,5 +331,124 @@ namespace QuickBooksServiceLibrary.Tests
             // Arrange, Act & Assert
             Assert.Throws<ArgumentNullException>(() => new QuickBooksService(null));
         }
+
+        [Test]
+        public void CommercialTermsCache_FailedRefreshPreservesLastGoodCatalog()
+        {
+            Type cacheType = typeof(QuickBooksService).Assembly.GetType(
+                "QuickBooksIPCService.CommercialTermsCache");
+            Assert.IsNotNull(cacheType, "CommercialTermsCache must exist");
+            object cache = Activator.CreateInstance(cacheType);
+            var replace = cacheType.GetMethod("TryReplace");
+            var read = cacheType.GetMethod("Read");
+            Assert.IsNotNull(replace);
+            Assert.IsNotNull(read);
+
+            bool first = (bool)replace.Invoke(cache, new object[]
+            {
+                0,
+                new[] { "Prepaid", "Net 30" },
+                new[] { "UPS Ground" },
+                new DateTime(2026, 8, 13, 18, 0, 0, DateTimeKind.Utc)
+            });
+            bool failed = (bool)replace.Invoke(cache, new object[]
+            {
+                1,
+                new[] { "should not replace" },
+                new[] { "should not replace" },
+                new DateTime(2026, 8, 14, 18, 0, 0, DateTimeKind.Utc)
+            });
+            object snapshot = read.Invoke(cache, null);
+
+            Assert.IsTrue(first);
+            Assert.IsFalse(failed);
+            CollectionAssert.AreEqual(
+                new[] { "Prepaid", "Net 30" },
+                (IEnumerable<string>)snapshot.GetType().GetProperty("CreditTerms").GetValue(snapshot));
+            CollectionAssert.AreEqual(
+                new[] { "UPS Ground" },
+                (IEnumerable<string>)snapshot.GetType().GetProperty("ShippingMethods").GetValue(snapshot));
+            Assert.AreEqual(
+                new DateTime(2026, 8, 13, 18, 0, 0, DateTimeKind.Utc),
+                snapshot.GetType().GetProperty("RefreshedAtUtc").GetValue(snapshot));
+        }
+
+        [Test]
+        public void GetCommercialTerms_WithoutCachedCatalogReturnsGenericUnavailableResponse()
+        {
+            var method = typeof(QuickBooksService).GetMethod("GetCommercialTerms");
+            Assert.IsNotNull(method, "QuickBooksService.GetCommercialTerms must exist");
+
+            object response = method.Invoke(_service, null);
+
+            Assert.AreNotEqual(0, response.GetType().GetProperty("StatusCode").GetValue(response));
+            Assert.AreEqual(
+                "QuickBooks commercial terms are unavailable.",
+                response.GetType().GetProperty("StatusMessage").GetValue(response));
+            Assert.IsNull(response.GetType().GetProperty("Data").GetValue(response));
+        }
+
+        [Test]
+        public void GetCommercialTerms_LoadsAndCachesSanitizedQueryCatalog()
+        {
+            var refreshedAt = new DateTime(2026, 8, 13, 18, 0, 0, DateTimeKind.Utc);
+            var query = new Mock<ICommercialTermsQueryRequest>();
+            query.Setup(value => value.SendRequest()).Returns(
+                new QBStatusResponse<QBCommercialTermsCatalog>
+                {
+                    StatusCode = 0,
+                    StatusMessage = "Status OK",
+                    Data = new QBCommercialTermsCatalog
+                    {
+                        CreditTerms = new List<string> { "Prepaid", "Net 30" },
+                        ShippingMethods = new List<string> { "UPS Ground" },
+                        RefreshedAtUtc = refreshedAt
+                    }
+                });
+            _mockRequestFactory
+                .Setup(value => value.CreateCommercialTermsQueryRequest())
+                .Returns(query.Object);
+
+            QBStatusResponse<QBCommercialTermsCatalog> first = _service.GetCommercialTerms();
+            QBStatusResponse<QBCommercialTermsCatalog> cached = _service.GetCommercialTerms();
+
+            Assert.AreEqual(0, first.StatusCode);
+            CollectionAssert.AreEqual(new[] { "Prepaid", "Net 30" }, first.Data.CreditTerms);
+            CollectionAssert.AreEqual(new[] { "UPS Ground" }, first.Data.ShippingMethods);
+            Assert.AreEqual(refreshedAt, first.Data.RefreshedAtUtc);
+            Assert.AreEqual(0, cached.StatusCode);
+            query.Verify(value => value.SendRequest(), Times.Once);
+        }
+
+        [Test]
+        public void GetCustomerCommercialTerms_CachesAndFailedRefreshPreservesLastGoodValues()
+        {
+            var query = new Mock<ICustomerCommercialTermsQueryRequest>();
+            query.SetupSequence(value => value.SendRequest())
+                .Returns(new QBStatusResponse<QBCustomerCommercialTerms>
+                {
+                    StatusCode = 0,
+                    Data = new QBCustomerCommercialTerms
+                    {
+                        CreditTerms = "Net 30"
+                    }
+                })
+                .Throws(new InvalidOperationException("invented raw failure"));
+            _mockRequestFactory
+                .Setup(value => value.CreateCustomerCommercialTermsQueryRequest("EX-1042"))
+                .Returns(query.Object);
+
+            QBStatusResponse<QBCustomerCommercialTerms> first =
+                _service.GetCustomerCommercialTerms(" EX-1042 ", false);
+            QBStatusResponse<QBCustomerCommercialTerms> cached =
+                _service.GetCustomerCommercialTerms("EX-1042", false);
+            QBStatusResponse<QBCustomerCommercialTerms> refreshed =
+                _service.GetCustomerCommercialTerms("EX-1042", true);
+
+            Assert.AreEqual("Net 30", first.Data.CreditTerms);
+            Assert.AreEqual("Net 30", cached.Data.CreditTerms);
+            Assert.AreEqual("Net 30", refreshed.Data.CreditTerms);
+            query.Verify(value => value.SendRequest(), Times.Exactly(2));
+        }
     }
 }

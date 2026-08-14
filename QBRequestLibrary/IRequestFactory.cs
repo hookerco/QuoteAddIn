@@ -15,5 +15,8 @@ namespace QBRequestLibrary
         IEstimateRequest CreateEstimateRequest(QBOrder order);
         IAddItemNonInventoryRequest CreateAddItemNonInventoryRequest(List<QBItem> items);
         IAllItemNonInvQueryRequest CreateAllItemNonInvQueryRequest();
+        ICommercialTermsQueryRequest CreateCommercialTermsQueryRequest();
+        ICustomerCommercialTermsQueryRequest CreateCustomerCommercialTermsQueryRequest(
+            string accountNumber);
     }
 }

@@ -41,7 +41,12 @@ namespace QuickBooksServiceHost
             string origin = ReadString("QB_BRIDGE_ORIGIN", "http://APPSRV01:8742");
             string token = ReadString("QB_BRIDGE_TOKEN", string.Empty);
 
-            var router = new QuoteBridgeRouter(origin, token, SubmitQuoteHandler.Handle);
+            var router = new QuoteBridgeRouter(
+                origin,
+                token,
+                SubmitQuoteHandler.Handle,
+                CommercialTermsHandler.Handle,
+                CustomerCommercialTermsHandler.Handle);
 
             var listener = new HttpListener();
             listener.Prefixes.Add($"http://127.0.0.1:{port}/");

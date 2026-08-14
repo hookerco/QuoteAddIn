@@ -19,6 +19,14 @@ namespace QuickBooksIPCContracts
         QBStatusResponse<QBQuoteUploadResult> SubmitQuote(QBQuoteUploadRequest request);
 
         [OperationContract]
+        QBStatusResponse<QBCommercialTermsCatalog> GetCommercialTerms();
+
+        [OperationContract]
+        QBStatusResponse<QBCustomerCommercialTerms> GetCustomerCommercialTerms(
+            string accountNumber,
+            bool refresh);
+
+        [OperationContract]
         QBCustomer GetCustomer(string accountNumber);
 
         [OperationContract]

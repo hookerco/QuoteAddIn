@@ -12,6 +12,105 @@ using System.Diagnostics;
 
 namespace QuickBooksIPCService
 {
+    public sealed class CommercialTermsSnapshot
+    {
+        public List<string> CreditTerms { get; set; }
+        public List<string> ShippingMethods { get; set; }
+        public DateTime RefreshedAtUtc { get; set; }
+    }
+
+    public sealed class CommercialTermsCache
+    {
+        private readonly object _sync = new object();
+        private CommercialTermsSnapshot _snapshot;
+
+        public bool TryReplace(
+            int statusCode,
+            IEnumerable<string> creditTerms,
+            IEnumerable<string> shippingMethods,
+            DateTime refreshedAtUtc)
+        {
+            if (statusCode != 0 || creditTerms == null || shippingMethods == null)
+            {
+                return false;
+            }
+
+            var next = new CommercialTermsSnapshot
+            {
+                CreditTerms = new List<string>(creditTerms),
+                ShippingMethods = new List<string>(shippingMethods),
+                RefreshedAtUtc = refreshedAtUtc.ToUniversalTime()
+            };
+            lock (_sync)
+            {
+                _snapshot = next;
+            }
+            return true;
+        }
+
+        public CommercialTermsSnapshot Read()
+        {
+            lock (_sync)
+            {
+                if (_snapshot == null) return null;
+                return new CommercialTermsSnapshot
+                {
+                    CreditTerms = new List<string>(_snapshot.CreditTerms),
+                    ShippingMethods = new List<string>(_snapshot.ShippingMethods),
+                    RefreshedAtUtc = _snapshot.RefreshedAtUtc
+                };
+            }
+        }
+    }
+
+    public sealed class CustomerCommercialTermsCache
+    {
+        private readonly object _sync = new object();
+        private readonly Dictionary<string, QBCustomerCommercialTerms> _entries =
+            new Dictionary<string, QBCustomerCommercialTerms>(StringComparer.OrdinalIgnoreCase);
+
+        public bool TryReplace(
+            string accountNumber,
+            int statusCode,
+            QBCustomerCommercialTerms terms)
+        {
+            string key = Normalize(accountNumber);
+            if (key.Length == 0 || statusCode != 0 || terms == null)
+            {
+                return false;
+            }
+
+            lock (_sync)
+            {
+                _entries[key] = Copy(terms);
+            }
+            return true;
+        }
+
+        public QBCustomerCommercialTerms Read(string accountNumber)
+        {
+            string key = Normalize(accountNumber);
+            lock (_sync)
+            {
+                QBCustomerCommercialTerms terms;
+                return _entries.TryGetValue(key, out terms) ? Copy(terms) : null;
+            }
+        }
+
+        private static string Normalize(string value)
+        {
+            return (value ?? string.Empty).Trim();
+        }
+
+        private static QBCustomerCommercialTerms Copy(QBCustomerCommercialTerms source)
+        {
+            return new QBCustomerCommercialTerms
+            {
+                CreditTerms = source.CreditTerms
+            };
+        }
+    }
+
     [ServiceBehavior(InstanceContextMode = InstanceContextMode.Single)]
     public class QuickBooksService : IQuickBooksService
     {
@@ -19,6 +118,9 @@ namespace QuickBooksIPCService
         private static readonly Dictionary<string, QBStatusResponse<List<QBItem>>> _cache
             = new Dictionary<string, QBStatusResponse<List<QBItem>>>();
         private bool _cacheValid = false;
+        private readonly CommercialTermsCache _commercialTermsCache = new CommercialTermsCache();
+        private readonly CustomerCommercialTermsCache _customerCommercialTermsCache =
+            new CustomerCommercialTermsCache();
         private readonly Logger _logger;
         private bool _disposed = false;
 
@@ -79,6 +181,112 @@ namespace QuickBooksIPCService
         public string Ping()
         {
             return "Pong";
+        }
+
+        public QBStatusResponse<QBCommercialTermsCatalog> GetCommercialTerms()
+        {
+            CommercialTermsSnapshot snapshot = _commercialTermsCache.Read();
+            if (snapshot == null)
+            {
+                UpdateCommercialTermsCache();
+                snapshot = _commercialTermsCache.Read();
+            }
+            if (snapshot == null)
+            {
+                return new QBStatusResponse<QBCommercialTermsCatalog>
+                {
+                    StatusCode = 1,
+                    StatusMessage = "QuickBooks commercial terms are unavailable.",
+                    Data = null
+                };
+            }
+
+            return new QBStatusResponse<QBCommercialTermsCatalog>
+            {
+                StatusCode = 0,
+                StatusMessage = "OK",
+                Data = new QBCommercialTermsCatalog
+                {
+                    CreditTerms = snapshot.CreditTerms,
+                    ShippingMethods = snapshot.ShippingMethods,
+                    RefreshedAtUtc = snapshot.RefreshedAtUtc
+                }
+            };
+        }
+
+        public QBStatusResponse<QBCustomerCommercialTerms> GetCustomerCommercialTerms(
+            string accountNumber,
+            bool refresh)
+        {
+            string key = (accountNumber ?? string.Empty).Trim();
+            if (key.Length == 0)
+            {
+                return CustomerCommercialTermsUnavailable();
+            }
+
+            QBCustomerCommercialTerms cached = _customerCommercialTermsCache.Read(key);
+            if (refresh || cached == null)
+            {
+                try
+                {
+                    ICustomerCommercialTermsQueryRequest request =
+                        _requestFactory.CreateCustomerCommercialTermsQueryRequest(key);
+                    QBStatusResponse<QBCustomerCommercialTerms> response = request?.SendRequest();
+                    _customerCommercialTermsCache.TryReplace(
+                        key,
+                        response == null ? 1 : response.StatusCode,
+                        response?.Data);
+                }
+                catch
+                {
+                    _logger.LogError("QuickBooks customer commercial terms refresh failed.");
+                }
+                cached = _customerCommercialTermsCache.Read(key);
+            }
+
+            if (cached == null)
+            {
+                return CustomerCommercialTermsUnavailable();
+            }
+
+            return new QBStatusResponse<QBCustomerCommercialTerms>
+            {
+                StatusCode = 0,
+                StatusMessage = "OK",
+                Data = cached
+            };
+        }
+
+        private static QBStatusResponse<QBCustomerCommercialTerms>
+            CustomerCommercialTermsUnavailable()
+        {
+            return new QBStatusResponse<QBCustomerCommercialTerms>
+            {
+                StatusCode = 1,
+                StatusMessage = "QuickBooks customer commercial terms are unavailable.",
+                Data = null
+            };
+        }
+
+        private bool UpdateCommercialTermsCache()
+        {
+            try
+            {
+                ICommercialTermsQueryRequest request =
+                    _requestFactory.CreateCommercialTermsQueryRequest();
+                QBStatusResponse<QBCommercialTermsCatalog> response = request?.SendRequest();
+                QBCommercialTermsCatalog catalog = response?.Data;
+                return catalog != null && _commercialTermsCache.TryReplace(
+                    response.StatusCode,
+                    catalog.CreditTerms,
+                    catalog.ShippingMethods,
+                    catalog.RefreshedAtUtc);
+            }
+            catch
+            {
+                _logger.LogError("QuickBooks commercial terms refresh failed.");
+                return false;
+            }
         }
 
         public QBStatusResponse<string> AddOrder(QBOrder order)
@@ -399,6 +607,7 @@ namespace QuickBooksIPCService
             {
                 Thread.Sleep(ms_interval);
                 UpdateCache(background: true);
+                UpdateCommercialTermsCache();
             }
         }
 

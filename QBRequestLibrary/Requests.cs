@@ -454,4 +454,194 @@ namespace QBRequestLibrary
             };
         }
     }
+
+    public class CommercialTermsQueryRequest
+        : Request<object, QBStatusResponse<QBCommercialTermsCatalog>>,
+          ICommercialTermsQueryRequest
+    {
+        public CommercialTermsQueryRequest()
+        {
+            Set(null);
+        }
+
+        protected override void BuildRequest()
+        {
+            _msgSetRequest = _connection.SessionManager.CreateMsgSetRequest(
+                "US", QBSDKMajorVersion, QBSDKMinorVersion);
+            _msgSetRequest.Attributes.OnError = ENRqOnError.roeContinue;
+            BuildHelper();
+        }
+
+        protected override void BuildHelper()
+        {
+            ITermsQuery terms = _msgSetRequest.AppendTermsQueryRq();
+            terms.IncludeRetElementList.Add("Name");
+            terms.ORListQuery.ListFilter.ActiveStatus.SetValue(ENActiveStatus.asActiveOnly);
+
+            IShipMethodQuery shipping = _msgSetRequest.AppendShipMethodQueryRq();
+            shipping.IncludeRetElementList.Add("Name");
+            shipping.ORListQuery.ListFilter.ActiveStatus.SetValue(ENActiveStatus.asActiveOnly);
+        }
+
+        protected override QBStatusResponse<QBCommercialTermsCatalog> ConvertResponse(
+            IMsgSetResponse responseSet)
+        {
+            var result = new QBStatusResponse<QBCommercialTermsCatalog>
+            {
+                Data = new QBCommercialTermsCatalog
+                {
+                    CreditTerms = new List<string>(),
+                    ShippingMethods = new List<string>(),
+                    RefreshedAtUtc = DateTime.UtcNow
+                }
+            };
+            IResponseList responses = responseSet?.ResponseList;
+            if (responses == null || responses.Count == 0)
+            {
+                throw new InvalidResponseException("No responses received.");
+            }
+
+            for (int i = 0; i < responses.Count; ++i)
+            {
+                IResponse response = responses.GetAt(i);
+                ENResponseType type = (ENResponseType)response.Type.GetValue();
+                if (type == ENResponseType.rtTermsQueryRs)
+                {
+                    AppendTermNames(response.Detail as IORTermsRetList, result.Data.CreditTerms);
+                }
+                else if (type == ENResponseType.rtShipMethodQueryRs)
+                {
+                    AppendShipMethodNames(
+                        response.Detail as IShipMethodRetList,
+                        result.Data.ShippingMethods);
+                }
+                else
+                {
+                    throw new QBRequestLibraryRuntimeError("Unexpected response type.");
+                }
+
+                if (i == 0 || response.StatusCode != 0)
+                {
+                    result.StatusCode = response.StatusCode;
+                    result.StatusMessage = response.StatusMessage;
+                }
+            }
+            return result;
+        }
+
+        private static void AppendTermNames(IORTermsRetList list, List<string> names)
+        {
+            if (list == null) return;
+            for (int i = 0; i < list.Count; ++i)
+            {
+                IORTermsRet term = list.GetAt(i);
+                if (term?.StandardTermsRet?.Name != null)
+                {
+                    names.Add(term.StandardTermsRet.Name.GetValue());
+                }
+                else if (term?.DateDrivenTermsRet?.Name != null)
+                {
+                    names.Add(term.DateDrivenTermsRet.Name.GetValue());
+                }
+            }
+        }
+
+        private static void AppendShipMethodNames(
+            IShipMethodRetList list,
+            List<string> names)
+        {
+            if (list == null) return;
+            for (int i = 0; i < list.Count; ++i)
+            {
+                IShipMethodRet method = list.GetAt(i);
+                if (method?.Name != null)
+                {
+                    names.Add(method.Name.GetValue());
+                }
+            }
+        }
+    }
+
+    public class CustomerCommercialTermsQueryRequest
+        : Request<string, QBStatusResponse<QBCustomerCommercialTerms>>,
+          ICustomerCommercialTermsQueryRequest
+    {
+        public CustomerCommercialTermsQueryRequest(string accountNumber)
+        {
+            Set(accountNumber);
+        }
+
+        protected override void BuildHelper()
+        {
+            ICustomerQuery customers = _msgSetRequest.AppendCustomerQueryRq();
+            customers.IncludeRetElementList.Add("AccountNumber");
+            customers.IncludeRetElementList.Add("TermsRef");
+        }
+
+        protected override QBStatusResponse<QBCustomerCommercialTerms> ConvertResponse(
+            IMsgSetResponse responseSet)
+        {
+            IResponseList responses = responseSet?.ResponseList;
+            if (responses == null || responses.Count == 0)
+            {
+                throw new InvalidResponseException("No responses received.");
+            }
+
+            string creditTerms = null;
+            bool matchedCustomer = false;
+            int statusCode = 0;
+            string statusMessage = "OK";
+
+            for (int i = 0; i < responses.Count; ++i)
+            {
+                IResponse response = responses.GetAt(i);
+                if (response.StatusCode != 0)
+                {
+                    statusCode = response.StatusCode;
+                    statusMessage = response.StatusMessage;
+                    continue;
+                }
+
+                ENResponseType type = (ENResponseType)response.Type.GetValue();
+                if (type == ENResponseType.rtCustomerQueryRs)
+                {
+                    ICustomerRetList customers = response.Detail as ICustomerRetList;
+                    for (int j = 0; customers != null && j < customers.Count; ++j)
+                    {
+                        ICustomerRet customer = customers.GetAt(j);
+                        string accountNumber = customer?.AccountNumber?.GetValue();
+                        if (!string.Equals(
+                            accountNumber?.Trim(),
+                            _value?.Trim(),
+                            StringComparison.OrdinalIgnoreCase))
+                        {
+                            continue;
+                        }
+
+                        matchedCustomer = true;
+                        creditTerms = customer.TermsRef?.FullName?.GetValue();
+                        break;
+                    }
+                }
+            }
+
+            if (!matchedCustomer && statusCode == 0)
+            {
+                statusCode = 1;
+                statusMessage = "QuickBooks customer commercial terms are unavailable.";
+            }
+
+            return new QBStatusResponse<QBCustomerCommercialTerms>
+            {
+                StatusCode = statusCode,
+                StatusMessage = statusMessage,
+                Data = statusCode == 0
+                    ? new QBCustomerCommercialTerms
+                    {
+                        CreditTerms = creditTerms
+                    }
+                    : null
+            };
+        }
+    }
 }

@@ -30,6 +30,8 @@ namespace QuickBooksConnectorCore
         private readonly string _origin;
         private readonly string _token;
         private readonly Func<string, string> _submitHandler;
+        private readonly Func<string> _commercialTermsHandler;
+        private readonly Func<string, string> _customerCommercialTermsHandler;
 
         /// <param name="origin">The single allowed app-server origin echoed as Access-Control-Allow-Origin.</param>
         /// <param name="token">The shared secret required in the <c>X-QB-Bridge-Token</c> header.</param>
@@ -37,10 +39,43 @@ namespace QuickBooksConnectorCore
         /// (see <see cref="SubmitQuoteHandler.Handle(string)"/>); may throw
         /// <see cref="QuoteRequestParseException"/> for a malformed body.</param>
         public QuoteBridgeRouter(string origin, string token, Func<string, string> submitHandler)
+            : this(
+                origin,
+                token,
+                submitHandler,
+                CommercialTermsHandler.Handle,
+                CustomerCommercialTermsHandler.Handle)
+        {
+        }
+
+        public QuoteBridgeRouter(
+            string origin,
+            string token,
+            Func<string, string> submitHandler,
+            Func<string> commercialTermsHandler)
+            : this(
+                origin,
+                token,
+                submitHandler,
+                commercialTermsHandler,
+                CustomerCommercialTermsHandler.Handle)
+        {
+        }
+
+        public QuoteBridgeRouter(
+            string origin,
+            string token,
+            Func<string, string> submitHandler,
+            Func<string> commercialTermsHandler,
+            Func<string, string> customerCommercialTermsHandler)
         {
             _origin = origin ?? string.Empty;
             _token = token ?? string.Empty;
             _submitHandler = submitHandler ?? throw new ArgumentNullException(nameof(submitHandler));
+            _commercialTermsHandler = commercialTermsHandler ??
+                throw new ArgumentNullException(nameof(commercialTermsHandler));
+            _customerCommercialTermsHandler = customerCommercialTermsHandler ??
+                throw new ArgumentNullException(nameof(customerCommercialTermsHandler));
         }
 
         public BridgeHttpResponse Route(string method, string path, string token, string body)
@@ -73,6 +108,46 @@ namespace QuickBooksConnectorCore
                     string.Equals(method, "POST", StringComparison.OrdinalIgnoreCase)))
             {
                 return Json(200, headers, "{\"status\":\"authorized\"}");
+            }
+
+            if (path == "/commercial-terms" &&
+                string.Equals(method, "GET", StringComparison.OrdinalIgnoreCase))
+            {
+                try
+                {
+                    return Json(200, headers, _commercialTermsHandler());
+                }
+                catch
+                {
+                    return Json(
+                        502,
+                        headers,
+                        ErrorBody(
+                            "bridge_error",
+                            "QuickBooks commercial terms are unavailable."));
+                }
+            }
+
+            if (path == "/customer-commercial-terms" &&
+                string.Equals(method, "POST", StringComparison.OrdinalIgnoreCase))
+            {
+                try
+                {
+                    return Json(200, headers, _customerCommercialTermsHandler(body));
+                }
+                catch (QuoteRequestParseException ex)
+                {
+                    return Json(400, headers, ErrorBody("bad_request", ex.Message));
+                }
+                catch
+                {
+                    return Json(
+                        502,
+                        headers,
+                        ErrorBody(
+                            "bridge_error",
+                            "QuickBooks customer commercial terms are unavailable."));
+                }
             }
 
             if (path == "/submit-quote" && string.Equals(method, "POST", StringComparison.OrdinalIgnoreCase))

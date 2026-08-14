@@ -39,6 +39,17 @@ namespace QBRequestLibrary
         {
             return new AllItemNonInvQueryRequest();
         }
+
+        public ICommercialTermsQueryRequest CreateCommercialTermsQueryRequest()
+        {
+            return new CommercialTermsQueryRequest();
+        }
+
+        public ICustomerCommercialTermsQueryRequest CreateCustomerCommercialTermsQueryRequest(
+            string accountNumber)
+        {
+            return new CustomerCommercialTermsQueryRequest(accountNumber);
+        }
     }
 }
 

@@ -132,6 +132,26 @@ namespace QuickBooksIPCContracts
     }
 
     [DataContract]
+    public class QBCommercialTermsCatalog
+    {
+        [DataMember]
+        public List<string> CreditTerms { get; set; }
+
+        [DataMember]
+        public List<string> ShippingMethods { get; set; }
+
+        [DataMember]
+        public DateTime RefreshedAtUtc { get; set; }
+    }
+
+    [DataContract]
+    public class QBCustomerCommercialTerms
+    {
+        [DataMember]
+        public string CreditTerms { get; set; }
+    }
+
+    [DataContract]
     public class QBCustomer
     {
         [DataMember]

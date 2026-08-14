@@ -19,5 +19,11 @@ namespace QBRequestLibrary
     public interface IAddItemNonInventoryRequest : IRequest<List<QBItem>, List<QBStatusResponse<string>>> { }
 
     public interface IAllItemNonInvQueryRequest : IRequest<object, QBStatusResponse<List<QBItem>>> { }
+
+    public interface ICommercialTermsQueryRequest
+        : IRequest<object, QBStatusResponse<QBCommercialTermsCatalog>> { }
+
+    public interface ICustomerCommercialTermsQueryRequest
+        : IRequest<string, QBStatusResponse<QBCustomerCommercialTerms>> { }
 }
 

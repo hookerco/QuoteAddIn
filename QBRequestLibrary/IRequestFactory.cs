@@ -16,6 +16,9 @@ namespace QBRequestLibrary
         IEstimateRequest CreateEstimateRequest(QBOrder order);
         IEstimateRequest CreateEstimateRequest(QBOrder order, string approvedCompanyFingerprint);
         IEstimateReferenceQueryRequest CreateEstimateReferenceQueryRequest(string reference);
+        IEstimateReferenceQueryRequest CreateEstimateReferenceQueryRequest(
+            string reference,
+            string approvedCompanyFingerprint);
         IAddItemNonInventoryRequest CreateAddItemNonInventoryRequest(List<QBItem> items);
         IAddItemNonInventoryRequest CreateAddItemNonInventoryRequest(
             List<QBItem> items,

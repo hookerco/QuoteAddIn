@@ -285,7 +285,7 @@ namespace QuickBooksServiceLibrary.Tests
             {
                 QuoteKind = "normal",
                 TransactionType = QBQuoteTransactionType.SalesOrder,
-                QuoteNumber = "Q-100",
+                QuoteNumber = "120100",
                 Customer = new QBCustomer { Name = "CustomerName" },
                 CustomerPO = "PO-100",
                 DueDate = new DateTime(2026, 6, 16),
@@ -330,7 +330,7 @@ namespace QuickBooksServiceLibrary.Tests
             _mockRequestFactory
                 .Setup(f => f.CreateSalesOrderRequest(
                     It.Is<QBOrder>(order =>
-                        order.QuoteNumber == "Q-100" &&
+                        order.QuoteNumber == "120100" &&
                         order.Customer.Name == "CustomerName" &&
                         order.Customer.PO == "PO-100" &&
                         order.DueDate == new DateTime(2026, 6, 16) &&
@@ -348,7 +348,7 @@ namespace QuickBooksServiceLibrary.Tests
             Assert.AreEqual("OK", result.StatusMessage);
             Assert.AreEqual(QBQuoteTransactionType.SalesOrder, result.Data.TransactionType);
             Assert.AreEqual("CustomerName", result.Data.CustomerName);
-            Assert.AreEqual("Q-100", result.Data.QuoteNumber);
+            Assert.AreEqual("120100", result.Data.QuoteNumber);
             Assert.AreEqual("TXN-SO-1", result.Data.TransactionId);
             Assert.AreEqual("SO-9001", result.Data.AssignedReference);
             Assert.AreEqual("1-1000", result.Data.Lines[0].Number);
@@ -368,7 +368,7 @@ namespace QuickBooksServiceLibrary.Tests
             {
                 QuoteKind = "normal",
                 TransactionType = QBQuoteTransactionType.Estimate,
-                QuoteNumber = "Q-404",
+                QuoteNumber = "120404",
                 CustomerAccountNumber = "404",
                 Lines = new List<QBQuoteUploadLine>
                 {
@@ -407,7 +407,7 @@ namespace QuickBooksServiceLibrary.Tests
             {
                 QuoteKind = "normal",
                 TransactionType = (QBQuoteTransactionType)999,
-                QuoteNumber = "Q-999",
+                QuoteNumber = "120999",
                 Customer = new QBCustomer { Name = "CustomerName" },
                 DueDate = new DateTime(2026, 6, 16),
                 Lines = new List<QBQuoteUploadLine>
@@ -442,7 +442,7 @@ namespace QuickBooksServiceLibrary.Tests
             {
                 QuoteKind = "normal",
                 TransactionType = QBQuoteTransactionType.SalesOrder,
-                QuoteNumber = "Q-NODATE",
+                QuoteNumber = "120998",
                 Customer = new QBCustomer { Name = "CustomerName" },
                 DueDate = DateTime.MinValue,
                 Lines = new List<QBQuoteUploadLine>
@@ -476,7 +476,7 @@ namespace QuickBooksServiceLibrary.Tests
             const string payload =
                 "{\"quote_kind\":\"test\",\"confirmed_transaction_id\":\"TXN-CONFIRMED\"," +
                 "\"approved_test_company_fingerprints\":[\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"]," +
-                "\"transaction_type\":\"Estimate\",\"quote_number\":\"TEST-ABC123\"," +
+                "\"transaction_type\":\"Estimate\",\"quote_number\":\"TEST-ABC234\"," +
                 "\"customer\":{\"name\":\"Synthetic Customer\"}," +
                 "\"lines\":[{\"description\":\"Synthetic item\",\"quantity\":1,\"rate\":10}]}";
 
@@ -606,7 +606,7 @@ namespace QuickBooksServiceLibrary.Tests
                 QuickBooksService.FingerprintCompanyFileName(companyPath)
             };
             string writeFingerprint = request.ApprovedTestCompanyFingerprints[0];
-            ArrangeEstimateQuery(calls, request.QuoteNumber, null);
+            ArrangeEstimateQuery(calls, request.QuoteNumber, null, writeFingerprint);
             ArrangeCustomerAndItems(calls, request);
             ArrangeEstimateAdd(calls, "TXN-EST-1", request.QuoteNumber, writeFingerprint);
 
@@ -618,6 +618,56 @@ namespace QuickBooksServiceLibrary.Tests
             CollectionAssert.AreEqual(
                 new[] { "company", "estimate-query", "customer", "items", "estimate-add" },
                 calls);
+        }
+
+        [Test]
+        public void QuoteWriteSafety_TestEstimateExactQueryIsBoundAcrossAtoBtoARace()
+        {
+            var calls = new List<string>();
+            const string companyA = @"C:\Synthetic\Approved Company A.qbw";
+            const string companyB = @"C:\Synthetic\Other Company B.qbw";
+            string currentCompany = companyA;
+            QuickBooksService service = ServiceWithCompany(
+                () =>
+                {
+                    calls.Add("preflight-A");
+                    return currentCompany;
+                });
+            QBQuoteUploadRequest request = QuoteRequest(QBQuoteTransactionType.Estimate, "test");
+            string approvedFingerprint =
+                QuickBooksService.FingerprintCompanyFileName(companyA);
+            request.ApprovedTestCompanyFingerprints = new List<string>
+            {
+                approvedFingerprint
+            };
+
+            var query = new Mock<IEstimateReferenceQueryRequest>();
+            query.Setup(value => value.SendRequest())
+                .Callback(() =>
+                {
+                    currentCompany = companyB;
+                    calls.Add("query-session-B");
+                    currentCompany = companyA;
+                })
+                .Throws(new QBRequestLibraryRuntimeError(
+                    "QuickBooks company verification failed."));
+            _mockRequestFactory.Setup(value => value.CreateEstimateReferenceQueryRequest(
+                    request.QuoteNumber,
+                    approvedFingerprint))
+                .Returns(query.Object);
+
+            QBStatusResponse<QBQuoteUploadResult> result = service.SubmitQuote(request);
+
+            Assert.AreEqual(1, result.StatusCode);
+            Assert.AreEqual(
+                "QuickBooks Estimate preflight is unavailable.",
+                result.StatusMessage);
+            CollectionAssert.AreEqual(new[] { "preflight-A", "query-session-B" }, calls);
+            _mockRequestFactory.Verify(value => value.CreateEstimateReferenceQueryRequest(
+                    request.QuoteNumber,
+                    approvedFingerprint),
+                Times.Once);
+            AssertNoCustomerItemOrTransactionWrites();
         }
 
         [Test]
@@ -706,7 +756,7 @@ namespace QuickBooksServiceLibrary.Tests
             QBQuoteUploadRequest request = QuoteRequest(QBQuoteTransactionType.Estimate, "test");
             request.ApprovedTestCompanyFingerprints = new List<string> { writeFingerprint };
             request.Lines[0].OverrideNumber = "1-NEW";
-            ArrangeEstimateQuery(calls, request.QuoteNumber, null);
+            ArrangeEstimateQuery(calls, request.QuoteNumber, null, writeFingerprint);
 
             var customer = new Mock<ICustomerAccountNumberQueryRequest>();
             customer.Setup(value => value.SendRequest())
@@ -934,6 +984,48 @@ namespace QuickBooksServiceLibrary.Tests
             AssertNoQuoteLookupsOrWrites();
         }
 
+        [TestCase("normal", "1", true)]
+        [TestCase("normal", "99999999999", true)]
+        [TestCase("normal", "0", false)]
+        [TestCase("normal", "100000000000", false)]
+        [TestCase("normal", "\u0661", false)]
+        [TestCase("test", "TEST-ABC234", true)]
+        [TestCase("test", "test-ABC234", false)]
+        [TestCase("test", "TEST-ABC23", false)]
+        [TestCase("test", "TEST-ABC230", false)]
+        public void QuoteIdentityBoundary_SubmitQuoteValidatesKindReferencePair(
+            string quoteKind,
+            string quoteNumber,
+            bool valid)
+        {
+            QuickBooksService service = ServiceWithCompany(
+                () => throw new AssertionException(
+                    "Identity validation must run before QuickBooks."));
+            QBQuoteUploadRequest request = QuoteRequest(
+                QBQuoteTransactionType.SalesOrder,
+                quoteKind);
+            request.QuoteNumber = quoteNumber;
+            request.Lines = null;
+
+            QBStatusResponse<QBQuoteUploadResult> result = service.SubmitQuote(request);
+
+            Assert.AreEqual(1, result.StatusCode);
+            Assert.AreEqual(
+                valid
+                    ? "Quote upload request must include at least one line"
+                    : "Quote upload request QuoteNumber does not match QuoteKind",
+                result.StatusMessage);
+            AssertNoQuoteLookupsOrWrites();
+        }
+
+        [Test]
+        public void QuoteWriteSafety_ExactEstimateQueryFactorySupportsCompanyBinding()
+        {
+            Assert.IsNotNull(typeof(IRequestFactory).GetMethod(
+                "CreateEstimateReferenceQueryRequest",
+                new[] { typeof(string), typeof(string) }));
+        }
+
         private QuickBooksService ServiceWithCompany(Func<string> currentCompanyFileName)
         {
             return new QuickBooksService(
@@ -951,8 +1043,7 @@ namespace QuickBooksServiceLibrary.Tests
             {
                 QuoteKind = quoteKind,
                 TransactionType = transactionType,
-                QuoteNumber = transactionType == QBQuoteTransactionType.Estimate
-                    ? "TEST-ABC123" : "TEST-SO1234",
+                QuoteNumber = quoteKind == "test" ? "TEST-ABC234" : "120050",
                 CustomerAccountNumber = "SYNTHETIC-100",
                 CustomerName = "Synthetic Customer",
                 CustomerPO = "PO-SYNTHETIC",
@@ -972,7 +1063,8 @@ namespace QuickBooksServiceLibrary.Tests
         private void ArrangeEstimateQuery(
             List<string> calls,
             string reference,
-            QBEstimateReference match)
+            QBEstimateReference match,
+            string approvedCompanyFingerprint = null)
         {
             var query = new Mock<IEstimateReferenceQueryRequest>();
             query.Setup(value => value.SendRequest())
@@ -985,9 +1077,20 @@ namespace QuickBooksServiceLibrary.Tests
                         ? new List<QBEstimateReference>()
                         : new List<QBEstimateReference> { match }
                 });
-            _mockRequestFactory
-                .Setup(value => value.CreateEstimateReferenceQueryRequest(reference))
-                .Returns(query.Object);
+            if (approvedCompanyFingerprint == null)
+            {
+                _mockRequestFactory
+                    .Setup(value => value.CreateEstimateReferenceQueryRequest(reference))
+                    .Returns(query.Object);
+            }
+            else
+            {
+                _mockRequestFactory
+                    .Setup(value => value.CreateEstimateReferenceQueryRequest(
+                        reference,
+                        approvedCompanyFingerprint))
+                    .Returns(query.Object);
+            }
         }
 
         private void ArrangeCustomerAndItems(List<string> calls, QBQuoteUploadRequest request)

@@ -577,7 +577,11 @@ namespace QuickBooksIPCService
             QBStatusResponse<List<QBEstimateReference>> references;
             try
             {
-                references = GetEstimateReferenceMatches(request.QuoteNumber);
+                references = approvedWriteFingerprint == null
+                    ? GetEstimateReferenceMatches(request.QuoteNumber)
+                    : _requestFactory.CreateEstimateReferenceQueryRequest(
+                        request.QuoteNumber,
+                        approvedWriteFingerprint).SendRequest();
             }
             catch
             {
@@ -703,6 +707,11 @@ namespace QuickBooksIPCService
                 return "Quote upload request requires a QuoteNumber";
             }
 
+            if (!QuoteIdentityMatchesKind(request.QuoteKind, request.QuoteNumber))
+            {
+                return "Quote upload request QuoteNumber does not match QuoteKind";
+            }
+
             if (request.TransactionType == QBQuoteTransactionType.SalesOrder &&
                 request.DueDate == DateTime.MinValue)
             {
@@ -744,6 +753,44 @@ namespace QuickBooksIPCService
             }
 
             return null;
+        }
+
+        private static bool QuoteIdentityMatchesKind(string quoteKind, string quoteNumber)
+        {
+            if (quoteKind == "normal")
+            {
+                if (quoteNumber.Length == 0 || quoteNumber.Length > 11)
+                {
+                    return false;
+                }
+                bool anyNonZero = false;
+                foreach (char character in quoteNumber)
+                {
+                    if (character < '0' || character > '9')
+                    {
+                        return false;
+                    }
+                    anyNonZero |= character != '0';
+                }
+                return anyNonZero;
+            }
+
+            if (quoteKind != "test" ||
+                quoteNumber.Length != 11 ||
+                !quoteNumber.StartsWith("TEST-", StringComparison.Ordinal))
+            {
+                return false;
+            }
+            for (int index = 5; index < quoteNumber.Length; ++index)
+            {
+                char character = quoteNumber[index];
+                if (!((character >= 'A' && character <= 'Z') ||
+                      (character >= '2' && character <= '7')))
+                {
+                    return false;
+                }
+            }
+            return true;
         }
 
         private QBCustomer ResolveQuoteUploadCustomer(QBQuoteUploadRequest request)

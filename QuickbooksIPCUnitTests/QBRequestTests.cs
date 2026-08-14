@@ -54,6 +54,7 @@ namespace QuickBooksServiceLibrary.Tests
 
         [TestCase("item")]
         [TestCase("estimate")]
+        [TestCase("estimate-query")]
         [TestCase("sales-order")]
         public void QuoteWriteSafety_WriteRequestRechecksCompanyBeforeBuildOrDoRequests(
             string requestKind)
@@ -81,15 +82,23 @@ namespace QuickBooksServiceLibrary.Tests
             else if (requestKind == "estimate")
             {
                 var request = new TestableEstimateRequest(
-                    CreateOrder("TEST-ABC123"),
+                    CreateOrder("TEST-ABC234"),
+                    approvedFingerprint,
+                    connection);
+                send = () => request.SendRequest();
+            }
+            else if (requestKind == "sales-order")
+            {
+                var request = new TestableSalesOrderRequest(
+                    CreateOrder("TEST-DEF567"),
                     approvedFingerprint,
                     connection);
                 send = () => request.SendRequest();
             }
             else
             {
-                var request = new TestableSalesOrderRequest(
-                    CreateOrder("TEST-SO1234"),
+                var request = new TestableEstimateReferenceQueryRequest(
+                    "TEST-ABC234",
                     approvedFingerprint,
                     connection);
                 send = () => request.SendRequest();
@@ -652,6 +661,17 @@ namespace QuickBooksServiceLibrary.Tests
                 GC.SuppressFinalize(_connection);
             }
 
+            public TestableEstimateReferenceQueryRequest(
+                string reference,
+                string approvedCompanyFingerprint,
+                Connection connection)
+                : base(reference, approvedCompanyFingerprint)
+            {
+                GC.SuppressFinalize(_connection);
+                _connection = connection;
+                GC.SuppressFinalize(this);
+            }
+
             public void BuildInto(IMsgSetRequest msgSetRequest)
             {
                 _msgSetRequest = msgSetRequest;
@@ -670,7 +690,7 @@ namespace QuickBooksServiceLibrary.Tests
             private readonly string _message;
 
             public FailingEstimateReferenceQueryRequest(string message)
-                : base("TEST-ABC123")
+                : base("TEST-ABC234")
             {
                 _message = message;
                 GC.SuppressFinalize(this);

@@ -49,6 +49,13 @@ namespace QBRequestLibrary
             return new EstimateReferenceQueryRequest(reference);
         }
 
+        public IEstimateReferenceQueryRequest CreateEstimateReferenceQueryRequest(
+            string reference,
+            string approvedCompanyFingerprint)
+        {
+            return new EstimateReferenceQueryRequest(reference, approvedCompanyFingerprint);
+        }
+
         public IAddItemNonInventoryRequest CreateAddItemNonInventoryRequest(List<QBItem> items)
         {
             return new AddItemNonInventoryRequest(items);

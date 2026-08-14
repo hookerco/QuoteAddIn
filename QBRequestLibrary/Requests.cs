@@ -358,8 +358,16 @@ namespace QBRequestLibrary
           IEstimateReferenceQueryRequest
     {
         public EstimateReferenceQueryRequest(string reference)
+            : this(reference, null)
+        {
+        }
+
+        public EstimateReferenceQueryRequest(
+            string reference,
+            string approvedCompanyFingerprint)
         {
             Set(reference ?? string.Empty);
+            RequireCompanyFingerprint(approvedCompanyFingerprint);
         }
 
         protected override string FailureLogMessage(Exception error)

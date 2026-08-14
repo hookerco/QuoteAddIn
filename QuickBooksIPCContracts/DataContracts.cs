@@ -92,6 +92,15 @@ namespace QuickBooksIPCContracts
     public class QBQuoteUploadRequest
     {
         [DataMember]
+        public string QuoteKind { get; set; }
+
+        [DataMember]
+        public List<string> ApprovedTestCompanyFingerprints { get; set; }
+
+        [DataMember]
+        public string ConfirmedTransactionId { get; set; }
+
+        [DataMember]
         public QBQuoteTransactionType TransactionType { get; set; }
 
         [DataMember]

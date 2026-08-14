@@ -9,6 +9,9 @@ using System.Data.SqlClient;
 using System.Threading.Tasks;
 using System.Threading;
 using System.Diagnostics;
+using System.IO;
+using System.Security.Cryptography;
+using System.Text;
 
 namespace QuickBooksIPCService
 {
@@ -135,19 +138,29 @@ namespace QuickBooksIPCService
         private readonly CustomerCommercialTermsCache _customerCommercialTermsCache =
             new CustomerCommercialTermsCache();
         private readonly Logger _logger;
+        private readonly Func<string> _currentCompanyFileName;
         private bool _disposed = false;
 
         public QuickBooksService(IRequestFactory requestFactory)
+            : this(requestFactory, new Logger(), CurrentCompanyFileName, initialize: true)
         {
-            _requestFactory = requestFactory ?? throw new ArgumentNullException(nameof(requestFactory));
-            _logger = new Logger();
-            _initialize();
         }
 
         public QuickBooksService(IRequestFactory requestFactory, Logger logger, bool initialize = true)
+            : this(requestFactory, logger, CurrentCompanyFileName, initialize)
+        {
+        }
+
+        public QuickBooksService(
+            IRequestFactory requestFactory,
+            Logger logger,
+            Func<string> currentCompanyFileName,
+            bool initialize = true)
         {
             _requestFactory = requestFactory ?? throw new ArgumentNullException(nameof(requestFactory));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+            _currentCompanyFileName = currentCompanyFileName ??
+                throw new ArgumentNullException(nameof(currentCompanyFileName));
             if (initialize)
             {
                 _initialize();
@@ -155,8 +168,56 @@ namespace QuickBooksIPCService
         }
 
         public QuickBooksService()
-            : this(new RequestFactory(), new Logger())
+            : this(new RequestFactory(), new Logger(), CurrentCompanyFileName, initialize: true)
         {
+        }
+
+        private static string CurrentCompanyFileName()
+        {
+            var connection = new Connection();
+            bool opened = false;
+            try
+            {
+                opened = connection.Open();
+                return connection.CurrentCompanyFileName;
+            }
+            finally
+            {
+                try
+                {
+                    if (opened)
+                    {
+                        connection.Close();
+                    }
+                }
+                finally
+                {
+                    GC.SuppressFinalize(connection);
+                }
+            }
+        }
+
+        public static string FingerprintCompanyFileName(string companyFileName)
+        {
+            if (string.IsNullOrWhiteSpace(companyFileName))
+            {
+                throw new ArgumentException("A company filename is required.", nameof(companyFileName));
+            }
+
+            string normalized = Path.GetFullPath(companyFileName.Trim())
+                .Replace('/', '\\')
+                .TrimEnd('\\')
+                .ToUpperInvariant();
+            using (SHA256 sha256 = SHA256.Create())
+            {
+                byte[] hash = sha256.ComputeHash(Encoding.UTF8.GetBytes(normalized));
+                var fingerprint = new StringBuilder(hash.Length * 2);
+                foreach (byte value in hash)
+                {
+                    fingerprint.Append(value.ToString("x2"));
+                }
+                return fingerprint.ToString();
+            }
         }
 
         private void _initialize()
@@ -371,6 +432,12 @@ namespace QuickBooksIPCService
                 return Failure(validationError);
             }
 
+            QBStatusResponse<QBQuoteUploadResult> preflight = PreflightQuoteUpload(request);
+            if (preflight != null)
+            {
+                return preflight;
+            }
+
             QBCustomer customer = ResolveQuoteUploadCustomer(request);
             if (customer == null)
             {
@@ -452,6 +519,125 @@ namespace QuickBooksIPCService
             };
         }
 
+        private QBStatusResponse<QBQuoteUploadResult> PreflightQuoteUpload(
+            QBQuoteUploadRequest request)
+        {
+            if (request.QuoteKind == "test")
+            {
+                string fingerprint;
+                try
+                {
+                    fingerprint = FingerprintCompanyFileName(_currentCompanyFileName());
+                }
+                catch
+                {
+                    _logger.LogError("Test quote company verification failed.");
+                    return Failure("Test quote cannot be submitted to this QuickBooks company.");
+                }
+
+                if (!IsApprovedCompanyFingerprint(
+                    request.ApprovedTestCompanyFingerprints,
+                    fingerprint))
+                {
+                    _logger.LogError("Test quote company verification failed.");
+                    return Failure("Test quote cannot be submitted to this QuickBooks company.");
+                }
+            }
+
+            if (request.TransactionType != QBQuoteTransactionType.Estimate)
+            {
+                return null;
+            }
+
+            QBStatusResponse<QBEstimateReference> reference;
+            try
+            {
+                reference = GetEstimateReference(request.QuoteNumber);
+            }
+            catch
+            {
+                _logger.LogError("QuickBooks Estimate preflight failed.");
+                return Failure("QuickBooks Estimate preflight is unavailable.");
+            }
+
+            if (reference == null || reference.StatusCode != 0)
+            {
+                _logger.LogError("QuickBooks Estimate preflight failed.");
+                return Failure("QuickBooks Estimate preflight is unavailable.");
+            }
+
+            if (reference.Data == null)
+            {
+                return null;
+            }
+
+            if (!string.IsNullOrWhiteSpace(request.ConfirmedTransactionId) &&
+                string.Equals(
+                    request.ConfirmedTransactionId,
+                    reference.Data.TransactionId,
+                    StringComparison.Ordinal))
+            {
+                return new QBStatusResponse<QBQuoteUploadResult>
+                {
+                    StatusCode = 0,
+                    StatusMessage = "Estimate was already submitted.",
+                    Data = new QBQuoteUploadResult
+                    {
+                        TransactionType = request.TransactionType,
+                        QuoteNumber = request.QuoteNumber,
+                        TransactionId = reference.Data.TransactionId,
+                        AssignedReference = request.QuoteNumber,
+                        Lines = new List<QBQuoteUploadResolvedLine>()
+                    }
+                };
+            }
+
+            return Failure("QuickBooks Estimate reconciliation is required.");
+        }
+
+        private static bool IsApprovedCompanyFingerprint(
+            List<string> approvedFingerprints,
+            string currentFingerprint)
+        {
+            if (approvedFingerprints == null || approvedFingerprints.Count == 0)
+            {
+                return false;
+            }
+
+            bool matched = false;
+            foreach (string approved in approvedFingerprints)
+            {
+                if (!IsSha256Fingerprint(approved))
+                {
+                    return false;
+                }
+                matched |= string.Equals(
+                    approved,
+                    currentFingerprint,
+                    StringComparison.OrdinalIgnoreCase);
+            }
+            return matched;
+        }
+
+        private static bool IsSha256Fingerprint(string value)
+        {
+            if (value == null || value.Length != 64)
+            {
+                return false;
+            }
+
+            foreach (char character in value)
+            {
+                if (!((character >= '0' && character <= '9') ||
+                      (character >= 'a' && character <= 'f') ||
+                      (character >= 'A' && character <= 'F')))
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
         public QBCustomer GetCustomer(string accountNumber)
         {
             var req = _requestFactory.CreateCustomerQueryRequest(accountNumber);
@@ -477,6 +663,16 @@ namespace QuickBooksIPCService
                 request.TransactionType != QBQuoteTransactionType.SalesOrder)
             {
                 return "Quote upload request TransactionType must be Estimate or SalesOrder";
+            }
+
+            if (request.QuoteKind != "normal" && request.QuoteKind != "test")
+            {
+                return "Quote upload request QuoteKind must be normal or test";
+            }
+
+            if (string.IsNullOrWhiteSpace(request.QuoteNumber))
+            {
+                return "Quote upload request requires a QuoteNumber";
             }
 
             if (request.TransactionType == QBQuoteTransactionType.SalesOrder &&

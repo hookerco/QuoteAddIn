@@ -2,6 +2,7 @@
 using NUnit.Framework;
 using Moq;
 using QBRequestLibrary;
+using QuickBooksConnectorCore;
 using QuickBooksIPCContracts;
 using QuickBooksIPCService;
 using System;
@@ -15,13 +16,17 @@ namespace QuickBooksServiceLibrary.Tests
     {
         private Mock<IRequestFactory> _mockRequestFactory;
         private QuickBooksService _service;
+        private string _logPath;
 
         [SetUp]
         public void Setup()
         {
             _mockRequestFactory = new Mock<IRequestFactory>();
-            var logPath = Path.Combine(TestContext.CurrentContext.WorkDirectory, "logs", "QuickBooksServiceTests.log");
-            _service = new QuickBooksService(_mockRequestFactory.Object, new Logger(logPath), initialize: false);
+            _logPath = Path.Combine(
+                TestContext.CurrentContext.WorkDirectory,
+                "logs",
+                Guid.NewGuid().ToString("N") + ".log");
+            _service = new QuickBooksService(_mockRequestFactory.Object, new Logger(_logPath), initialize: false);
         }
 
         [Test]
@@ -236,6 +241,7 @@ namespace QuickBooksServiceLibrary.Tests
             _service.InvalidateAllItemsCache();
             var request = new QBQuoteUploadRequest
             {
+                QuoteKind = "normal",
                 TransactionType = QBQuoteTransactionType.SalesOrder,
                 QuoteNumber = "Q-100",
                 Customer = new QBCustomer { Name = "CustomerName" },
@@ -312,6 +318,7 @@ namespace QuickBooksServiceLibrary.Tests
         {
             var request = new QBQuoteUploadRequest
             {
+                QuoteKind = "normal",
                 TransactionType = QBQuoteTransactionType.Estimate,
                 QuoteNumber = "Q-404",
                 CustomerAccountNumber = "404",
@@ -326,6 +333,7 @@ namespace QuickBooksServiceLibrary.Tests
             _mockRequestFactory
                 .Setup(f => f.CreateCustomerAccountNumberQueryRequest("404"))
                 .Returns(mockCustomerRequest.Object);
+            ArrangeEstimateQuery(new List<string>(), request.QuoteNumber, null);
 
             QBStatusResponse<QBQuoteUploadResult> result = _service.SubmitQuote(request);
 
@@ -345,6 +353,7 @@ namespace QuickBooksServiceLibrary.Tests
         {
             var request = new QBQuoteUploadRequest
             {
+                QuoteKind = "normal",
                 TransactionType = (QBQuoteTransactionType)999,
                 QuoteNumber = "Q-999",
                 Customer = new QBCustomer { Name = "CustomerName" },
@@ -371,6 +380,7 @@ namespace QuickBooksServiceLibrary.Tests
         {
             var request = new QBQuoteUploadRequest
             {
+                QuoteKind = "normal",
                 TransactionType = QBQuoteTransactionType.SalesOrder,
                 QuoteNumber = "Q-NODATE",
                 Customer = new QBCustomer { Name = "CustomerName" },
@@ -390,6 +400,512 @@ namespace QuickBooksServiceLibrary.Tests
             _mockRequestFactory.Verify(f => f.CreateAddItemNonInventoryRequest(It.IsAny<List<QBItem>>()), Times.Never);
             _mockRequestFactory.Verify(f => f.CreateEstimateRequest(It.IsAny<QBOrder>()), Times.Never);
             _mockRequestFactory.Verify(f => f.CreateSalesOrderRequest(It.IsAny<QBOrder>()), Times.Never);
+        }
+
+        [Test]
+        public void QuoteWriteSafety_ConnectorParsesPolicyFields()
+        {
+            const string payload =
+                "{\"quote_kind\":\"test\",\"confirmed_transaction_id\":\"TXN-CONFIRMED\"," +
+                "\"approved_test_company_fingerprints\":[\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"]," +
+                "\"transaction_type\":\"Estimate\",\"quote_number\":\"TEST-ABC123\"," +
+                "\"customer\":{\"name\":\"Synthetic Customer\"}," +
+                "\"lines\":[{\"description\":\"Synthetic item\",\"quantity\":1,\"rate\":10}]}";
+
+            QBQuoteUploadRequest request = SubmitQuoteHandler.ParseQuoteUploadRequest(payload);
+
+            Assert.AreEqual("test", request.QuoteKind);
+            Assert.AreEqual("TXN-CONFIRMED", request.ConfirmedTransactionId);
+            CollectionAssert.AreEqual(
+                new[] { "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
+                request.ApprovedTestCompanyFingerprints);
+        }
+
+        [Test]
+        public void QuoteWriteSafety_FingerprintNormalizesWindowsPathBeforeSha256()
+        {
+            string fingerprint = QuickBooksService.FingerprintCompanyFileName(
+                @"c:/Synthetic/Folder/../Test Company.qbw/");
+
+            Assert.AreEqual(
+                "828d8bf48c8f330e5976950dc79fc367dd15f06152df0af66ad8341ba185fc4a",
+                fingerprint);
+        }
+
+        [TestCase(QBQuoteTransactionType.Estimate)]
+        [TestCase(QBQuoteTransactionType.SalesOrder)]
+        public void QuoteWriteSafety_TestCompanyMismatchStopsBeforeEveryLookupAndWrite(
+            QBQuoteTransactionType transactionType)
+        {
+            var calls = new List<string>();
+            QuickBooksService service = ServiceWithCompany(
+                () =>
+                {
+                    calls.Add("company");
+                    return @"C:\Synthetic\Current Company.qbw";
+                });
+            QBQuoteUploadRequest request = QuoteRequest(transactionType, "test");
+            request.ApprovedTestCompanyFingerprints = new List<string>
+            {
+                QuickBooksService.FingerprintCompanyFileName(@"C:\Synthetic\Approved Company.qbw")
+            };
+
+            QBStatusResponse<QBQuoteUploadResult> result = service.SubmitQuote(request);
+
+            Assert.AreEqual(1, result.StatusCode);
+            Assert.AreEqual(
+                "Test quote cannot be submitted to this QuickBooks company.",
+                result.StatusMessage);
+            CollectionAssert.AreEqual(new[] { "company" }, calls);
+            AssertNoQuoteLookupsOrWrites();
+        }
+
+        [TestCase(QBQuoteTransactionType.Estimate, null)]
+        [TestCase(QBQuoteTransactionType.Estimate, "not-a-fingerprint")]
+        [TestCase(QBQuoteTransactionType.SalesOrder, null)]
+        [TestCase(QBQuoteTransactionType.SalesOrder, "not-a-fingerprint")]
+        public void QuoteWriteSafety_TestAllowlistFailsClosedBeforeEveryLookupAndWrite(
+            QBQuoteTransactionType transactionType,
+            string allowlistValue)
+        {
+            var calls = new List<string>();
+            QuickBooksService service = ServiceWithCompany(
+                () =>
+                {
+                    calls.Add("company");
+                    return @"C:\Synthetic\Current Company.qbw";
+                });
+            QBQuoteUploadRequest request = QuoteRequest(transactionType, "test");
+            request.ApprovedTestCompanyFingerprints = allowlistValue == null
+                ? new List<string>()
+                : new List<string> { allowlistValue };
+
+            QBStatusResponse<QBQuoteUploadResult> result = service.SubmitQuote(request);
+
+            Assert.AreEqual(1, result.StatusCode);
+            Assert.AreEqual(
+                "Test quote cannot be submitted to this QuickBooks company.",
+                result.StatusMessage);
+            CollectionAssert.AreEqual(new[] { "company" }, calls);
+            AssertNoQuoteLookupsOrWrites();
+        }
+
+        [TestCase(QBQuoteTransactionType.Estimate)]
+        [TestCase(QBQuoteTransactionType.SalesOrder)]
+        public void QuoteWriteSafety_UnidentifiableTestCompanyReturnsGenericFailureWithoutLeakingDetails(
+            QBQuoteTransactionType transactionType)
+        {
+            const string privateDetail = @"C:\Synthetic\Private\Company.qbw QBFC detail";
+            var calls = new List<string>();
+            QuickBooksService service = ServiceWithCompany(
+                () =>
+                {
+                    calls.Add("company");
+                    throw new InvalidOperationException(privateDetail);
+                });
+            QBQuoteUploadRequest request = QuoteRequest(transactionType, "test");
+            request.ApprovedTestCompanyFingerprints = new List<string>
+            {
+                QuickBooksService.FingerprintCompanyFileName(@"C:\Synthetic\Approved Company.qbw")
+            };
+
+            QBStatusResponse<QBQuoteUploadResult> result = service.SubmitQuote(request);
+
+            Assert.AreEqual(
+                "Test quote cannot be submitted to this QuickBooks company.",
+                result.StatusMessage);
+            StringAssert.DoesNotContain(privateDetail, result.StatusMessage);
+            CollectionAssert.AreEqual(new[] { "company" }, calls);
+            Assert.IsTrue(File.Exists(_logPath));
+            StringAssert.DoesNotContain(privateDetail, File.ReadAllText(_logPath));
+            AssertNoQuoteLookupsOrWrites();
+        }
+
+        [Test]
+        public void QuoteWriteSafety_AllowedTestEstimateRunsCompanyThenExactQueryThenWritePipeline()
+        {
+            var calls = new List<string>();
+            const string companyPath = @"C:\Synthetic\Approved Company.qbw";
+            QuickBooksService service = ServiceWithCompany(
+                () =>
+                {
+                    calls.Add("company");
+                    return companyPath;
+                });
+            QBQuoteUploadRequest request = QuoteRequest(QBQuoteTransactionType.Estimate, "test");
+            request.ApprovedTestCompanyFingerprints = new List<string>
+            {
+                QuickBooksService.FingerprintCompanyFileName(companyPath)
+            };
+            ArrangeEstimateQuery(calls, request.QuoteNumber, null);
+            ArrangeCustomerAndItems(calls, request);
+            ArrangeEstimateAdd(calls, "TXN-EST-1", request.QuoteNumber);
+
+            QBStatusResponse<QBQuoteUploadResult> result = service.SubmitQuote(request);
+
+            Assert.AreEqual(0, result.StatusCode);
+            Assert.AreEqual("TXN-EST-1", result.Data.TransactionId);
+            Assert.AreEqual(request.QuoteNumber, result.Data.AssignedReference);
+            CollectionAssert.AreEqual(
+                new[] { "company", "estimate-query", "customer", "items", "estimate-add" },
+                calls);
+        }
+
+        [Test]
+        public void QuoteWriteSafety_AllowedTestSalesOrderSkipsEstimateQueryAndWritesAfterCompanyGate()
+        {
+            var calls = new List<string>();
+            const string companyPath = @"C:\Synthetic\Approved Company.qbw";
+            QuickBooksService service = ServiceWithCompany(
+                () =>
+                {
+                    calls.Add("company");
+                    return companyPath;
+                });
+            QBQuoteUploadRequest request = QuoteRequest(QBQuoteTransactionType.SalesOrder, "test");
+            request.ApprovedTestCompanyFingerprints = new List<string>
+            {
+                QuickBooksService.FingerprintCompanyFileName(companyPath)
+            };
+            ArrangeCustomerAndItems(calls, request);
+            ArrangeSalesOrderAdd(calls, "TXN-SO-TEST", "SO-TEST-1");
+
+            QBStatusResponse<QBQuoteUploadResult> result = service.SubmitQuote(request);
+
+            Assert.AreEqual(0, result.StatusCode);
+            Assert.AreEqual("TXN-SO-TEST", result.Data.TransactionId);
+            Assert.AreEqual("SO-TEST-1", result.Data.AssignedReference);
+            CollectionAssert.AreEqual(
+                new[] { "company", "customer", "items", "sales-order-add" },
+                calls);
+            _mockRequestFactory.Verify(
+                value => value.CreateEstimateReferenceQueryRequest(It.IsAny<string>()),
+                Times.Never);
+        }
+
+        [Test]
+        public void QuoteWriteSafety_NormalEstimateQueriesExactReferenceBeforeCustomerItemsAndWrite()
+        {
+            var calls = new List<string>();
+            QuickBooksService service = ServiceWithCompany(
+                () => throw new AssertionException("Normal quotes must not read the company file."));
+            QBQuoteUploadRequest request = QuoteRequest(QBQuoteTransactionType.Estimate, "normal");
+            ArrangeEstimateQuery(calls, request.QuoteNumber, null);
+            ArrangeCustomerAndItems(calls, request);
+            ArrangeEstimateAdd(calls, "TXN-EST-2", request.QuoteNumber);
+
+            QBStatusResponse<QBQuoteUploadResult> result = service.SubmitQuote(request);
+
+            Assert.AreEqual(0, result.StatusCode);
+            CollectionAssert.AreEqual(
+                new[] { "estimate-query", "customer", "items", "estimate-add" },
+                calls);
+        }
+
+        [Test]
+        public void QuoteWriteSafety_NormalSalesOrderRetainsWritePipelineWithoutCompanyOrEstimateQuery()
+        {
+            var calls = new List<string>();
+            QuickBooksService service = ServiceWithCompany(
+                () => throw new AssertionException("Normal quotes must not read the company file."));
+            QBQuoteUploadRequest request = QuoteRequest(QBQuoteTransactionType.SalesOrder, "normal");
+            ArrangeCustomerAndItems(calls, request);
+            ArrangeSalesOrderAdd(calls, "TXN-SO-1", "SO-9001");
+
+            QBStatusResponse<QBQuoteUploadResult> result = service.SubmitQuote(request);
+
+            Assert.AreEqual(0, result.StatusCode);
+            CollectionAssert.AreEqual(new[] { "customer", "items", "sales-order-add" }, calls);
+            _mockRequestFactory.Verify(
+                value => value.CreateEstimateReferenceQueryRequest(It.IsAny<string>()),
+                Times.Never);
+        }
+
+        [Test]
+        public void QuoteWriteSafety_ConfirmedEstimateRetryReturnsIdentityWithoutAnyWrite()
+        {
+            var calls = new List<string>();
+            QuickBooksService service = ServiceWithCompany(
+                () => throw new AssertionException("Normal quotes must not read the company file."));
+            QBQuoteUploadRequest request = QuoteRequest(QBQuoteTransactionType.Estimate, "normal");
+            request.ConfirmedTransactionId = "TXN-CONFIRMED";
+            ArrangeEstimateQuery(
+                calls,
+                request.QuoteNumber,
+                new QBEstimateReference
+                {
+                    Reference = request.QuoteNumber,
+                    TransactionId = "TXN-CONFIRMED"
+                });
+
+            QBStatusResponse<QBQuoteUploadResult> result = service.SubmitQuote(request);
+
+            Assert.AreEqual(0, result.StatusCode);
+            Assert.AreEqual("Estimate was already submitted.", result.StatusMessage);
+            Assert.AreEqual("TXN-CONFIRMED", result.Data.TransactionId);
+            Assert.AreEqual(request.QuoteNumber, result.Data.AssignedReference);
+            CollectionAssert.AreEqual(new[] { "estimate-query" }, calls);
+            AssertNoCustomerItemOrTransactionWrites();
+        }
+
+        [TestCase(null)]
+        [TestCase("TXN-DIFFERENT")]
+        public void QuoteWriteSafety_AnyOtherExactEstimateMatchRequiresReconciliationBeforeWrites(
+            string confirmedTransactionId)
+        {
+            var calls = new List<string>();
+            QuickBooksService service = ServiceWithCompany(
+                () => throw new AssertionException("Normal quotes must not read the company file."));
+            QBQuoteUploadRequest request = QuoteRequest(QBQuoteTransactionType.Estimate, "normal");
+            request.ConfirmedTransactionId = confirmedTransactionId;
+            ArrangeEstimateQuery(
+                calls,
+                request.QuoteNumber,
+                new QBEstimateReference
+                {
+                    Reference = request.QuoteNumber,
+                    TransactionId = "TXN-EXISTING"
+                });
+
+            QBStatusResponse<QBQuoteUploadResult> result = service.SubmitQuote(request);
+
+            Assert.AreEqual(1, result.StatusCode);
+            Assert.AreEqual(
+                "QuickBooks Estimate reconciliation is required.",
+                result.StatusMessage);
+            CollectionAssert.AreEqual(new[] { "estimate-query" }, calls);
+            AssertNoCustomerItemOrTransactionWrites();
+        }
+
+        [Test]
+        public void QuoteWriteSafety_EstimateQueryFailureIsGenericAndStopsBeforeWrites()
+        {
+            const string privateDetail = "Synthetic QBFC customer and transaction detail";
+            var calls = new List<string>();
+            QuickBooksService service = ServiceWithCompany(
+                () => throw new AssertionException("Normal quotes must not read the company file."));
+            QBQuoteUploadRequest request = QuoteRequest(QBQuoteTransactionType.Estimate, "normal");
+            var query = new Mock<IEstimateReferenceQueryRequest>();
+            query.Setup(value => value.SendRequest())
+                .Callback(() => calls.Add("estimate-query"))
+                .Throws(new InvalidOperationException(privateDetail));
+            _mockRequestFactory
+                .Setup(value => value.CreateEstimateReferenceQueryRequest(request.QuoteNumber))
+                .Returns(query.Object);
+
+            QBStatusResponse<QBQuoteUploadResult> result = service.SubmitQuote(request);
+
+            Assert.AreEqual(1, result.StatusCode);
+            Assert.AreEqual(
+                "QuickBooks Estimate preflight is unavailable.",
+                result.StatusMessage);
+            StringAssert.DoesNotContain(privateDetail, result.StatusMessage);
+            CollectionAssert.AreEqual(new[] { "estimate-query" }, calls);
+            Assert.IsTrue(File.Exists(_logPath));
+            StringAssert.DoesNotContain(privateDetail, File.ReadAllText(_logPath));
+            AssertNoCustomerItemOrTransactionWrites();
+        }
+
+        [TestCase(null)]
+        [TestCase("")]
+        [TestCase("preview")]
+        public void QuoteWriteSafety_InvalidQuoteKindFailsStructuralValidationBeforeQuickBooks(
+            string quoteKind)
+        {
+            QuickBooksService service = ServiceWithCompany(
+                () => throw new AssertionException("Invalid requests must not read the company file."));
+            QBQuoteUploadRequest request = QuoteRequest(QBQuoteTransactionType.Estimate, quoteKind);
+
+            QBStatusResponse<QBQuoteUploadResult> result = service.SubmitQuote(request);
+
+            Assert.AreEqual(1, result.StatusCode);
+            Assert.AreEqual(
+                "Quote upload request QuoteKind must be normal or test",
+                result.StatusMessage);
+            AssertNoQuoteLookupsOrWrites();
+        }
+
+        [Test]
+        public void QuoteWriteSafety_BlankEstimateReferenceFailsBeforeQuickBooks()
+        {
+            QuickBooksService service = ServiceWithCompany(
+                () => throw new AssertionException("Invalid requests must not read the company file."));
+            QBQuoteUploadRequest request = QuoteRequest(QBQuoteTransactionType.Estimate, "normal");
+            request.QuoteNumber = " ";
+
+            QBStatusResponse<QBQuoteUploadResult> result = service.SubmitQuote(request);
+
+            Assert.AreEqual(1, result.StatusCode);
+            Assert.AreEqual(
+                "Quote upload request requires a QuoteNumber",
+                result.StatusMessage);
+            AssertNoQuoteLookupsOrWrites();
+        }
+
+        private QuickBooksService ServiceWithCompany(Func<string> currentCompanyFileName)
+        {
+            return new QuickBooksService(
+                _mockRequestFactory.Object,
+                new Logger(_logPath),
+                currentCompanyFileName,
+                initialize: false);
+        }
+
+        private static QBQuoteUploadRequest QuoteRequest(
+            QBQuoteTransactionType transactionType,
+            string quoteKind)
+        {
+            return new QBQuoteUploadRequest
+            {
+                QuoteKind = quoteKind,
+                TransactionType = transactionType,
+                QuoteNumber = transactionType == QBQuoteTransactionType.Estimate
+                    ? "TEST-ABC123" : "TEST-SO1234",
+                CustomerAccountNumber = "SYNTHETIC-100",
+                CustomerName = "Synthetic Customer",
+                CustomerPO = "PO-SYNTHETIC",
+                DueDate = new DateTime(2026, 8, 14),
+                Lines = new List<QBQuoteUploadLine>
+                {
+                    new QBQuoteUploadLine
+                    {
+                        Description = "Synthetic item",
+                        Quantity = 1,
+                        Rate = 10
+                    }
+                }
+            };
+        }
+
+        private void ArrangeEstimateQuery(
+            List<string> calls,
+            string reference,
+            QBEstimateReference match)
+        {
+            var query = new Mock<IEstimateReferenceQueryRequest>();
+            query.Setup(value => value.SendRequest())
+                .Callback(() => calls.Add("estimate-query"))
+                .Returns(new QBStatusResponse<List<QBEstimateReference>>
+                {
+                    StatusCode = 0,
+                    StatusMessage = "OK",
+                    Data = match == null
+                        ? new List<QBEstimateReference>()
+                        : new List<QBEstimateReference> { match }
+                });
+            _mockRequestFactory
+                .Setup(value => value.CreateEstimateReferenceQueryRequest(reference))
+                .Returns(query.Object);
+        }
+
+        private void ArrangeCustomerAndItems(List<string> calls, QBQuoteUploadRequest request)
+        {
+            var customer = new Mock<ICustomerAccountNumberQueryRequest>();
+            customer.Setup(value => value.SendRequest())
+                .Callback(() => calls.Add("customer"))
+                .Returns(new QBCustomer
+                {
+                    AccountNumber = request.CustomerAccountNumber,
+                    Name = request.CustomerName
+                });
+            _mockRequestFactory
+                .Setup(value => value.CreateCustomerAccountNumberQueryRequest(request.CustomerAccountNumber))
+                .Returns(customer.Object);
+
+            var items = new Mock<IAllItemNonInvQueryRequest>();
+            items.Setup(value => value.SendRequest())
+                .Callback(() => calls.Add("items"))
+                .Returns(new QBStatusResponse<List<QBItem>>
+                {
+                    StatusCode = 0,
+                    StatusMessage = "OK",
+                    Data = new List<QBItem>
+                    {
+                        new QBItem
+                        {
+                            Number = "1-1000",
+                            Description = request.Lines[0].Description,
+                            Active = true
+                        }
+                    }
+                });
+            _mockRequestFactory
+                .Setup(value => value.CreateAllItemNonInvQueryRequest())
+                .Returns(items.Object);
+        }
+
+        private void ArrangeEstimateAdd(
+            List<string> calls,
+            string transactionId,
+            string assignedReference)
+        {
+            var add = new Mock<IEstimateRequest>();
+            add.Setup(value => value.SendRequest())
+                .Callback(() => calls.Add("estimate-add"))
+                .Returns(new QBStatusResponse<QBTransactionIdentity>
+                {
+                    StatusCode = 0,
+                    StatusMessage = "OK",
+                    Data = new QBTransactionIdentity
+                    {
+                        TransactionId = transactionId,
+                        AssignedReference = assignedReference
+                    }
+                });
+            _mockRequestFactory.Setup(value => value.CreateEstimateRequest(It.IsAny<QBOrder>()))
+                .Returns(add.Object);
+        }
+
+        private void ArrangeSalesOrderAdd(
+            List<string> calls,
+            string transactionId,
+            string assignedReference)
+        {
+            var add = new Mock<ISalesOrderRequest>();
+            add.Setup(value => value.SendRequest())
+                .Callback(() => calls.Add("sales-order-add"))
+                .Returns(new QBStatusResponse<QBTransactionIdentity>
+                {
+                    StatusCode = 0,
+                    StatusMessage = "OK",
+                    Data = new QBTransactionIdentity
+                    {
+                        TransactionId = transactionId,
+                        AssignedReference = assignedReference
+                    }
+                });
+            _mockRequestFactory.Setup(value => value.CreateSalesOrderRequest(It.IsAny<QBOrder>()))
+                .Returns(add.Object);
+        }
+
+        private void AssertNoQuoteLookupsOrWrites()
+        {
+            _mockRequestFactory.Verify(
+                value => value.CreateEstimateReferenceQueryRequest(It.IsAny<string>()),
+                Times.Never);
+            AssertNoCustomerItemOrTransactionWrites();
+        }
+
+        private void AssertNoCustomerItemOrTransactionWrites()
+        {
+            _mockRequestFactory.Verify(
+                value => value.CreateCustomerAccountNumberQueryRequest(It.IsAny<string>()),
+                Times.Never);
+            _mockRequestFactory.Verify(
+                value => value.CreateCustomerQueryRequest(It.IsAny<string>()),
+                Times.Never);
+            _mockRequestFactory.Verify(
+                value => value.CreateAllItemNonInvQueryRequest(),
+                Times.Never);
+            _mockRequestFactory.Verify(
+                value => value.CreateAddItemNonInventoryRequest(It.IsAny<List<QBItem>>()),
+                Times.Never);
+            _mockRequestFactory.Verify(
+                value => value.CreateEstimateRequest(It.IsAny<QBOrder>()),
+                Times.Never);
+            _mockRequestFactory.Verify(
+                value => value.CreateSalesOrderRequest(It.IsAny<QBOrder>()),
+                Times.Never);
         }
 
         [Test]

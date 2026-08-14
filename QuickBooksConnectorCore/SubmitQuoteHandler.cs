@@ -77,6 +77,19 @@ namespace QuickBooksConnectorCore
             var root = AsDictionary(raw, "request");
             var request = new QBQuoteUploadRequest
             {
+                QuoteKind = GetString(root, "QuoteKind", "quoteKind", "quote_kind"),
+                ApprovedTestCompanyFingerprints = ParseStrings(
+                    GetValue(
+                        root,
+                        "ApprovedTestCompanyFingerprints",
+                        "approvedTestCompanyFingerprints",
+                        "approved_test_company_fingerprints"),
+                    "approved_test_company_fingerprints"),
+                ConfirmedTransactionId = GetString(
+                    root,
+                    "ConfirmedTransactionId",
+                    "confirmedTransactionId",
+                    "confirmed_transaction_id"),
                 TransactionType = ParseTransactionType(GetValue(root, "TransactionType", "transactionType", "transaction_type")),
                 QuoteNumber = GetString(root, "QuoteNumber", "quoteNumber", "quote_number"),
                 CustomerAccountNumber = GetString(root, "CustomerAccountNumber", "customerAccountNumber", "customer_account_number"),
@@ -133,6 +146,27 @@ namespace QuickBooksConnectorCore
             }
 
             return lines;
+        }
+
+        private static List<string> ParseStrings(object value, string path)
+        {
+            if (value == null)
+            {
+                return null;
+            }
+
+            object[] values = value as object[];
+            if (values == null)
+            {
+                throw new QuoteRequestParseException(path + " must be a JSON array.");
+            }
+
+            var strings = new List<string>();
+            foreach (object item in values)
+            {
+                strings.Add(item == null ? null : Convert.ToString(item, CultureInfo.InvariantCulture));
+            }
+            return strings;
         }
 
         private static QBQuoteTransactionType ParseTransactionType(object value)

@@ -1,5 +1,8 @@
 ﻿using System;
 using Interop.QBFC14;
+using System.IO;
+using System.Security.Cryptography;
+using System.Text;
 
 namespace QBRequestLibrary
 {
@@ -24,6 +27,29 @@ namespace QBRequestLibrary
         }
 
         public string CurrentCompanyFileName { get; private set; } = string.Empty;
+
+        public static string FingerprintCompanyFileName(string companyFileName)
+        {
+            if (string.IsNullOrWhiteSpace(companyFileName))
+            {
+                throw new ArgumentException("A company filename is required.", nameof(companyFileName));
+            }
+
+            string normalized = Path.GetFullPath(companyFileName.Trim())
+                .Replace('/', '\\')
+                .TrimEnd('\\')
+                .ToUpperInvariant();
+            using (SHA256 sha256 = SHA256.Create())
+            {
+                byte[] hash = sha256.ComputeHash(Encoding.UTF8.GetBytes(normalized));
+                var fingerprint = new StringBuilder(hash.Length * 2);
+                foreach (byte value in hash)
+                {
+                    fingerprint.Append(value.ToString("x2"));
+                }
+                return fingerprint.ToString();
+            }
+        }
 
         /**
 		 * <summary>Method <c>setUserMode</c> sets userMode </summary>

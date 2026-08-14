@@ -9,9 +9,6 @@ using System.Data.SqlClient;
 using System.Threading.Tasks;
 using System.Threading;
 using System.Diagnostics;
-using System.IO;
-using System.Security.Cryptography;
-using System.Text;
 
 namespace QuickBooksIPCService
 {
@@ -199,25 +196,7 @@ namespace QuickBooksIPCService
 
         public static string FingerprintCompanyFileName(string companyFileName)
         {
-            if (string.IsNullOrWhiteSpace(companyFileName))
-            {
-                throw new ArgumentException("A company filename is required.", nameof(companyFileName));
-            }
-
-            string normalized = Path.GetFullPath(companyFileName.Trim())
-                .Replace('/', '\\')
-                .TrimEnd('\\')
-                .ToUpperInvariant();
-            using (SHA256 sha256 = SHA256.Create())
-            {
-                byte[] hash = sha256.ComputeHash(Encoding.UTF8.GetBytes(normalized));
-                var fingerprint = new StringBuilder(hash.Length * 2);
-                foreach (byte value in hash)
-                {
-                    fingerprint.Append(value.ToString("x2"));
-                }
-                return fingerprint.ToString();
-            }
+            return Connection.FingerprintCompanyFileName(companyFileName);
         }
 
         private void _initialize()
@@ -371,25 +350,33 @@ namespace QuickBooksIPCService
 
         public QBStatusResponse<string> AddOrder(QBOrder order)
         {
-            return LegacyTransactionResponse(AddOrderWithIdentity(order));
+            return LegacyTransactionResponse(AddOrderWithIdentity(order, null));
         }
 
         public QBStatusResponse<string> AddEstimate(QBOrder order)
         {
-            return LegacyTransactionResponse(AddEstimateWithIdentity(order));
+            return LegacyTransactionResponse(AddEstimateWithIdentity(order, null));
         }
 
-        private QBStatusResponse<QBTransactionIdentity> AddOrderWithIdentity(QBOrder order)
+        private QBStatusResponse<QBTransactionIdentity> AddOrderWithIdentity(
+            QBOrder order,
+            string approvedCompanyFingerprint)
         {
-            var req = _requestFactory.CreateSalesOrderRequest(order);
+            var req = _requestFactory.CreateSalesOrderRequest(
+                order,
+                approvedCompanyFingerprint);
             var response = req.SendRequest();
             _logger.LogTransaction($"Added order {order.QuoteNumber} for customer {order.Customer.Name}");
             return response;
         }
 
-        private QBStatusResponse<QBTransactionIdentity> AddEstimateWithIdentity(QBOrder order)
+        private QBStatusResponse<QBTransactionIdentity> AddEstimateWithIdentity(
+            QBOrder order,
+            string approvedCompanyFingerprint)
         {
-            var req = _requestFactory.CreateEstimateRequest(order);
+            var req = _requestFactory.CreateEstimateRequest(
+                order,
+                approvedCompanyFingerprint);
             var response = req.SendRequest();
             _logger.LogTransaction($"Added estimate {order.QuoteNumber} for customer {order.Customer.Name}");
             return response;
@@ -414,7 +401,7 @@ namespace QuickBooksIPCService
         public QBStatusResponse<QBEstimateReference> GetEstimateReference(string reference)
         {
             QBStatusResponse<List<QBEstimateReference>> response =
-                _requestFactory.CreateEstimateReferenceQueryRequest(reference).SendRequest();
+                GetEstimateReferenceMatches(reference);
             return new QBStatusResponse<QBEstimateReference>
             {
                 StatusCode = response.StatusCode,
@@ -422,6 +409,12 @@ namespace QuickBooksIPCService
                 Data = response.Data == null || response.Data.Count == 0
                     ? null : response.Data[0]
             };
+        }
+
+        private QBStatusResponse<List<QBEstimateReference>> GetEstimateReferenceMatches(
+            string reference)
+        {
+            return _requestFactory.CreateEstimateReferenceQueryRequest(reference).SendRequest();
         }
 
         public QBStatusResponse<QBQuoteUploadResult> SubmitQuote(QBQuoteUploadRequest request)
@@ -432,7 +425,10 @@ namespace QuickBooksIPCService
                 return Failure(validationError);
             }
 
-            QBStatusResponse<QBQuoteUploadResult> preflight = PreflightQuoteUpload(request);
+            string approvedWriteFingerprint;
+            QBStatusResponse<QBQuoteUploadResult> preflight = PreflightQuoteUpload(
+                request,
+                out approvedWriteFingerprint);
             if (preflight != null)
             {
                 return preflight;
@@ -468,7 +464,9 @@ namespace QuickBooksIPCService
                 List<QBStatusResponse<string>> addItemResponses;
                 try
                 {
-                    addItemResponses = AddNonInvItem(resolution.ItemsToCreate);
+                    addItemResponses = AddNonInvItem(
+                        resolution.ItemsToCreate,
+                        approvedWriteFingerprint);
                 }
                 catch (Exception ex)
                 {
@@ -496,8 +494,8 @@ namespace QuickBooksIPCService
             try
             {
                 transactionResponse = request.TransactionType == QBQuoteTransactionType.Estimate
-                    ? AddEstimateWithIdentity(order)
-                    : AddOrderWithIdentity(order);
+                    ? AddEstimateWithIdentity(order, approvedWriteFingerprint)
+                    : AddOrderWithIdentity(order, approvedWriteFingerprint);
             }
             catch (Exception ex)
             {
@@ -520,8 +518,10 @@ namespace QuickBooksIPCService
         }
 
         private QBStatusResponse<QBQuoteUploadResult> PreflightQuoteUpload(
-            QBQuoteUploadRequest request)
+            QBQuoteUploadRequest request,
+            out string approvedWriteFingerprint)
         {
+            approvedWriteFingerprint = null;
             if (request.QuoteKind == "test")
             {
                 string fingerprint;
@@ -542,6 +542,8 @@ namespace QuickBooksIPCService
                     _logger.LogError("Test quote company verification failed.");
                     return Failure("Test quote cannot be submitted to this QuickBooks company.");
                 }
+
+                approvedWriteFingerprint = fingerprint;
             }
 
             if (request.TransactionType != QBQuoteTransactionType.Estimate)
@@ -549,10 +551,10 @@ namespace QuickBooksIPCService
                 return null;
             }
 
-            QBStatusResponse<QBEstimateReference> reference;
+            QBStatusResponse<List<QBEstimateReference>> references;
             try
             {
-                reference = GetEstimateReference(request.QuoteNumber);
+                references = GetEstimateReferenceMatches(request.QuoteNumber);
             }
             catch
             {
@@ -560,21 +562,24 @@ namespace QuickBooksIPCService
                 return Failure("QuickBooks Estimate preflight is unavailable.");
             }
 
-            if (reference == null || reference.StatusCode != 0)
+            if (references == null ||
+                references.StatusCode != 0 ||
+                references.Data == null)
             {
                 _logger.LogError("QuickBooks Estimate preflight failed.");
                 return Failure("QuickBooks Estimate preflight is unavailable.");
             }
 
-            if (reference.Data == null)
+            if (references.Data.Count == 0)
             {
                 return null;
             }
 
-            if (!string.IsNullOrWhiteSpace(request.ConfirmedTransactionId) &&
+            if (references.Data.Count == 1 &&
+                !string.IsNullOrWhiteSpace(request.ConfirmedTransactionId) &&
                 string.Equals(
                     request.ConfirmedTransactionId,
-                    reference.Data.TransactionId,
+                    references.Data[0].TransactionId,
                     StringComparison.Ordinal))
             {
                 return new QBStatusResponse<QBQuoteUploadResult>
@@ -585,7 +590,7 @@ namespace QuickBooksIPCService
                     {
                         TransactionType = request.TransactionType,
                         QuoteNumber = request.QuoteNumber,
-                        TransactionId = reference.Data.TransactionId,
+                        TransactionId = references.Data[0].TransactionId,
                         AssignedReference = request.QuoteNumber,
                         Lines = new List<QBQuoteUploadResolvedLine>()
                     }
@@ -880,7 +885,16 @@ namespace QuickBooksIPCService
 
         public List<QBStatusResponse<string>> AddNonInvItem(List<QBItem> items)
         {
-            var req = _requestFactory.CreateAddItemNonInventoryRequest(items);
+            return AddNonInvItem(items, null);
+        }
+
+        private List<QBStatusResponse<string>> AddNonInvItem(
+            List<QBItem> items,
+            string approvedCompanyFingerprint)
+        {
+            var req = _requestFactory.CreateAddItemNonInventoryRequest(
+                items,
+                approvedCompanyFingerprint);
             var response = req.SendRequest();
             foreach (var rs in response)
             {

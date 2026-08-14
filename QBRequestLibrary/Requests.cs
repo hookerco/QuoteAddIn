@@ -27,6 +27,7 @@ namespace QBRequestLibrary
         protected IMsgSetRequest _msgSetRequest;
         protected const short QBSDKMajorVersion = 14;
         protected const short QBSDKMinorVersion = 0;
+        private string _requiredCompanyFingerprint;
 
         public virtual void Set(T1 value)
         {
@@ -47,6 +48,40 @@ namespace QBRequestLibrary
         {
             _connection.Close();
             _open = false;
+        }
+
+        protected void RequireCompanyFingerprint(string approvedCompanyFingerprint)
+        {
+            _requiredCompanyFingerprint = approvedCompanyFingerprint;
+        }
+
+        private void VerifyRequiredCompanyFingerprint()
+        {
+            if (string.IsNullOrWhiteSpace(_requiredCompanyFingerprint))
+            {
+                return;
+            }
+
+            string currentFingerprint;
+            try
+            {
+                currentFingerprint = Connection.FingerprintCompanyFileName(
+                    _connection.CurrentCompanyFileName);
+            }
+            catch
+            {
+                throw new QBRequestLibraryRuntimeError(
+                    "QuickBooks company verification failed.");
+            }
+
+            if (!string.Equals(
+                _requiredCompanyFingerprint,
+                currentFingerprint,
+                StringComparison.OrdinalIgnoreCase))
+            {
+                throw new QBRequestLibraryRuntimeError(
+                    "QuickBooks company verification failed.");
+            }
         }
 
         protected abstract void BuildHelper();
@@ -80,6 +115,11 @@ namespace QBRequestLibrary
 
         protected abstract T2 ConvertResponse(IMsgSetResponse response);
 
+        protected virtual string FailureLogMessage(Exception error)
+        {
+            return error.Message;
+        }
+
         protected virtual T2 Send()
         {
             if (!_open)
@@ -97,12 +137,13 @@ namespace QBRequestLibrary
             Connect();
             try
             {
+                VerifyRequiredCompanyFingerprint();
                 response = Send();
             }
             catch (Exception e)
             {
                 Disconnect();
-                Logger.LogError(e.Message);
+                Logger.LogError(FailureLogMessage(e));
                 throw e;
             }
             Disconnect();
@@ -194,8 +235,14 @@ namespace QBRequestLibrary
     public class SalesOrderRequest : Request<QBOrder, QBStatusResponse<QBTransactionIdentity>>, ISalesOrderRequest
     {
         public SalesOrderRequest(QBOrder salesOrder)
+            : this(salesOrder, null)
+        {
+        }
+
+        public SalesOrderRequest(QBOrder salesOrder, string approvedCompanyFingerprint)
         {
             Set(salesOrder);
+            RequireCompanyFingerprint(approvedCompanyFingerprint);
         }
 
         protected override void BuildHelper()
@@ -247,8 +294,14 @@ namespace QBRequestLibrary
     public class EstimateRequest : Request<QBOrder, QBStatusResponse<QBTransactionIdentity>>, IEstimateRequest
     {
         public EstimateRequest(QBOrder estimate)
+            : this(estimate, null)
+        {
+        }
+
+        public EstimateRequest(QBOrder estimate, string approvedCompanyFingerprint)
         {
             Set(estimate);
+            RequireCompanyFingerprint(approvedCompanyFingerprint);
         }
 
         protected override void BuildHelper()
@@ -307,6 +360,11 @@ namespace QBRequestLibrary
         public EstimateReferenceQueryRequest(string reference)
         {
             Set(reference ?? string.Empty);
+        }
+
+        protected override string FailureLogMessage(Exception error)
+        {
+            return "QuickBooks Estimate reference query failed.";
         }
 
         protected override void BuildHelper()
@@ -378,8 +436,16 @@ namespace QBRequestLibrary
     public class AddItemNonInventoryRequest : Request<List<QBItem>, List<QBStatusResponse<string>>>, IAddItemNonInventoryRequest
     {
         public AddItemNonInventoryRequest(List<QBItem> nonInvItems)
+            : this(nonInvItems, null)
+        {
+        }
+
+        public AddItemNonInventoryRequest(
+            List<QBItem> nonInvItems,
+            string approvedCompanyFingerprint)
         {
             Set(nonInvItems);
+            RequireCompanyFingerprint(approvedCompanyFingerprint);
         }
 
         protected override void BuildHelper()

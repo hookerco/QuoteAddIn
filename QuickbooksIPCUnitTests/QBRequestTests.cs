@@ -5,6 +5,7 @@ using QBRequestLibrary;
 using QuickBooksIPCContracts;
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Runtime.Serialization;
 
 namespace QuickBooksServiceLibrary.Tests
@@ -49,6 +50,90 @@ namespace QuickBooksServiceLibrary.Tests
 
             CollectionAssert.AreEqual(new[] { "open", "begin", "identity" }, calls);
             Assert.AreEqual(@"C:\Synthetic\Test Company.qbw", connection.CurrentCompanyFileName);
+        }
+
+        [TestCase("item")]
+        [TestCase("estimate")]
+        [TestCase("sales-order")]
+        public void QuoteWriteSafety_WriteRequestRechecksCompanyBeforeBuildOrDoRequests(
+            string requestKind)
+        {
+            const string approvedFingerprint =
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+            var sessionManager = new Mock<IQBSessionManager>();
+            sessionManager.Setup(value => value.OpenConnection("", "Proto-CAM QB Library"));
+            sessionManager.Setup(value => value.BeginSession("", ENOpenMode.omDontCare));
+            sessionManager.Setup(value => value.GetCurrentCompanyFileName())
+                .Returns(@"C:\Synthetic\Different Company.qbw");
+            sessionManager.Setup(value => value.EndSession());
+            sessionManager.Setup(value => value.CloseConnection());
+            var connection = new TestableConnection(sessionManager.Object);
+            TestDelegate send;
+
+            if (requestKind == "item")
+            {
+                var request = new TestableAddItemNonInventoryRequest(
+                    new List<QBItem> { new QBItem { Number = "1-9000" } },
+                    approvedFingerprint,
+                    connection);
+                send = () => request.SendRequest();
+            }
+            else if (requestKind == "estimate")
+            {
+                var request = new TestableEstimateRequest(
+                    CreateOrder("TEST-ABC123"),
+                    approvedFingerprint,
+                    connection);
+                send = () => request.SendRequest();
+            }
+            else
+            {
+                var request = new TestableSalesOrderRequest(
+                    CreateOrder("TEST-SO1234"),
+                    approvedFingerprint,
+                    connection);
+                send = () => request.SendRequest();
+            }
+
+            Exception error = Assert.Catch<Exception>(send);
+
+            Assert.AreEqual("QuickBooks company verification failed.", error.Message);
+            sessionManager.Verify(
+                value => value.CreateMsgSetRequest(It.IsAny<string>(), It.IsAny<short>(), It.IsAny<short>()),
+                Times.Never);
+            sessionManager.Verify(
+                value => value.DoRequests(It.IsAny<IMsgSetRequest>()),
+                Times.Never);
+        }
+
+        [Test]
+        public void QuoteWriteSafety_EstimateReferenceQueryFailureLogsOnlyGenericMessage()
+        {
+            const string variable = "QUOTEADDIN_LOG_PATH";
+            const string rawDetail = @"QBFC failed for C:\Synthetic\Private Company.qbw TXN-PRIVATE";
+            string previous = Environment.GetEnvironmentVariable(variable);
+            string logPath = Path.Combine(
+                TestContext.CurrentContext.WorkDirectory,
+                "logs",
+                Guid.NewGuid().ToString("N") + ".log");
+
+            try
+            {
+                Environment.SetEnvironmentVariable(variable, logPath);
+                var request = new FailingEstimateReferenceQueryRequest(rawDetail);
+
+                InvalidOperationException error = Assert.Throws<InvalidOperationException>(
+                    () => request.SendRequest());
+
+                Assert.AreEqual(rawDetail, error.Message);
+                string log = File.ReadAllText(logPath);
+                StringAssert.Contains("QuickBooks Estimate reference query failed.", log);
+                StringAssert.DoesNotContain(rawDetail, log);
+            }
+            finally
+            {
+                Environment.SetEnvironmentVariable(variable, previous);
+            }
         }
 
         [Test]
@@ -487,6 +572,17 @@ namespace QuickBooksServiceLibrary.Tests
                 GC.SuppressFinalize(_connection);
             }
 
+            public TestableSalesOrderRequest(
+                QBOrder salesOrder,
+                string approvedCompanyFingerprint,
+                Connection connection)
+                : base(salesOrder, approvedCompanyFingerprint)
+            {
+                GC.SuppressFinalize(_connection);
+                _connection = connection;
+                GC.SuppressFinalize(this);
+            }
+
             public void BuildInto(IMsgSetRequest msgSetRequest)
             {
                 _msgSetRequest = msgSetRequest;
@@ -508,6 +604,17 @@ namespace QuickBooksServiceLibrary.Tests
                 GC.SuppressFinalize(_connection);
             }
 
+            public TestableEstimateRequest(
+                QBOrder estimate,
+                string approvedCompanyFingerprint,
+                Connection connection)
+                : base(estimate, approvedCompanyFingerprint)
+            {
+                GC.SuppressFinalize(_connection);
+                _connection = connection;
+                GC.SuppressFinalize(this);
+            }
+
             public void BuildInto(IMsgSetRequest msgSetRequest)
             {
                 _msgSetRequest = msgSetRequest;
@@ -517,6 +624,21 @@ namespace QuickBooksServiceLibrary.Tests
             public QBStatusResponse<QBTransactionIdentity> Convert(IMsgSetResponse responseSet)
             {
                 return ConvertResponse(responseSet);
+            }
+        }
+
+        private sealed class TestableAddItemNonInventoryRequest
+            : AddItemNonInventoryRequest
+        {
+            public TestableAddItemNonInventoryRequest(
+                List<QBItem> items,
+                string approvedCompanyFingerprint,
+                Connection connection)
+                : base(items, approvedCompanyFingerprint)
+            {
+                GC.SuppressFinalize(_connection);
+                _connection = connection;
+                GC.SuppressFinalize(this);
             }
         }
 
@@ -539,6 +661,35 @@ namespace QuickBooksServiceLibrary.Tests
             public QBStatusResponse<List<QBEstimateReference>> Convert(IMsgSetResponse responseSet)
             {
                 return ConvertResponse(responseSet);
+            }
+        }
+
+        private sealed class FailingEstimateReferenceQueryRequest
+            : EstimateReferenceQueryRequest
+        {
+            private readonly string _message;
+
+            public FailingEstimateReferenceQueryRequest(string message)
+                : base("TEST-ABC123")
+            {
+                _message = message;
+                GC.SuppressFinalize(this);
+                GC.SuppressFinalize(_connection);
+            }
+
+            protected override void Connect(string file = "")
+            {
+                _open = true;
+            }
+
+            protected override void Disconnect()
+            {
+                _open = false;
+            }
+
+            protected override QBStatusResponse<List<QBEstimateReference>> Send()
+            {
+                throw new InvalidOperationException(_message);
             }
         }
 

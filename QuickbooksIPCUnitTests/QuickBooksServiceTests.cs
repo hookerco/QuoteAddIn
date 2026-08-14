@@ -59,7 +59,7 @@ namespace QuickBooksServiceLibrary.Tests
             mockSalesOrderRequest.Setup(r => r.SendRequest()).Returns(expectedResponse);
 
             _mockRequestFactory
-                .Setup(f => f.CreateSalesOrderRequest(order))
+                .Setup(f => f.CreateSalesOrderRequest(order, null))
                 .Returns(mockSalesOrderRequest.Object);
 
             // Act
@@ -71,7 +71,7 @@ namespace QuickBooksServiceLibrary.Tests
             Assert.AreEqual(expectedResponse.StatusMessage, result.StatusMessage);
             Assert.AreEqual("TXN-SO-1", result.Data);
 
-            _mockRequestFactory.Verify(f => f.CreateSalesOrderRequest(order), Times.Once);
+            _mockRequestFactory.Verify(f => f.CreateSalesOrderRequest(order, null), Times.Once);
             mockSalesOrderRequest.Verify(r => r.SendRequest(), Times.Once);
         }
 
@@ -217,7 +217,7 @@ namespace QuickBooksServiceLibrary.Tests
             mockAddItemNonInventoryRequest.Setup(r => r.SendRequest()).Returns(expectedResponses);
 
             _mockRequestFactory
-                .Setup(f => f.CreateAddItemNonInventoryRequest(items))
+                .Setup(f => f.CreateAddItemNonInventoryRequest(items, null))
                 .Returns(mockAddItemNonInventoryRequest.Object);
 
             // Act
@@ -231,7 +231,9 @@ namespace QuickBooksServiceLibrary.Tests
             Assert.AreEqual(0, result[1].StatusCode);
             Assert.AreEqual("Item2 Added", result[1].StatusMessage);
 
-            _mockRequestFactory.Verify(f => f.CreateAddItemNonInventoryRequest(items), Times.Once);
+            _mockRequestFactory.Verify(
+                f => f.CreateAddItemNonInventoryRequest(items, null),
+                Times.Once);
             mockAddItemNonInventoryRequest.Verify(r => r.SendRequest(), Times.Once);
         }
 
@@ -286,16 +288,18 @@ namespace QuickBooksServiceLibrary.Tests
             var mockSalesOrderRequest = new Mock<ISalesOrderRequest>();
             mockSalesOrderRequest.Setup(r => r.SendRequest()).Returns(orderResponse);
             _mockRequestFactory
-                .Setup(f => f.CreateSalesOrderRequest(It.Is<QBOrder>(order =>
-                    order.QuoteNumber == "Q-100" &&
-                    order.Customer.Name == "CustomerName" &&
-                    order.Customer.PO == "PO-100" &&
-                    order.DueDate == new DateTime(2026, 6, 16) &&
-                    order.Items.Count == 1 &&
-                    order.Items[0].Number == "1-1000" &&
-                    order.Items[0].Description == "RB-2500A-03000, Radius Block" &&
-                    order.Items[0].Quantity == 2 &&
-                    order.Items[0].Rate == 12.5)))
+                .Setup(f => f.CreateSalesOrderRequest(
+                    It.Is<QBOrder>(order =>
+                        order.QuoteNumber == "Q-100" &&
+                        order.Customer.Name == "CustomerName" &&
+                        order.Customer.PO == "PO-100" &&
+                        order.DueDate == new DateTime(2026, 6, 16) &&
+                        order.Items.Count == 1 &&
+                        order.Items[0].Number == "1-1000" &&
+                        order.Items[0].Description == "RB-2500A-03000, Radius Block" &&
+                        order.Items[0].Quantity == 2 &&
+                        order.Items[0].Rate == 12.5),
+                    null))
                 .Returns(mockSalesOrderRequest.Object);
 
             QBStatusResponse<QBQuoteUploadResult> result = _service.SubmitQuote(request);
@@ -309,8 +313,12 @@ namespace QuickBooksServiceLibrary.Tests
             Assert.AreEqual("SO-9001", result.Data.AssignedReference);
             Assert.AreEqual("1-1000", result.Data.Lines[0].Number);
             Assert.IsFalse(result.Data.Lines[0].CreatedItem);
-            _mockRequestFactory.Verify(f => f.CreateSalesOrderRequest(It.IsAny<QBOrder>()), Times.Once);
-            _mockRequestFactory.Verify(f => f.CreateAddItemNonInventoryRequest(It.IsAny<List<QBItem>>()), Times.Never);
+            _mockRequestFactory.Verify(
+                f => f.CreateSalesOrderRequest(It.IsAny<QBOrder>(), null),
+                Times.Once);
+            _mockRequestFactory.Verify(
+                f => f.CreateAddItemNonInventoryRequest(It.IsAny<List<QBItem>>(), null),
+                Times.Never);
         }
 
         [Test]
@@ -344,8 +352,12 @@ namespace QuickBooksServiceLibrary.Tests
                 f => f.CreateCustomerAccountNumberQueryRequest("404"), Times.Once);
             _mockRequestFactory.Verify(
                 f => f.CreateCustomerQueryRequest(It.IsAny<string>()), Times.Never);
-            _mockRequestFactory.Verify(f => f.CreateEstimateRequest(It.IsAny<QBOrder>()), Times.Never);
-            _mockRequestFactory.Verify(f => f.CreateSalesOrderRequest(It.IsAny<QBOrder>()), Times.Never);
+            _mockRequestFactory.Verify(
+                f => f.CreateEstimateRequest(It.IsAny<QBOrder>(), It.IsAny<string>()),
+                Times.Never);
+            _mockRequestFactory.Verify(
+                f => f.CreateSalesOrderRequest(It.IsAny<QBOrder>(), It.IsAny<string>()),
+                Times.Never);
         }
 
         [Test]
@@ -370,9 +382,17 @@ namespace QuickBooksServiceLibrary.Tests
             StringAssert.Contains("TransactionType", result.StatusMessage);
             Assert.IsNull(result.Data);
             _mockRequestFactory.Verify(f => f.CreateAllItemNonInvQueryRequest(), Times.Never);
-            _mockRequestFactory.Verify(f => f.CreateAddItemNonInventoryRequest(It.IsAny<List<QBItem>>()), Times.Never);
-            _mockRequestFactory.Verify(f => f.CreateEstimateRequest(It.IsAny<QBOrder>()), Times.Never);
-            _mockRequestFactory.Verify(f => f.CreateSalesOrderRequest(It.IsAny<QBOrder>()), Times.Never);
+            _mockRequestFactory.Verify(
+                f => f.CreateAddItemNonInventoryRequest(
+                    It.IsAny<List<QBItem>>(),
+                    It.IsAny<string>()),
+                Times.Never);
+            _mockRequestFactory.Verify(
+                f => f.CreateEstimateRequest(It.IsAny<QBOrder>(), It.IsAny<string>()),
+                Times.Never);
+            _mockRequestFactory.Verify(
+                f => f.CreateSalesOrderRequest(It.IsAny<QBOrder>(), It.IsAny<string>()),
+                Times.Never);
         }
 
         [Test]
@@ -397,9 +417,17 @@ namespace QuickBooksServiceLibrary.Tests
             StringAssert.Contains("DueDate", result.StatusMessage);
             Assert.IsNull(result.Data);
             _mockRequestFactory.Verify(f => f.CreateAllItemNonInvQueryRequest(), Times.Never);
-            _mockRequestFactory.Verify(f => f.CreateAddItemNonInventoryRequest(It.IsAny<List<QBItem>>()), Times.Never);
-            _mockRequestFactory.Verify(f => f.CreateEstimateRequest(It.IsAny<QBOrder>()), Times.Never);
-            _mockRequestFactory.Verify(f => f.CreateSalesOrderRequest(It.IsAny<QBOrder>()), Times.Never);
+            _mockRequestFactory.Verify(
+                f => f.CreateAddItemNonInventoryRequest(
+                    It.IsAny<List<QBItem>>(),
+                    It.IsAny<string>()),
+                Times.Never);
+            _mockRequestFactory.Verify(
+                f => f.CreateEstimateRequest(It.IsAny<QBOrder>(), It.IsAny<string>()),
+                Times.Never);
+            _mockRequestFactory.Verify(
+                f => f.CreateSalesOrderRequest(It.IsAny<QBOrder>(), It.IsAny<string>()),
+                Times.Never);
         }
 
         [Test]
@@ -537,9 +565,10 @@ namespace QuickBooksServiceLibrary.Tests
             {
                 QuickBooksService.FingerprintCompanyFileName(companyPath)
             };
+            string writeFingerprint = request.ApprovedTestCompanyFingerprints[0];
             ArrangeEstimateQuery(calls, request.QuoteNumber, null);
             ArrangeCustomerAndItems(calls, request);
-            ArrangeEstimateAdd(calls, "TXN-EST-1", request.QuoteNumber);
+            ArrangeEstimateAdd(calls, "TXN-EST-1", request.QuoteNumber, writeFingerprint);
 
             QBStatusResponse<QBQuoteUploadResult> result = service.SubmitQuote(request);
 
@@ -567,8 +596,9 @@ namespace QuickBooksServiceLibrary.Tests
             {
                 QuickBooksService.FingerprintCompanyFileName(companyPath)
             };
+            string writeFingerprint = request.ApprovedTestCompanyFingerprints[0];
             ArrangeCustomerAndItems(calls, request);
-            ArrangeSalesOrderAdd(calls, "TXN-SO-TEST", "SO-TEST-1");
+            ArrangeSalesOrderAdd(calls, "TXN-SO-TEST", "SO-TEST-1", writeFingerprint);
 
             QBStatusResponse<QBQuoteUploadResult> result = service.SubmitQuote(request);
 
@@ -592,7 +622,7 @@ namespace QuickBooksServiceLibrary.Tests
             QBQuoteUploadRequest request = QuoteRequest(QBQuoteTransactionType.Estimate, "normal");
             ArrangeEstimateQuery(calls, request.QuoteNumber, null);
             ArrangeCustomerAndItems(calls, request);
-            ArrangeEstimateAdd(calls, "TXN-EST-2", request.QuoteNumber);
+            ArrangeEstimateAdd(calls, "TXN-EST-2", request.QuoteNumber, null);
 
             QBStatusResponse<QBQuoteUploadResult> result = service.SubmitQuote(request);
 
@@ -610,7 +640,7 @@ namespace QuickBooksServiceLibrary.Tests
                 () => throw new AssertionException("Normal quotes must not read the company file."));
             QBQuoteUploadRequest request = QuoteRequest(QBQuoteTransactionType.SalesOrder, "normal");
             ArrangeCustomerAndItems(calls, request);
-            ArrangeSalesOrderAdd(calls, "TXN-SO-1", "SO-9001");
+            ArrangeSalesOrderAdd(calls, "TXN-SO-1", "SO-9001", null);
 
             QBStatusResponse<QBQuoteUploadResult> result = service.SubmitQuote(request);
 
@@ -619,6 +649,85 @@ namespace QuickBooksServiceLibrary.Tests
             _mockRequestFactory.Verify(
                 value => value.CreateEstimateReferenceQueryRequest(It.IsAny<string>()),
                 Times.Never);
+        }
+
+        [Test]
+        public void QuoteWriteSafety_TestFingerprintPropagatesToItemAndEstimateWriteRequestsInOrder()
+        {
+            var calls = new List<string>();
+            const string companyPath = @"C:\Synthetic\Approved Company.qbw";
+            string writeFingerprint = QuickBooksService.FingerprintCompanyFileName(companyPath);
+            QuickBooksService service = ServiceWithCompany(
+                () =>
+                {
+                    calls.Add("company");
+                    return companyPath;
+                });
+            QBQuoteUploadRequest request = QuoteRequest(QBQuoteTransactionType.Estimate, "test");
+            request.ApprovedTestCompanyFingerprints = new List<string> { writeFingerprint };
+            request.Lines[0].OverrideNumber = "1-NEW";
+            ArrangeEstimateQuery(calls, request.QuoteNumber, null);
+
+            var customer = new Mock<ICustomerAccountNumberQueryRequest>();
+            customer.Setup(value => value.SendRequest())
+                .Callback(() => calls.Add("customer"))
+                .Returns(new QBCustomer
+                {
+                    AccountNumber = request.CustomerAccountNumber,
+                    Name = request.CustomerName
+                });
+            _mockRequestFactory
+                .Setup(value => value.CreateCustomerAccountNumberQueryRequest(request.CustomerAccountNumber))
+                .Returns(customer.Object);
+
+            int itemReads = 0;
+            var items = new Mock<IAllItemNonInvQueryRequest>();
+            items.Setup(value => value.SendRequest())
+                .Callback(() =>
+                {
+                    if (itemReads++ == 0) calls.Add("items");
+                })
+                .Returns(new QBStatusResponse<List<QBItem>>
+                {
+                    StatusCode = 0,
+                    StatusMessage = "OK",
+                    Data = new List<QBItem>()
+                });
+            _mockRequestFactory.Setup(value => value.CreateAllItemNonInvQueryRequest())
+                .Returns(items.Object);
+
+            var addItem = new Mock<IAddItemNonInventoryRequest>();
+            addItem.Setup(value => value.SendRequest())
+                .Callback(() => calls.Add("item-add"))
+                .Returns(new List<QBStatusResponse<string>>
+                {
+                    new QBStatusResponse<string> { StatusCode = 0, StatusMessage = "OK" }
+            });
+            _mockRequestFactory.Setup(value => value.CreateAddItemNonInventoryRequest(
+                    It.Is<List<QBItem>>(itemsToAdd =>
+                        itemsToAdd.Count == 1 && itemsToAdd[0].Number == "1-NEW"),
+                    writeFingerprint))
+                .Returns(addItem.Object);
+            ArrangeEstimateAdd(
+                calls,
+                "TXN-EST-GUARDED",
+                request.QuoteNumber,
+                writeFingerprint);
+
+            QBStatusResponse<QBQuoteUploadResult> result = service.SubmitQuote(request);
+
+            Assert.AreEqual(0, result.StatusCode, result.StatusMessage);
+            CollectionAssert.AreEqual(
+                new[]
+                {
+                    "company",
+                    "estimate-query",
+                    "customer",
+                    "items",
+                    "item-add",
+                    "estimate-add"
+                },
+                calls);
         }
 
         [Test]
@@ -644,6 +753,49 @@ namespace QuickBooksServiceLibrary.Tests
             Assert.AreEqual("Estimate was already submitted.", result.StatusMessage);
             Assert.AreEqual("TXN-CONFIRMED", result.Data.TransactionId);
             Assert.AreEqual(request.QuoteNumber, result.Data.AssignedReference);
+            CollectionAssert.AreEqual(new[] { "estimate-query" }, calls);
+            AssertNoCustomerItemOrTransactionWrites();
+        }
+
+        [Test]
+        public void QuoteWriteSafety_MultipleExactEstimateMatchesRequireReconciliationWithoutWrites()
+        {
+            var calls = new List<string>();
+            QuickBooksService service = ServiceWithCompany(
+                () => throw new AssertionException("Normal quotes must not read the company file."));
+            QBQuoteUploadRequest request = QuoteRequest(QBQuoteTransactionType.Estimate, "normal");
+            request.ConfirmedTransactionId = "TXN-CONFIRMED";
+            var query = new Mock<IEstimateReferenceQueryRequest>();
+            query.Setup(value => value.SendRequest())
+                .Callback(() => calls.Add("estimate-query"))
+                .Returns(new QBStatusResponse<List<QBEstimateReference>>
+                {
+                    StatusCode = 0,
+                    StatusMessage = "OK",
+                    Data = new List<QBEstimateReference>
+                    {
+                        new QBEstimateReference
+                        {
+                            Reference = request.QuoteNumber,
+                            TransactionId = "TXN-CONFIRMED"
+                        },
+                        new QBEstimateReference
+                        {
+                            Reference = request.QuoteNumber,
+                            TransactionId = "TXN-OTHER"
+                        }
+                    }
+                });
+            _mockRequestFactory
+                .Setup(value => value.CreateEstimateReferenceQueryRequest(request.QuoteNumber))
+                .Returns(query.Object);
+
+            QBStatusResponse<QBQuoteUploadResult> result = service.SubmitQuote(request);
+
+            Assert.AreEqual(1, result.StatusCode);
+            Assert.AreEqual(
+                "QuickBooks Estimate reconciliation is required.",
+                result.StatusMessage);
             CollectionAssert.AreEqual(new[] { "estimate-query" }, calls);
             AssertNoCustomerItemOrTransactionWrites();
         }
@@ -837,7 +989,8 @@ namespace QuickBooksServiceLibrary.Tests
         private void ArrangeEstimateAdd(
             List<string> calls,
             string transactionId,
-            string assignedReference)
+            string assignedReference,
+            string approvedCompanyFingerprint)
         {
             var add = new Mock<IEstimateRequest>();
             add.Setup(value => value.SendRequest())
@@ -852,14 +1005,17 @@ namespace QuickBooksServiceLibrary.Tests
                         AssignedReference = assignedReference
                     }
                 });
-            _mockRequestFactory.Setup(value => value.CreateEstimateRequest(It.IsAny<QBOrder>()))
+            _mockRequestFactory.Setup(value => value.CreateEstimateRequest(
+                    It.IsAny<QBOrder>(),
+                    approvedCompanyFingerprint))
                 .Returns(add.Object);
         }
 
         private void ArrangeSalesOrderAdd(
             List<string> calls,
             string transactionId,
-            string assignedReference)
+            string assignedReference,
+            string approvedCompanyFingerprint)
         {
             var add = new Mock<ISalesOrderRequest>();
             add.Setup(value => value.SendRequest())
@@ -874,7 +1030,9 @@ namespace QuickBooksServiceLibrary.Tests
                         AssignedReference = assignedReference
                     }
                 });
-            _mockRequestFactory.Setup(value => value.CreateSalesOrderRequest(It.IsAny<QBOrder>()))
+            _mockRequestFactory.Setup(value => value.CreateSalesOrderRequest(
+                    It.IsAny<QBOrder>(),
+                    approvedCompanyFingerprint))
                 .Returns(add.Object);
         }
 
@@ -898,13 +1056,19 @@ namespace QuickBooksServiceLibrary.Tests
                 value => value.CreateAllItemNonInvQueryRequest(),
                 Times.Never);
             _mockRequestFactory.Verify(
-                value => value.CreateAddItemNonInventoryRequest(It.IsAny<List<QBItem>>()),
+                value => value.CreateAddItemNonInventoryRequest(
+                    It.IsAny<List<QBItem>>(),
+                    It.IsAny<string>()),
                 Times.Never);
             _mockRequestFactory.Verify(
-                value => value.CreateEstimateRequest(It.IsAny<QBOrder>()),
+                value => value.CreateEstimateRequest(
+                    It.IsAny<QBOrder>(),
+                    It.IsAny<string>()),
                 Times.Never);
             _mockRequestFactory.Verify(
-                value => value.CreateSalesOrderRequest(It.IsAny<QBOrder>()),
+                value => value.CreateSalesOrderRequest(
+                    It.IsAny<QBOrder>(),
+                    It.IsAny<string>()),
                 Times.Never);
         }
 

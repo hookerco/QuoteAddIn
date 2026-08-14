@@ -25,9 +25,23 @@ namespace QBRequestLibrary
             return new SalesOrderRequest(order);
         }
 
+        public ISalesOrderRequest CreateSalesOrderRequest(
+            QBOrder order,
+            string approvedCompanyFingerprint)
+        {
+            return new SalesOrderRequest(order, approvedCompanyFingerprint);
+        }
+
         public IEstimateRequest CreateEstimateRequest(QBOrder order)
         {
             return new EstimateRequest(order);
+        }
+
+        public IEstimateRequest CreateEstimateRequest(
+            QBOrder order,
+            string approvedCompanyFingerprint)
+        {
+            return new EstimateRequest(order, approvedCompanyFingerprint);
         }
 
         public IEstimateReferenceQueryRequest CreateEstimateReferenceQueryRequest(string reference)
@@ -38,6 +52,13 @@ namespace QBRequestLibrary
         public IAddItemNonInventoryRequest CreateAddItemNonInventoryRequest(List<QBItem> items)
         {
             return new AddItemNonInventoryRequest(items);
+        }
+
+        public IAddItemNonInventoryRequest CreateAddItemNonInventoryRequest(
+            List<QBItem> items,
+            string approvedCompanyFingerprint)
+        {
+            return new AddItemNonInventoryRequest(items, approvedCompanyFingerprint);
         }
 
         public IAllItemNonInvQueryRequest CreateAllItemNonInvQueryRequest()

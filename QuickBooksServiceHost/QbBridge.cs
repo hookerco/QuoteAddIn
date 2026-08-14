@@ -46,7 +46,9 @@ namespace QuickBooksServiceHost
                 token,
                 SubmitQuoteHandler.Handle,
                 CommercialTermsHandler.Handle,
-                CustomerCommercialTermsHandler.Handle);
+                CustomerCommercialTermsHandler.Handle,
+                QuoteNumberAdminHandler.HandleReconciliation,
+                QuoteNumberAdminHandler.HandleCompanyIdentity);
 
             var listener = new HttpListener();
             listener.Prefixes.Add($"http://127.0.0.1:{port}/");

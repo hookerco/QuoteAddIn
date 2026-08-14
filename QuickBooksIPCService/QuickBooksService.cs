@@ -398,6 +398,29 @@ namespace QuickBooksIPCService
             return _requestFactory.CreateEstimateReferenceQueryRequest(null).SendRequest();
         }
 
+        public QBStatusResponse<string> GetCurrentCompanyFingerprint()
+        {
+            try
+            {
+                return new QBStatusResponse<string>
+                {
+                    StatusCode = 0,
+                    StatusMessage = "OK",
+                    Data = FingerprintCompanyFileName(_currentCompanyFileName())
+                };
+            }
+            catch
+            {
+                _logger.LogError("QuickBooks company identity query failed.");
+                return new QBStatusResponse<string>
+                {
+                    StatusCode = 1,
+                    StatusMessage = "QuickBooks company identity is unavailable.",
+                    Data = null
+                };
+            }
+        }
+
         public QBStatusResponse<QBEstimateReference> GetEstimateReference(string reference)
         {
             QBStatusResponse<List<QBEstimateReference>> response =

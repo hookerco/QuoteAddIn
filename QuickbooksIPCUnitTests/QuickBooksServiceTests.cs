@@ -100,6 +100,46 @@ namespace QuickBooksServiceLibrary.Tests
         }
 
         [Test]
+        public void QuoteNumberAdmin_GetCurrentCompanyFingerprintReturnsOnlyFingerprint()
+        {
+            const string companyFile = @"C:\Synthetic\Test Company.qbw";
+            _service = new QuickBooksService(
+                _mockRequestFactory.Object,
+                new Logger(_logPath),
+                () => companyFile,
+                initialize: false);
+
+            QBStatusResponse<string> result = _service.GetCurrentCompanyFingerprint();
+
+            Assert.AreEqual(0, result.StatusCode);
+            Assert.AreEqual("OK", result.StatusMessage);
+            Assert.AreEqual(
+                QuickBooksService.FingerprintCompanyFileName(companyFile),
+                result.Data);
+            StringAssert.DoesNotContain("Test Company.qbw", result.Data);
+        }
+
+        [Test]
+        public void QuoteNumberAdmin_GetCurrentCompanyFingerprintFailureIsGeneric()
+        {
+            _service = new QuickBooksService(
+                _mockRequestFactory.Object,
+                new Logger(_logPath),
+                () => throw new InvalidOperationException(
+                    @"invented C:\Sensitive\Company.qbw customer Acme QBFC detail"),
+                initialize: false);
+
+            QBStatusResponse<string> result = _service.GetCurrentCompanyFingerprint();
+
+            Assert.AreNotEqual(0, result.StatusCode);
+            Assert.AreEqual("QuickBooks company identity is unavailable.", result.StatusMessage);
+            Assert.IsNull(result.Data);
+            StringAssert.DoesNotContain("Company.qbw", result.StatusMessage);
+            StringAssert.DoesNotContain("customer Acme", result.StatusMessage);
+            StringAssert.DoesNotContain("QBFC detail", result.StatusMessage);
+        }
+
+        [Test]
         public void QuoteIdentity_GetEstimateReferenceUsesExactQueryAndReturnsFirstMatch()
         {
             var queryResponse = new QBStatusResponse<List<QBEstimateReference>>

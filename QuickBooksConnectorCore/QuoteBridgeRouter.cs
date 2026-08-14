@@ -32,6 +32,8 @@ namespace QuickBooksConnectorCore
         private readonly Func<string, string> _submitHandler;
         private readonly Func<string> _commercialTermsHandler;
         private readonly Func<string, string> _customerCommercialTermsHandler;
+        private readonly Func<string> _quoteNumberReconciliationHandler;
+        private readonly Func<string> _quickBooksCompanyIdentityHandler;
 
         /// <param name="origin">The single allowed app-server origin echoed as Access-Control-Allow-Origin.</param>
         /// <param name="token">The shared secret required in the <c>X-QB-Bridge-Token</c> header.</param>
@@ -44,7 +46,9 @@ namespace QuickBooksConnectorCore
                 token,
                 submitHandler,
                 CommercialTermsHandler.Handle,
-                CustomerCommercialTermsHandler.Handle)
+                CustomerCommercialTermsHandler.Handle,
+                QuoteNumberAdminHandler.HandleReconciliation,
+                QuoteNumberAdminHandler.HandleCompanyIdentity)
         {
         }
 
@@ -58,7 +62,9 @@ namespace QuickBooksConnectorCore
                 token,
                 submitHandler,
                 commercialTermsHandler,
-                CustomerCommercialTermsHandler.Handle)
+                CustomerCommercialTermsHandler.Handle,
+                QuoteNumberAdminHandler.HandleReconciliation,
+                QuoteNumberAdminHandler.HandleCompanyIdentity)
         {
         }
 
@@ -68,6 +74,25 @@ namespace QuickBooksConnectorCore
             Func<string, string> submitHandler,
             Func<string> commercialTermsHandler,
             Func<string, string> customerCommercialTermsHandler)
+            : this(
+                origin,
+                token,
+                submitHandler,
+                commercialTermsHandler,
+                customerCommercialTermsHandler,
+                QuoteNumberAdminHandler.HandleReconciliation,
+                QuoteNumberAdminHandler.HandleCompanyIdentity)
+        {
+        }
+
+        public QuoteBridgeRouter(
+            string origin,
+            string token,
+            Func<string, string> submitHandler,
+            Func<string> commercialTermsHandler,
+            Func<string, string> customerCommercialTermsHandler,
+            Func<string> quoteNumberReconciliationHandler,
+            Func<string> quickBooksCompanyIdentityHandler)
         {
             _origin = origin ?? string.Empty;
             _token = token ?? string.Empty;
@@ -76,6 +101,10 @@ namespace QuickBooksConnectorCore
                 throw new ArgumentNullException(nameof(commercialTermsHandler));
             _customerCommercialTermsHandler = customerCommercialTermsHandler ??
                 throw new ArgumentNullException(nameof(customerCommercialTermsHandler));
+            _quoteNumberReconciliationHandler = quoteNumberReconciliationHandler ??
+                throw new ArgumentNullException(nameof(quoteNumberReconciliationHandler));
+            _quickBooksCompanyIdentityHandler = quickBooksCompanyIdentityHandler ??
+                throw new ArgumentNullException(nameof(quickBooksCompanyIdentityHandler));
         }
 
         public BridgeHttpResponse Route(string method, string path, string token, string body)
@@ -147,6 +176,42 @@ namespace QuickBooksConnectorCore
                         ErrorBody(
                             "bridge_error",
                             "QuickBooks customer commercial terms are unavailable."));
+                }
+            }
+
+            if (path == "/quote-number-reconciliation" &&
+                string.Equals(method, "GET", StringComparison.OrdinalIgnoreCase))
+            {
+                try
+                {
+                    return Json(200, headers, _quoteNumberReconciliationHandler());
+                }
+                catch
+                {
+                    return Json(
+                        502,
+                        headers,
+                        ErrorBody(
+                            "bridge_error",
+                            "QuickBooks quote-number reconciliation is unavailable."));
+                }
+            }
+
+            if (path == "/quickbooks-company-identity" &&
+                string.Equals(method, "GET", StringComparison.OrdinalIgnoreCase))
+            {
+                try
+                {
+                    return Json(200, headers, _quickBooksCompanyIdentityHandler());
+                }
+                catch
+                {
+                    return Json(
+                        502,
+                        headers,
+                        ErrorBody(
+                            "bridge_error",
+                            "QuickBooks company identity is unavailable."));
                 }
             }
 

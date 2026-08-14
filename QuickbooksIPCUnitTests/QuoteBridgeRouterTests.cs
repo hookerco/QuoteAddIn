@@ -1,5 +1,7 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
+using System.Web.Script.Serialization;
 using NUnit.Framework;
 using QuickBooksConnectorCore;
 using QuickBooksIPCContracts;
@@ -25,6 +27,159 @@ namespace QuickbooksIPCUnitTests
         {
             // Stub the connector response as the bare {StatusCode,StatusMessage,Data} the CLI emits.
             return RouterWith(_ => "{\"StatusCode\":0,\"StatusMessage\":\"OK\",\"Data\":null}");
+        }
+
+        private static QuoteBridgeRouter QuoteNumberAdminRouter(
+            Func<string> reconciliationHandler,
+            Func<string> companyIdentityHandler)
+        {
+            return new QuoteBridgeRouter(
+                Origin,
+                Token,
+                _ => "{}",
+                () => "{}",
+                _ => "{}",
+                reconciliationHandler,
+                companyIdentityHandler);
+        }
+
+        [TestCase("/quote-number-reconciliation")]
+        [TestCase("/quickbooks-company-identity")]
+        public void QuoteNumberAdmin_WrongTokenIsForbidden(string path)
+        {
+            BridgeHttpResponse response = QuoteNumberAdminRouter(
+                () => throw new AssertionException("handler must not run"),
+                () => throw new AssertionException("handler must not run"))
+                .Route("GET", path, "wrong-token", null);
+
+            Assert.AreEqual(403, response.StatusCode);
+            StringAssert.DoesNotContain("handler must not run", response.Body);
+        }
+
+        [TestCase("POST", "/quote-number-reconciliation")]
+        [TestCase("POST", "/quickbooks-company-identity")]
+        public void QuoteNumberAdmin_OnlyGetIsAllowed(string method, string path)
+        {
+            BridgeHttpResponse response = QuoteNumberAdminRouter(
+                () => throw new AssertionException("handler must not run"),
+                () => throw new AssertionException("handler must not run"))
+                .Route(method, path, Token, null);
+
+            Assert.AreEqual(404, response.StatusCode);
+            StringAssert.DoesNotContain("handler must not run", response.Body);
+        }
+
+        [Test]
+        public void QuoteNumberAdmin_ReconciliationReturnsStrictSanitizedSchemaAndNumericEstimates()
+        {
+            string fingerprint = new string('a', 64);
+            string json = QuoteNumberAdminHandler.HandleReconciliation(
+                () => new QBStatusResponse<string>
+                {
+                    StatusCode = 0,
+                    StatusMessage = @"invented C:\Sensitive\Company.qbw customer Acme",
+                    Data = fingerprint
+                },
+                () => new QBStatusResponse<List<QBEstimateReference>>
+                {
+                    StatusCode = 0,
+                    StatusMessage = "invented raw QBFC error",
+                    Data = new List<QBEstimateReference>
+                    {
+                        new QBEstimateReference { Reference = "120050", TransactionId = "TXN-1" },
+                        new QBEstimateReference { Reference = "TEST-ABC123", TransactionId = "TXN-2" },
+                        new QBEstimateReference { Reference = "12A", TransactionId = "TXN-3" }
+                    }
+                },
+                "synthetic-user");
+
+            var payload = new JavaScriptSerializer()
+                .Deserialize<Dictionary<string, object>>(json);
+            CollectionAssert.AreEquivalent(
+                new[] { "schema_version", "windows_username", "company_fingerprint", "estimates" },
+                payload.Keys);
+            Assert.AreEqual(1, payload["schema_version"]);
+            Assert.AreEqual("synthetic-user", payload["windows_username"]);
+            Assert.AreEqual(fingerprint, payload["company_fingerprint"]);
+
+            var estimates = (ArrayList)payload["estimates"];
+            Assert.AreEqual(1, estimates.Count);
+            var estimate = (Dictionary<string, object>)estimates[0];
+            CollectionAssert.AreEquivalent(
+                new[] { "reference", "transaction_id" }, estimate.Keys);
+            Assert.AreEqual("120050", estimate["reference"]);
+            Assert.AreEqual("TXN-1", estimate["transaction_id"]);
+            StringAssert.DoesNotContain("Company.qbw", json);
+            StringAssert.DoesNotContain("customer Acme", json);
+            StringAssert.DoesNotContain("QBFC error", json);
+        }
+
+        [Test]
+        public void QuoteNumberAdmin_CompanyIdentityReturnsOnlyBoundedIdentityFields()
+        {
+            string fingerprint = new string('b', 64);
+            string json = QuoteNumberAdminHandler.HandleCompanyIdentity(
+                () => new QBStatusResponse<string>
+                {
+                    StatusCode = 0,
+                    StatusMessage = @"invented C:\Sensitive\Company.qbw",
+                    Data = fingerprint
+                },
+                "synthetic-user");
+
+            var payload = new JavaScriptSerializer()
+                .Deserialize<Dictionary<string, object>>(json);
+            CollectionAssert.AreEquivalent(
+                new[] { "schema_version", "windows_username", "company_fingerprint" },
+                payload.Keys);
+            Assert.AreEqual(1, payload["schema_version"]);
+            Assert.AreEqual("synthetic-user", payload["windows_username"]);
+            Assert.AreEqual(fingerprint, payload["company_fingerprint"]);
+            StringAssert.DoesNotContain("Company.qbw", json);
+        }
+
+        [Test]
+        public void QuoteNumberAdmin_ReconciliationRejectsCompanyChangeDuringScan()
+        {
+            int identityReads = 0;
+            TestDelegate action = () => QuoteNumberAdminHandler.HandleReconciliation(
+                () => new QBStatusResponse<string>
+                {
+                    StatusCode = 0,
+                    StatusMessage = "OK",
+                    Data = ++identityReads == 1 ? new string('a', 64) : new string('b', 64)
+                },
+                () => new QBStatusResponse<List<QBEstimateReference>>
+                {
+                    StatusCode = 0,
+                    StatusMessage = "OK",
+                    Data = new List<QBEstimateReference>()
+                },
+                "synthetic-user");
+
+            InvalidOperationException error = Assert.Throws<InvalidOperationException>(action);
+            Assert.AreEqual(
+                "QuickBooks quote-number reconciliation is unavailable.",
+                error.Message);
+        }
+
+        [TestCase("/quote-number-reconciliation", "QuickBooks quote-number reconciliation is unavailable.")]
+        [TestCase("/quickbooks-company-identity", "QuickBooks company identity is unavailable.")]
+        public void QuoteNumberAdmin_FailuresUseFixedMessages(string path, string expectedMessage)
+        {
+            var router = QuoteNumberAdminRouter(
+                () => throw new InvalidOperationException(
+                    @"invented C:\Sensitive\Company.qbw customer Acme QBFC detail"),
+                () => throw new InvalidOperationException(
+                    @"invented C:\Sensitive\Company.qbw customer Acme QBFC detail"));
+
+            BridgeHttpResponse response = router.Route("GET", path, Token, null);
+
+            Assert.AreEqual(502, response.StatusCode);
+            StringAssert.Contains(expectedMessage, response.Body);
+            StringAssert.DoesNotContain("Company.qbw", response.Body);
+            StringAssert.DoesNotContain("customer Acme", response.Body);
+            StringAssert.DoesNotContain("QBFC detail", response.Body);
         }
 
         [Test]

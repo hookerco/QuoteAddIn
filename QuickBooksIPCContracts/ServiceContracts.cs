@@ -25,6 +25,9 @@ namespace QuickBooksIPCContracts
         QBStatusResponse<QBEstimateReference> GetEstimateReference(string reference);
 
         [OperationContract]
+        QBStatusResponse<string> GetCurrentCompanyFingerprint();
+
+        [OperationContract]
         QBStatusResponse<QBCommercialTermsCatalog> GetCommercialTerms();
 
         [OperationContract]

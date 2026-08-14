@@ -45,6 +45,7 @@
     <Compile Include="QuickBooksPipeBindingFactory.cs" />
     <Compile Include="QuickBooksServiceConnection.cs" />
     <Compile Include="QuoteBridgeRouter.cs" />
+    <Compile Include="QuoteNumberAdminHandler.cs" />
     <Compile Include="QuoteRequestParseException.cs" />
     <Compile Include="SubmitQuoteHandler.cs" />
   </ItemGroup>

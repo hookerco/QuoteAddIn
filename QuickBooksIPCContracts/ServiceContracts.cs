@@ -19,6 +19,12 @@ namespace QuickBooksIPCContracts
         QBStatusResponse<QBQuoteUploadResult> SubmitQuote(QBQuoteUploadRequest request);
 
         [OperationContract]
+        QBStatusResponse<List<QBEstimateReference>> GetEstimateReferences();
+
+        [OperationContract]
+        QBStatusResponse<QBEstimateReference> GetEstimateReference(string reference);
+
+        [OperationContract]
         QBStatusResponse<QBCommercialTermsCatalog> GetCommercialTerms();
 
         [OperationContract]

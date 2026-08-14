@@ -5,6 +5,7 @@ using System.CodeDom;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Diagnostics.Tracing;
+using System.Globalization;
 
 namespace QBRequestLibrary
 {
@@ -190,7 +191,7 @@ namespace QBRequestLibrary
         }
     }
 
-    public class SalesOrderRequest : Request<QBOrder, QBStatusResponse<string>>, ISalesOrderRequest
+    public class SalesOrderRequest : Request<QBOrder, QBStatusResponse<QBTransactionIdentity>>, ISalesOrderRequest
     {
         public SalesOrderRequest(QBOrder salesOrder)
         {
@@ -216,7 +217,7 @@ namespace QBRequestLibrary
             }
         }
 
-        protected override QBStatusResponse<string> ConvertResponse(IMsgSetResponse responseSet)
+        protected override QBStatusResponse<QBTransactionIdentity> ConvertResponse(IMsgSetResponse responseSet)
         {
             IResponse response;
             try
@@ -230,18 +231,20 @@ namespace QBRequestLibrary
             }
             if ((ENResponseType)response.Type.GetValue() != ENResponseType.rtSalesOrderAddRs) { throw new QBRequestLibraryRuntimeError("Not a SalesOrderAddResponse"); }
             ISalesOrderRet salesOrderRet = response.Detail as ISalesOrderRet;
-            string transactionId = salesOrderRet == null || salesOrderRet.TxnID == null
-                ? null : salesOrderRet.TxnID.GetValue();
-            return new QBStatusResponse<string>
+            return new QBStatusResponse<QBTransactionIdentity>
             {
                 StatusCode = response.StatusCode,
                 StatusMessage = response.StatusMessage,
-                Data = transactionId
+                Data = salesOrderRet == null ? null : new QBTransactionIdentity
+                {
+                    TransactionId = salesOrderRet.TxnID?.GetValue(),
+                    AssignedReference = salesOrderRet.RefNumber?.GetValue()
+                }
             };
         }
     }
 
-    public class EstimateRequest : Request<QBOrder, QBStatusResponse<string>>, IEstimateRequest
+    public class EstimateRequest : Request<QBOrder, QBStatusResponse<QBTransactionIdentity>>, IEstimateRequest
     {
         public EstimateRequest(QBOrder estimate)
         {
@@ -270,7 +273,7 @@ namespace QBRequestLibrary
             }
         }
 
-        protected override QBStatusResponse<string> ConvertResponse(IMsgSetResponse responseSet)
+        protected override QBStatusResponse<QBTransactionIdentity> ConvertResponse(IMsgSetResponse responseSet)
         {
             IResponse response;
             try
@@ -284,13 +287,90 @@ namespace QBRequestLibrary
             }
             if ((ENResponseType)response.Type.GetValue() != ENResponseType.rtEstimateAddRs) { throw new QBRequestLibraryRuntimeError("Not an EstimateAddResponse"); }
             IEstimateRet estimateRet = response.Detail as IEstimateRet;
-            string transactionId = estimateRet == null || estimateRet.TxnID == null
-                ? null : estimateRet.TxnID.GetValue();
-            return new QBStatusResponse<string>
+            return new QBStatusResponse<QBTransactionIdentity>
             {
                 StatusCode = response.StatusCode,
                 StatusMessage = response.StatusMessage,
-                Data = transactionId
+                Data = estimateRet == null ? null : new QBTransactionIdentity
+                {
+                    TransactionId = estimateRet.TxnID?.GetValue(),
+                    AssignedReference = estimateRet.RefNumber?.GetValue()
+                }
+            };
+        }
+    }
+
+    public class EstimateReferenceQueryRequest
+        : Request<string, QBStatusResponse<List<QBEstimateReference>>>,
+          IEstimateReferenceQueryRequest
+    {
+        public EstimateReferenceQueryRequest(string reference)
+        {
+            Set(reference ?? string.Empty);
+        }
+
+        protected override void BuildHelper()
+        {
+            IEstimateQuery request = _msgSetRequest.AppendEstimateQueryRq();
+            request.IncludeRetElementList.Add("TxnID");
+            request.IncludeRetElementList.Add("RefNumber");
+
+            if (!string.IsNullOrWhiteSpace(_value))
+            {
+                request.ORTxnQuery.RefNumberList.Add(_value);
+            }
+        }
+
+        protected override QBStatusResponse<List<QBEstimateReference>> ConvertResponse(
+            IMsgSetResponse responseSet)
+        {
+            IResponse response;
+            try
+            {
+                response = GetFirstResponse(responseSet);
+            }
+            catch (InvalidResponseException)
+            {
+                response = responseSet.ResponseList.GetAt(0);
+            }
+
+            if ((ENResponseType)response.Type.GetValue() != ENResponseType.rtEstimateQueryRs)
+            {
+                throw new QBRequestLibraryRuntimeError("Not an EstimateQueryResponse");
+            }
+
+            bool numericScan = string.IsNullOrWhiteSpace(_value);
+            var references = new List<QBEstimateReference>();
+            IEstimateRetList estimates = response.Detail as IEstimateRetList;
+            for (int index = 0; estimates != null && index < estimates.Count; index++)
+            {
+                IEstimateRet estimate = estimates.GetAt(index);
+                string reference = estimate.RefNumber?.GetValue();
+                long numericReference;
+                if (string.IsNullOrEmpty(reference) ||
+                    (numericScan &&
+                     (!long.TryParse(
+                         reference,
+                         NumberStyles.None,
+                         CultureInfo.InvariantCulture,
+                         out numericReference) || numericReference <= 0)) ||
+                    (!numericScan && !string.Equals(reference, _value, StringComparison.Ordinal)))
+                {
+                    continue;
+                }
+
+                references.Add(new QBEstimateReference
+                {
+                    Reference = reference,
+                    TransactionId = estimate.TxnID?.GetValue()
+                });
+            }
+
+            return new QBStatusResponse<List<QBEstimateReference>>
+            {
+                StatusCode = response.StatusCode,
+                StatusMessage = response.StatusMessage,
+                Data = references
             };
         }
     }

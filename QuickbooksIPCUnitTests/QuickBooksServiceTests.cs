@@ -39,10 +39,15 @@ namespace QuickBooksServiceLibrary.Tests
                 }
             };
 
-            var expectedResponse = new QBStatusResponse<string>
+            var expectedResponse = new QBStatusResponse<QBTransactionIdentity>
             {
                 StatusCode = 0,
-                StatusMessage = "Order Added Successfully"
+                StatusMessage = "Order Added Successfully",
+                Data = new QBTransactionIdentity
+                {
+                    TransactionId = "TXN-SO-1",
+                    AssignedReference = "SO-9001"
+                }
             };
 
             var mockSalesOrderRequest = new Mock<ISalesOrderRequest>();
@@ -59,9 +64,60 @@ namespace QuickBooksServiceLibrary.Tests
             Assert.That(result, Is.Not.Null);
             Assert.AreEqual(expectedResponse.StatusCode, result.StatusCode);
             Assert.AreEqual(expectedResponse.StatusMessage, result.StatusMessage);
+            Assert.AreEqual("TXN-SO-1", result.Data);
 
             _mockRequestFactory.Verify(f => f.CreateSalesOrderRequest(order), Times.Once);
             mockSalesOrderRequest.Verify(r => r.SendRequest(), Times.Once);
+        }
+
+        [Test]
+        public void QuoteIdentity_GetEstimateReferencesUsesUnfilteredQuery()
+        {
+            var expectedResponse = new QBStatusResponse<List<QBEstimateReference>>
+            {
+                StatusCode = 0,
+                StatusMessage = "OK",
+                Data = new List<QBEstimateReference>
+                {
+                    new QBEstimateReference { Reference = "120050", TransactionId = "TXN-1" }
+                }
+            };
+            var query = new Mock<IEstimateReferenceQueryRequest>();
+            query.Setup(value => value.SendRequest()).Returns(expectedResponse);
+            _mockRequestFactory.Setup(value => value.CreateEstimateReferenceQueryRequest(null))
+                .Returns(query.Object);
+
+            QBStatusResponse<List<QBEstimateReference>> result = _service.GetEstimateReferences();
+
+            Assert.AreSame(expectedResponse, result);
+            _mockRequestFactory.Verify(
+                value => value.CreateEstimateReferenceQueryRequest(null), Times.Once);
+        }
+
+        [Test]
+        public void QuoteIdentity_GetEstimateReferenceUsesExactQueryAndReturnsFirstMatch()
+        {
+            var queryResponse = new QBStatusResponse<List<QBEstimateReference>>
+            {
+                StatusCode = 0,
+                StatusMessage = "OK",
+                Data = new List<QBEstimateReference>
+                {
+                    new QBEstimateReference { Reference = "TEST-ABC123", TransactionId = "TXN-2" }
+                }
+            };
+            var query = new Mock<IEstimateReferenceQueryRequest>();
+            query.Setup(value => value.SendRequest()).Returns(queryResponse);
+            _mockRequestFactory
+                .Setup(value => value.CreateEstimateReferenceQueryRequest("TEST-ABC123"))
+                .Returns(query.Object);
+
+            QBStatusResponse<QBEstimateReference> result =
+                _service.GetEstimateReference("TEST-ABC123");
+
+            Assert.AreEqual(0, result.StatusCode);
+            Assert.AreEqual("TEST-ABC123", result.Data.Reference);
+            Assert.AreEqual("TXN-2", result.Data.TransactionId);
         }
 
         [Test]
@@ -211,7 +267,16 @@ namespace QuickBooksServiceLibrary.Tests
                 .Setup(f => f.CreateAllItemNonInvQueryRequest())
                 .Returns(mockAllItemsRequest.Object);
 
-            var orderResponse = new QBStatusResponse<string> { StatusCode = 0, StatusMessage = "OK" };
+            var orderResponse = new QBStatusResponse<QBTransactionIdentity>
+            {
+                StatusCode = 0,
+                StatusMessage = "OK",
+                Data = new QBTransactionIdentity
+                {
+                    TransactionId = "TXN-SO-1",
+                    AssignedReference = "SO-9001"
+                }
+            };
             var mockSalesOrderRequest = new Mock<ISalesOrderRequest>();
             mockSalesOrderRequest.Setup(r => r.SendRequest()).Returns(orderResponse);
             _mockRequestFactory
@@ -234,6 +299,8 @@ namespace QuickBooksServiceLibrary.Tests
             Assert.AreEqual(QBQuoteTransactionType.SalesOrder, result.Data.TransactionType);
             Assert.AreEqual("CustomerName", result.Data.CustomerName);
             Assert.AreEqual("Q-100", result.Data.QuoteNumber);
+            Assert.AreEqual("TXN-SO-1", result.Data.TransactionId);
+            Assert.AreEqual("SO-9001", result.Data.AssignedReference);
             Assert.AreEqual("1-1000", result.Data.Lines[0].Number);
             Assert.IsFalse(result.Data.Lines[0].CreatedItem);
             _mockRequestFactory.Verify(f => f.CreateSalesOrderRequest(It.IsAny<QBOrder>()), Times.Once);

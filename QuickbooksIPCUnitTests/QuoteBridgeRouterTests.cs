@@ -350,6 +350,29 @@ namespace QuickbooksIPCUnitTests
         }
 
         [Test]
+        public void QuoteIdentity_SubmitQuoteSerializesReturnedTransactionIdentity()
+        {
+            string json = SubmitQuoteHandler.Handle(
+                "{}",
+                _ => new QBStatusResponse<QBQuoteUploadResult>
+                {
+                    StatusCode = 0,
+                    StatusMessage = "OK",
+                    Data = new QBQuoteUploadResult
+                    {
+                        TransactionType = QBQuoteTransactionType.SalesOrder,
+                        QuoteNumber = "120050",
+                        TransactionId = "TXN-SO-1",
+                        AssignedReference = "SO-9001",
+                        Lines = new List<QBQuoteUploadResolvedLine>()
+                    }
+                });
+
+            StringAssert.Contains("\"TransactionId\":\"TXN-SO-1\"", json);
+            StringAssert.Contains("\"AssignedReference\":\"SO-9001\"", json);
+        }
+
+        [Test]
         public void SubmitQuote_MalformedBody_IsBadRequest()
         {
             Func<QBQuoteUploadRequest, QBStatusResponse<QBQuoteUploadResult>> submit =

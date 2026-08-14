@@ -30,6 +30,11 @@ namespace QBRequestLibrary
             return new EstimateRequest(order);
         }
 
+        public IEstimateReferenceQueryRequest CreateEstimateReferenceQueryRequest(string reference)
+        {
+            return new EstimateReferenceQueryRequest(reference);
+        }
+
         public IAddItemNonInventoryRequest CreateAddItemNonInventoryRequest(List<QBItem> items)
         {
             return new AddItemNonInventoryRequest(items);

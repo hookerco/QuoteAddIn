@@ -12,9 +12,12 @@ namespace QBRequestLibrary
 
     public interface ICustomerAccountNumberQueryRequest : IRequest<string, QBCustomer> { }
 
-    public interface ISalesOrderRequest : IRequest<QBOrder, QBStatusResponse<string>> { }
+    public interface ISalesOrderRequest : IRequest<QBOrder, QBStatusResponse<QBTransactionIdentity>> { }
 
-    public interface IEstimateRequest : IRequest<QBOrder, QBStatusResponse<string>> { }
+    public interface IEstimateRequest : IRequest<QBOrder, QBStatusResponse<QBTransactionIdentity>> { }
+
+    public interface IEstimateReferenceQueryRequest
+        : IRequest<string, QBStatusResponse<List<QBEstimateReference>>> { }
 
     public interface IAddItemNonInventoryRequest : IRequest<List<QBItem>, List<QBStatusResponse<string>>> { }
 

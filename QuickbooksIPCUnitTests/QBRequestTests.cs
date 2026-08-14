@@ -13,6 +13,45 @@ namespace QuickBooksServiceLibrary.Tests
     public class QBRequestTests
     {
         [Test]
+        public void QuoteIdentity_LoggerDefaultPathUsesEnvironmentOverride()
+        {
+            const string variable = "QUOTEADDIN_LOG_PATH";
+            const string expected = @"C:\Temp\quoteaddin-unit-tests.log";
+            string previous = Environment.GetEnvironmentVariable(variable);
+
+            try
+            {
+                Environment.SetEnvironmentVariable(variable, expected);
+
+                Assert.AreEqual(expected, Logger.DefaultLogFilePath());
+            }
+            finally
+            {
+                Environment.SetEnvironmentVariable(variable, previous);
+            }
+        }
+
+        [Test]
+        public void QuoteIdentity_ConnectionReadsCompanyFileOnlyAfterSessionBegins()
+        {
+            var calls = new List<string>();
+            var sessionManager = new Mock<IQBSessionManager>();
+            sessionManager.Setup(value => value.OpenConnection("", "Proto-CAM QB Library"))
+                .Callback(() => calls.Add("open"));
+            sessionManager.Setup(value => value.BeginSession("", ENOpenMode.omDontCare))
+                .Callback(() => calls.Add("begin"));
+            sessionManager.Setup(value => value.GetCurrentCompanyFileName())
+                .Callback(() => calls.Add("identity"))
+                .Returns(@"C:\Synthetic\Test Company.qbw");
+            var connection = new TestableConnection(sessionManager.Object);
+
+            Assert.IsTrue(connection.Open());
+
+            CollectionAssert.AreEqual(new[] { "open", "begin", "identity" }, calls);
+            Assert.AreEqual(@"C:\Synthetic\Test Company.qbw", connection.CurrentCompanyFileName);
+        }
+
+        [Test]
         public void AllItemNonInvQueryRequest_WhenServiceQueryFails_ReturnsFailureStatus()
         {
             var request = CreateRequestWithoutConnectingOrLogging();
@@ -27,7 +66,7 @@ namespace QuickBooksServiceLibrary.Tests
         }
 
         [Test]
-        public void SalesOrderRequest_LetsQuickBooksAssignNextRefNumber()
+        public void QuoteIdentity_SalesOrderRequest_LetsQuickBooksAssignNextRefNumber()
         {
             var request = new TestableSalesOrderRequest(CreateOrder("Q-100"));
             var msgSetRequest = new Mock<IMsgSetRequest>();
@@ -50,6 +89,85 @@ namespace QuickBooksServiceLibrary.Tests
             Assert.Throws<MissingMethodException>(() => request.BuildInto(msgSetRequest.Object));
 
             refNumber.Verify(value => value.SetValue("Q-200"), Times.Once);
+        }
+
+        [Test]
+        public void QuoteIdentity_EstimateReferenceQueryRequestsOnlyIdentityFieldsAndExactMatch()
+        {
+            var request = new TestableEstimateReferenceQueryRequest("120050");
+            var msgSetRequest = new Mock<IMsgSetRequest>();
+            var query = new Mock<IEstimateQuery>();
+            var includeRetElements = new Mock<IBSTRList>();
+            var txnQuery = new Mock<IORTxnQuery>();
+            var refNumbers = new Mock<IBSTRList>();
+            msgSetRequest.Setup(value => value.AppendEstimateQueryRq()).Returns(query.Object);
+            query.SetupGet(value => value.IncludeRetElementList).Returns(includeRetElements.Object);
+            query.SetupGet(value => value.ORTxnQuery).Returns(txnQuery.Object);
+            txnQuery.SetupGet(value => value.RefNumberList).Returns(refNumbers.Object);
+
+            request.BuildInto(msgSetRequest.Object);
+
+            includeRetElements.Verify(value => value.Add("TxnID"), Times.Once);
+            includeRetElements.Verify(value => value.Add("RefNumber"), Times.Once);
+            includeRetElements.Verify(value => value.Add(It.IsAny<string>()), Times.Exactly(2));
+            refNumbers.Verify(value => value.Add("120050"), Times.Once);
+        }
+
+        [Test]
+        public void QuoteIdentity_EstimateReferenceScanReturnsOnlyPositiveDecimalReferences()
+        {
+            var request = new TestableEstimateReferenceQueryRequest(null);
+            var estimates = new Mock<IEstimateRetList>();
+            estimates.SetupGet(value => value.Count).Returns(5);
+            estimates.Setup(value => value.GetAt(0)).Returns(CreateEstimate("120050", "TXN-1"));
+            estimates.Setup(value => value.GetAt(1)).Returns(CreateEstimate("", "TXN-2"));
+            estimates.Setup(value => value.GetAt(2)).Returns(CreateEstimate("TEST-ABC123", "TXN-3"));
+            estimates.Setup(value => value.GetAt(3)).Returns(CreateEstimate("0", "TXN-4"));
+            estimates.Setup(value => value.GetAt(4)).Returns(CreateEstimate("120051", "TXN-5"));
+            IMsgSetResponse responseSet = CreateResponseSet(
+                CreateResponse(ENResponseType.rtEstimateQueryRs, 0, "Status OK", estimates.Object));
+
+            QBStatusResponse<List<QBEstimateReference>> result = request.Convert(responseSet);
+
+            Assert.AreEqual(0, result.StatusCode);
+            CollectionAssert.AreEqual(
+                new[] { "120050", "120051" },
+                result.Data.ConvertAll(value => value.Reference));
+            CollectionAssert.AreEqual(
+                new[] { "TXN-1", "TXN-5" },
+                result.Data.ConvertAll(value => value.TransactionId));
+        }
+
+        [Test]
+        public void QuoteIdentity_SalesOrderAddReturnsTransactionIdAndAssignedReference()
+        {
+            var request = new TestableSalesOrderRequest(CreateOrder("Q-300"));
+            var salesOrder = new Mock<ISalesOrderRet>();
+            salesOrder.SetupGet(value => value.TxnID).Returns(CreateId("TXN-SO-1").Object);
+            salesOrder.SetupGet(value => value.RefNumber).Returns(CreateString("SO-9001").Object);
+            IMsgSetResponse responseSet = CreateResponseSet(
+                CreateResponse(ENResponseType.rtSalesOrderAddRs, 0, "Status OK", salesOrder.Object));
+
+            QBStatusResponse<QBTransactionIdentity> result = request.Convert(responseSet);
+
+            Assert.AreEqual("TXN-SO-1", result.Data.TransactionId);
+            Assert.AreEqual("SO-9001", result.Data.AssignedReference);
+        }
+
+        [Test]
+        public void QuoteIdentity_EstimateAddReturnsTransactionIdAndAssignedReference()
+        {
+            var request = new TestableEstimateRequest(CreateOrder("Q-400"));
+            var estimate = new Mock<IEstimateRet>();
+            estimate.SetupGet(value => value.TxnID).Returns(CreateId("TXN-EST-1").Object);
+            estimate.SetupGet(value => value.RefNumber).Returns(CreateString("EST-400").Object);
+            IMsgSetResponse responseSet = CreateResponseSet(
+                CreateResponse(ENResponseType.rtEstimateAddRs, 0, "Status OK", estimate.Object));
+
+            QBStatusResponse<QBTransactionIdentity> result = request.Convert(responseSet);
+
+            Assert.AreEqual("TXN-EST-1", result.Data.TransactionId);
+            Assert.AreEqual("EST-400", result.Data.AssignedReference);
         }
 
         [Test]
@@ -330,6 +448,21 @@ namespace QuickBooksServiceLibrary.Tests
             return customer.Object;
         }
 
+        private static IEstimateRet CreateEstimate(string reference, string transactionId)
+        {
+            var estimate = new Mock<IEstimateRet>();
+            estimate.SetupGet(value => value.RefNumber).Returns(CreateString(reference).Object);
+            estimate.SetupGet(value => value.TxnID).Returns(CreateId(transactionId).Object);
+            return estimate.Object;
+        }
+
+        private static Mock<IQBIDType> CreateId(string value)
+        {
+            var result = new Mock<IQBIDType>();
+            result.Setup(field => field.GetValue()).Returns(value);
+            return result;
+        }
+
         private static Mock<IQBStringType> CreateString(string value)
         {
             var result = new Mock<IQBStringType>();
@@ -359,6 +492,11 @@ namespace QuickBooksServiceLibrary.Tests
                 _msgSetRequest = msgSetRequest;
                 BuildHelper();
             }
+
+            public QBStatusResponse<QBTransactionIdentity> Convert(IMsgSetResponse responseSet)
+            {
+                return ConvertResponse(responseSet);
+            }
         }
 
         private sealed class TestableEstimateRequest : EstimateRequest
@@ -374,6 +512,49 @@ namespace QuickBooksServiceLibrary.Tests
             {
                 _msgSetRequest = msgSetRequest;
                 BuildHelper();
+            }
+
+            public QBStatusResponse<QBTransactionIdentity> Convert(IMsgSetResponse responseSet)
+            {
+                return ConvertResponse(responseSet);
+            }
+        }
+
+        private sealed class TestableEstimateReferenceQueryRequest
+            : EstimateReferenceQueryRequest
+        {
+            public TestableEstimateReferenceQueryRequest(string reference)
+                : base(reference)
+            {
+                GC.SuppressFinalize(this);
+                GC.SuppressFinalize(_connection);
+            }
+
+            public void BuildInto(IMsgSetRequest msgSetRequest)
+            {
+                _msgSetRequest = msgSetRequest;
+                BuildHelper();
+            }
+
+            public QBStatusResponse<List<QBEstimateReference>> Convert(IMsgSetResponse responseSet)
+            {
+                return ConvertResponse(responseSet);
+            }
+        }
+
+        private sealed class TestableConnection : Connection
+        {
+            private readonly IQBSessionManager _sessionManager;
+
+            public TestableConnection(IQBSessionManager sessionManager)
+            {
+                _sessionManager = sessionManager;
+                GC.SuppressFinalize(this);
+            }
+
+            protected override IQBSessionManager CreateSessionManager()
+            {
+                return _sessionManager;
             }
         }
 

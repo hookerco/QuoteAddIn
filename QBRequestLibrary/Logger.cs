@@ -22,6 +22,12 @@ namespace QBRequestLibrary
 
         public static string DefaultLogFilePath()
         {
+            string overridePath = Environment.GetEnvironmentVariable("QUOTEADDIN_LOG_PATH");
+            if (!string.IsNullOrWhiteSpace(overridePath))
+            {
+                return overridePath;
+            }
+
             return Path.Combine(@"Z:\COLTON TEST\QBUtility Beta Install\", "logs", Environment.UserName + ".txt");
         }
 

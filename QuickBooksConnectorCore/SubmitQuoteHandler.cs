@@ -296,6 +296,8 @@ namespace QuickBooksConnectorCore
                 { "TransactionType", result.TransactionType.ToString() },
                 { "CustomerName", result.CustomerName },
                 { "QuoteNumber", result.QuoteNumber },
+                { "TransactionId", result.TransactionId },
+                { "AssignedReference", result.AssignedReference },
                 { "Lines", lines }
             };
         }

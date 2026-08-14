@@ -310,18 +310,57 @@ namespace QuickBooksIPCService
 
         public QBStatusResponse<string> AddOrder(QBOrder order)
         {
+            return LegacyTransactionResponse(AddOrderWithIdentity(order));
+        }
+
+        public QBStatusResponse<string> AddEstimate(QBOrder order)
+        {
+            return LegacyTransactionResponse(AddEstimateWithIdentity(order));
+        }
+
+        private QBStatusResponse<QBTransactionIdentity> AddOrderWithIdentity(QBOrder order)
+        {
             var req = _requestFactory.CreateSalesOrderRequest(order);
             var response = req.SendRequest();
             _logger.LogTransaction($"Added order {order.QuoteNumber} for customer {order.Customer.Name}");
             return response;
         }
 
-        public QBStatusResponse<string> AddEstimate(QBOrder order)
+        private QBStatusResponse<QBTransactionIdentity> AddEstimateWithIdentity(QBOrder order)
         {
             var req = _requestFactory.CreateEstimateRequest(order);
             var response = req.SendRequest();
             _logger.LogTransaction($"Added estimate {order.QuoteNumber} for customer {order.Customer.Name}");
             return response;
+        }
+
+        private static QBStatusResponse<string> LegacyTransactionResponse(
+            QBStatusResponse<QBTransactionIdentity> response)
+        {
+            return new QBStatusResponse<string>
+            {
+                StatusCode = response.StatusCode,
+                StatusMessage = response.StatusMessage,
+                Data = response.Data?.TransactionId
+            };
+        }
+
+        public QBStatusResponse<List<QBEstimateReference>> GetEstimateReferences()
+        {
+            return _requestFactory.CreateEstimateReferenceQueryRequest(null).SendRequest();
+        }
+
+        public QBStatusResponse<QBEstimateReference> GetEstimateReference(string reference)
+        {
+            QBStatusResponse<List<QBEstimateReference>> response =
+                _requestFactory.CreateEstimateReferenceQueryRequest(reference).SendRequest();
+            return new QBStatusResponse<QBEstimateReference>
+            {
+                StatusCode = response.StatusCode,
+                StatusMessage = response.StatusMessage,
+                Data = response.Data == null || response.Data.Count == 0
+                    ? null : response.Data[0]
+            };
         }
 
         public QBStatusResponse<QBQuoteUploadResult> SubmitQuote(QBQuoteUploadRequest request)
@@ -386,17 +425,23 @@ namespace QuickBooksIPCService
                 Lines = resolution.ResolvedLines
             };
 
-            QBStatusResponse<string> transactionResponse;
+            QBStatusResponse<QBTransactionIdentity> transactionResponse;
             try
             {
                 transactionResponse = request.TransactionType == QBQuoteTransactionType.Estimate
-                    ? AddEstimate(order)
-                    : AddOrder(order);
+                    ? AddEstimateWithIdentity(order)
+                    : AddOrderWithIdentity(order);
             }
             catch (Exception ex)
             {
                 _logger.LogError($"Failed to submit QuickBooks quote: {ex.Message}");
                 return Failure($"Failed to submit QuickBooks quote: {ex.Message}");
+            }
+
+            if (transactionResponse.StatusCode == 0 && transactionResponse.Data != null)
+            {
+                result.TransactionId = transactionResponse.Data.TransactionId;
+                result.AssignedReference = transactionResponse.Data.AssignedReference;
             }
 
             return new QBStatusResponse<QBQuoteUploadResult>

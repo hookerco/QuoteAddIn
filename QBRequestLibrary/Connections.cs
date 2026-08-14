@@ -11,17 +11,19 @@ namespace QBRequestLibrary
     {
         private bool sessionBegun = false;
         private bool connectionOpen = false;
-        private QBSessionManager internalManager;
+        private IQBSessionManager internalManager;
         private ENOpenMode userMode = ENOpenMode.omDontCare;
 
         /**
 		 * <summary>Property <c>sessionManager</c> is a read-only instance
 		 * of a QBSessionManager</summary>
 		 */
-        public QBSessionManager SessionManager
+        public IQBSessionManager SessionManager
         {
             get { return internalManager; }
         }
+
+        public string CurrentCompanyFileName { get; private set; } = string.Empty;
 
         /**
 		 * <summary>Method <c>setUserMode</c> sets userMode </summary>
@@ -54,7 +56,7 @@ namespace QBRequestLibrary
 		 */
         public bool Open()
         {
-            internalManager = new QBSessionManager();
+            internalManager = CreateSessionManager();
 
             try
             {
@@ -62,6 +64,7 @@ namespace QBRequestLibrary
                 connectionOpen = true;
                 internalManager.BeginSession(File, userMode);
                 sessionBegun = true;
+                CurrentCompanyFileName = internalManager.GetCurrentCompanyFileName();
 
                 return true;
             }
@@ -71,6 +74,11 @@ namespace QBRequestLibrary
                 SafeClose();
                 throw new ConnectionException();
             }
+        }
+
+        protected virtual IQBSessionManager CreateSessionManager()
+        {
+            return new QBSessionManager();
         }
 
         /**

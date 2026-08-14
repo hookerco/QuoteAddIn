@@ -13,6 +13,7 @@ namespace QBRequestLibrary
         ICustomerAccountNumberQueryRequest CreateCustomerAccountNumberQueryRequest(string accountNumber);
         ISalesOrderRequest CreateSalesOrderRequest(QBOrder order);
         IEstimateRequest CreateEstimateRequest(QBOrder order);
+        IEstimateReferenceQueryRequest CreateEstimateReferenceQueryRequest(string reference);
         IAddItemNonInventoryRequest CreateAddItemNonInventoryRequest(List<QBItem> items);
         IAllItemNonInvQueryRequest CreateAllItemNonInvQueryRequest();
         ICommercialTermsQueryRequest CreateCommercialTermsQueryRequest();

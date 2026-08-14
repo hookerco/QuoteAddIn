@@ -43,6 +43,26 @@ namespace QuickBooksIPCContracts
     }
 
     [DataContract]
+    public sealed class QBTransactionIdentity
+    {
+        [DataMember]
+        public string TransactionId { get; set; }
+
+        [DataMember]
+        public string AssignedReference { get; set; }
+    }
+
+    [DataContract]
+    public sealed class QBEstimateReference
+    {
+        [DataMember]
+        public string Reference { get; set; }
+
+        [DataMember]
+        public string TransactionId { get; set; }
+    }
+
+    [DataContract]
     public enum QBQuoteTransactionType
     {
         [EnumMember]
@@ -126,6 +146,12 @@ namespace QuickBooksIPCContracts
 
         [DataMember]
         public string QuoteNumber { get; set; }
+
+        [DataMember]
+        public string TransactionId { get; set; }
+
+        [DataMember]
+        public string AssignedReference { get; set; }
 
         [DataMember]
         public List<QBQuoteUploadResolvedLine> Lines { get; set; }

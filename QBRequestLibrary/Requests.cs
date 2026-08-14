@@ -563,12 +563,20 @@ namespace QBRequestLibrary
     }
 
     public class CustomerCommercialTermsQueryRequest
-        : Request<string, QBStatusResponse<QBCustomerCommercialTerms>>,
+        : Request<object, QBStatusResponse<List<QBCustomerCommercialTermsRecord>>>,
           ICustomerCommercialTermsQueryRequest
     {
-        public CustomerCommercialTermsQueryRequest(string accountNumber)
+        public CustomerCommercialTermsQueryRequest()
         {
-            Set(accountNumber);
+            Set(null);
+        }
+
+        protected override void BuildRequest()
+        {
+            _msgSetRequest = _connection.SessionManager.CreateMsgSetRequest(
+                "US", QBSDKMajorVersion, QBSDKMinorVersion);
+            _msgSetRequest.Attributes.OnError = ENRqOnError.roeContinue;
+            BuildHelper();
         }
 
         protected override void BuildHelper()
@@ -578,7 +586,7 @@ namespace QBRequestLibrary
             customers.IncludeRetElementList.Add("TermsRef");
         }
 
-        protected override QBStatusResponse<QBCustomerCommercialTerms> ConvertResponse(
+        protected override QBStatusResponse<List<QBCustomerCommercialTermsRecord>> ConvertResponse(
             IMsgSetResponse responseSet)
         {
             IResponseList responses = responseSet?.ResponseList;
@@ -587,8 +595,7 @@ namespace QBRequestLibrary
                 throw new InvalidResponseException("No responses received.");
             }
 
-            string creditTerms = null;
-            bool matchedCustomer = false;
+            var records = new List<QBCustomerCommercialTermsRecord>();
             int statusCode = 0;
             string statusMessage = "OK";
 
@@ -610,37 +617,24 @@ namespace QBRequestLibrary
                     {
                         ICustomerRet customer = customers.GetAt(j);
                         string accountNumber = customer?.AccountNumber?.GetValue();
-                        if (!string.Equals(
-                            accountNumber?.Trim(),
-                            _value?.Trim(),
-                            StringComparison.OrdinalIgnoreCase))
+                        if (string.IsNullOrWhiteSpace(accountNumber))
                         {
                             continue;
                         }
-
-                        matchedCustomer = true;
-                        creditTerms = customer.TermsRef?.FullName?.GetValue();
-                        break;
+                        records.Add(new QBCustomerCommercialTermsRecord
+                        {
+                            AccountNumber = accountNumber.Trim(),
+                            CreditTerms = customer.TermsRef?.FullName?.GetValue()
+                        });
                     }
                 }
             }
 
-            if (!matchedCustomer && statusCode == 0)
-            {
-                statusCode = 1;
-                statusMessage = "QuickBooks customer commercial terms are unavailable.";
-            }
-
-            return new QBStatusResponse<QBCustomerCommercialTerms>
+            return new QBStatusResponse<List<QBCustomerCommercialTermsRecord>>
             {
                 StatusCode = statusCode,
                 StatusMessage = statusMessage,
-                Data = statusCode == 0
-                    ? new QBCustomerCommercialTerms
-                    {
-                        CreditTerms = creditTerms
-                    }
-                    : null
+                Data = statusCode == 0 ? records : null
             };
         }
     }

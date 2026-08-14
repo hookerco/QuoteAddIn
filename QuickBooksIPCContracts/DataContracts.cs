@@ -152,6 +152,16 @@ namespace QuickBooksIPCContracts
     }
 
     [DataContract]
+    public class QBCustomerCommercialTermsRecord
+    {
+        [DataMember]
+        public string AccountNumber { get; set; }
+
+        [DataMember]
+        public string CreditTerms { get; set; }
+    }
+
+    [DataContract]
     public class QBCustomer
     {
         [DataMember]

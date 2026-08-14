@@ -24,6 +24,6 @@ namespace QBRequestLibrary
         : IRequest<object, QBStatusResponse<QBCommercialTermsCatalog>> { }
 
     public interface ICustomerCommercialTermsQueryRequest
-        : IRequest<string, QBStatusResponse<QBCustomerCommercialTerms>> { }
+        : IRequest<object, QBStatusResponse<List<QBCustomerCommercialTermsRecord>>> { }
 }
 

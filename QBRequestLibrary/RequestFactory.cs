@@ -45,10 +45,9 @@ namespace QBRequestLibrary
             return new CommercialTermsQueryRequest();
         }
 
-        public ICustomerCommercialTermsQueryRequest CreateCustomerCommercialTermsQueryRequest(
-            string accountNumber)
+        public ICustomerCommercialTermsQueryRequest CreateCustomerCommercialTermsQueryRequest()
         {
-            return new CustomerCommercialTermsQueryRequest(accountNumber);
+            return new CustomerCommercialTermsQueryRequest();
         }
     }
 }

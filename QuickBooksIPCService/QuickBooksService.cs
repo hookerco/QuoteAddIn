@@ -69,20 +69,33 @@ namespace QuickBooksIPCService
         private readonly Dictionary<string, QBCustomerCommercialTerms> _entries =
             new Dictionary<string, QBCustomerCommercialTerms>(StringComparer.OrdinalIgnoreCase);
 
-        public bool TryReplace(
-            string accountNumber,
+        public bool TryReplaceAll(
             int statusCode,
-            QBCustomerCommercialTerms terms)
+            IEnumerable<QBCustomerCommercialTermsRecord> records)
         {
-            string key = Normalize(accountNumber);
-            if (key.Length == 0 || statusCode != 0 || terms == null)
+            if (statusCode != 0 || records == null)
             {
                 return false;
             }
 
+            var next = new Dictionary<string, QBCustomerCommercialTerms>(
+                StringComparer.OrdinalIgnoreCase);
+            foreach (QBCustomerCommercialTermsRecord record in records)
+            {
+                string key = Normalize(record?.AccountNumber);
+                if (key.Length == 0) continue;
+                next[key] = new QBCustomerCommercialTerms
+                {
+                    CreditTerms = record.CreditTerms
+                };
+            }
             lock (_sync)
             {
-                _entries[key] = Copy(terms);
+                _entries.Clear();
+                foreach (KeyValuePair<string, QBCustomerCommercialTerms> entry in next)
+                {
+                    _entries[entry.Key] = entry.Value;
+                }
             }
             return true;
         }
@@ -149,7 +162,11 @@ namespace QuickBooksIPCService
         private void _initialize()
         {
             _logger.LogSessionStart();
-            Task.Run(() => UpdateCache(background: true, initial: true));
+            Task.Run(() =>
+            {
+                UpdateCache(background: true, initial: true);
+                UpdateCommercialTermsCaches();
+            });
             Task.Run(() => AutoUpdateCache(60));
         }
 
@@ -188,11 +205,6 @@ namespace QuickBooksIPCService
             CommercialTermsSnapshot snapshot = _commercialTermsCache.Read();
             if (snapshot == null)
             {
-                UpdateCommercialTermsCache();
-                snapshot = _commercialTermsCache.Read();
-            }
-            if (snapshot == null)
-            {
                 return new QBStatusResponse<QBCommercialTermsCatalog>
                 {
                     StatusCode = 1,
@@ -225,24 +237,6 @@ namespace QuickBooksIPCService
             }
 
             QBCustomerCommercialTerms cached = _customerCommercialTermsCache.Read(key);
-            if (refresh || cached == null)
-            {
-                try
-                {
-                    ICustomerCommercialTermsQueryRequest request =
-                        _requestFactory.CreateCustomerCommercialTermsQueryRequest(key);
-                    QBStatusResponse<QBCustomerCommercialTerms> response = request?.SendRequest();
-                    _customerCommercialTermsCache.TryReplace(
-                        key,
-                        response == null ? 1 : response.StatusCode,
-                        response?.Data);
-                }
-                catch
-                {
-                    _logger.LogError("QuickBooks customer commercial terms refresh failed.");
-                }
-                cached = _customerCommercialTermsCache.Read(key);
-            }
 
             if (cached == null)
             {
@@ -287,6 +281,31 @@ namespace QuickBooksIPCService
                 _logger.LogError("QuickBooks commercial terms refresh failed.");
                 return false;
             }
+        }
+
+        private bool UpdateCustomerCommercialTermsCache()
+        {
+            try
+            {
+                ICustomerCommercialTermsQueryRequest request =
+                    _requestFactory.CreateCustomerCommercialTermsQueryRequest();
+                QBStatusResponse<List<QBCustomerCommercialTermsRecord>> response =
+                    request?.SendRequest();
+                return response != null && _customerCommercialTermsCache.TryReplaceAll(
+                    response.StatusCode,
+                    response.Data);
+            }
+            catch
+            {
+                _logger.LogError("QuickBooks customer commercial terms refresh failed.");
+                return false;
+            }
+        }
+
+        private void UpdateCommercialTermsCaches()
+        {
+            UpdateCommercialTermsCache();
+            UpdateCustomerCommercialTermsCache();
         }
 
         public QBStatusResponse<string> AddOrder(QBOrder order)
@@ -607,7 +626,7 @@ namespace QuickBooksIPCService
             {
                 Thread.Sleep(ms_interval);
                 UpdateCache(background: true);
-                UpdateCommercialTermsCache();
+                UpdateCommercialTermsCaches();
             }
         }
 

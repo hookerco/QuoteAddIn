@@ -133,7 +133,7 @@ namespace QuickBooksServiceLibrary.Tests
         }
 
         [Test]
-        public void CustomerCommercialTermsQueryRequest_ReturnsOnlyMatchedCustomerDefaults()
+        public void CustomerCommercialTermsQueryRequest_ReturnsAllAccountTermsForCache()
         {
             Type requestType = typeof(RequestFactory).Assembly.GetType(
                 "QBRequestLibrary.CustomerCommercialTermsQueryRequest");
@@ -141,7 +141,6 @@ namespace QuickBooksServiceLibrary.Tests
 
             object request = FormatterServices.GetUninitializedObject(requestType);
             GC.SuppressFinalize(request);
-            requestType.GetMethod("Set").Invoke(request, new object[] { "EX-1042" });
             var customer = new Mock<ICustomerRet>();
             customer.SetupGet(value => value.AccountNumber).Returns(CreateString("EX-1042").Object);
             customer.SetupGet(value => value.TermsRef).Returns(CreateNamedRef("Net 30").Object);
@@ -157,10 +156,11 @@ namespace QuickBooksServiceLibrary.Tests
 
             object response = convert.Invoke(request, new object[] { responseSet });
             object data = response.GetType().GetProperty("Data").GetValue(response);
+            object record = ((System.Collections.IList)data)[0];
 
             Assert.AreEqual(0, response.GetType().GetProperty("StatusCode").GetValue(response));
-            Assert.AreEqual("Net 30", data.GetType().GetProperty("CreditTerms").GetValue(data));
-            Assert.IsNull(data.GetType().GetProperty("AccountNumber"));
+            Assert.AreEqual("EX-1042", record.GetType().GetProperty("AccountNumber").GetValue(record));
+            Assert.AreEqual("Net 30", record.GetType().GetProperty("CreditTerms").GetValue(record));
         }
 
         private static QBOrder CreateOrder(string quoteNumber)

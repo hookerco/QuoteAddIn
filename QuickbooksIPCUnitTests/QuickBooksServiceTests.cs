@@ -389,7 +389,7 @@ namespace QuickBooksServiceLibrary.Tests
         }
 
         [Test]
-        public void GetCommercialTerms_LoadsAndCachesSanitizedQueryCatalog()
+        public void GetCommercialTerms_ReadsBackgroundCacheWithoutQueryingQuickBooks()
         {
             var refreshedAt = new DateTime(2026, 8, 13, 18, 0, 0, DateTimeKind.Utc);
             var query = new Mock<ICommercialTermsQueryRequest>();
@@ -409,6 +409,12 @@ namespace QuickBooksServiceLibrary.Tests
                 .Setup(value => value.CreateCommercialTermsQueryRequest())
                 .Returns(query.Object);
 
+            var update = typeof(QuickBooksService).GetMethod(
+                "UpdateCommercialTermsCache",
+                System.Reflection.BindingFlags.Instance |
+                System.Reflection.BindingFlags.NonPublic);
+            Assert.IsTrue((bool)update.Invoke(_service, null));
+
             QBStatusResponse<QBCommercialTermsCatalog> first = _service.GetCommercialTerms();
             QBStatusResponse<QBCommercialTermsCatalog> cached = _service.GetCommercialTerms();
 
@@ -421,22 +427,31 @@ namespace QuickBooksServiceLibrary.Tests
         }
 
         [Test]
-        public void GetCustomerCommercialTerms_CachesAndFailedRefreshPreservesLastGoodValues()
+        public void GetCustomerCommercialTerms_ReadsBackgroundCacheEvenWhenRefreshIsRequested()
         {
             var query = new Mock<ICustomerCommercialTermsQueryRequest>();
-            query.SetupSequence(value => value.SendRequest())
-                .Returns(new QBStatusResponse<QBCustomerCommercialTerms>
+            query.Setup(value => value.SendRequest())
+                .Returns(new QBStatusResponse<List<QBCustomerCommercialTermsRecord>>
                 {
                     StatusCode = 0,
-                    Data = new QBCustomerCommercialTerms
+                    Data = new List<QBCustomerCommercialTermsRecord>
                     {
-                        CreditTerms = "Net 30"
+                        new QBCustomerCommercialTermsRecord
+                        {
+                            AccountNumber = "EX-1042",
+                            CreditTerms = "Net 30"
+                        }
                     }
-                })
-                .Throws(new InvalidOperationException("invented raw failure"));
+                });
             _mockRequestFactory
-                .Setup(value => value.CreateCustomerCommercialTermsQueryRequest("EX-1042"))
+                .Setup(value => value.CreateCustomerCommercialTermsQueryRequest())
                 .Returns(query.Object);
+
+            var update = typeof(QuickBooksService).GetMethod(
+                "UpdateCustomerCommercialTermsCache",
+                System.Reflection.BindingFlags.Instance |
+                System.Reflection.BindingFlags.NonPublic);
+            Assert.IsTrue((bool)update.Invoke(_service, null));
 
             QBStatusResponse<QBCustomerCommercialTerms> first =
                 _service.GetCustomerCommercialTerms(" EX-1042 ", false);
@@ -448,7 +463,7 @@ namespace QuickBooksServiceLibrary.Tests
             Assert.AreEqual("Net 30", first.Data.CreditTerms);
             Assert.AreEqual("Net 30", cached.Data.CreditTerms);
             Assert.AreEqual("Net 30", refreshed.Data.CreditTerms);
-            query.Verify(value => value.SendRequest(), Times.Exactly(2));
+            query.Verify(value => value.SendRequest(), Times.Once);
         }
     }
 }

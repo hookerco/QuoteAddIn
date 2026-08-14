@@ -16,7 +16,6 @@ namespace QBRequestLibrary
         IAddItemNonInventoryRequest CreateAddItemNonInventoryRequest(List<QBItem> items);
         IAllItemNonInvQueryRequest CreateAllItemNonInvQueryRequest();
         ICommercialTermsQueryRequest CreateCommercialTermsQueryRequest();
-        ICustomerCommercialTermsQueryRequest CreateCustomerCommercialTermsQueryRequest(
-            string accountNumber);
+        ICustomerCommercialTermsQueryRequest CreateCustomerCommercialTermsQueryRequest();
     }
 }

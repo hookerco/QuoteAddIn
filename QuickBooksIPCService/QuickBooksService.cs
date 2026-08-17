@@ -759,20 +759,26 @@ namespace QuickBooksIPCService
         {
             if (quoteKind == "normal")
             {
-                if (quoteNumber.Length == 0 || quoteNumber.Length > 11)
+                if (quoteNumber.Length == 0 ||
+                    quoteNumber.Length > 11 ||
+                    quoteNumber.StartsWith("TEST-", StringComparison.OrdinalIgnoreCase))
                 {
                     return false;
                 }
-                bool anyNonZero = false;
+                bool anyLetterOrNonZeroDigit = false;
                 foreach (char character in quoteNumber)
                 {
-                    if (character < '0' || character > '9')
+                    bool digit = character >= '0' && character <= '9';
+                    bool letter = (character >= 'A' && character <= 'Z') ||
+                                  (character >= 'a' && character <= 'z');
+                    if (!digit && !letter && character != '-')
                     {
                         return false;
                     }
-                    anyNonZero |= character != '0';
+                    anyLetterOrNonZeroDigit |= letter ||
+                                               (digit && character != '0');
                 }
-                return anyNonZero;
+                return anyLetterOrNonZeroDigit;
             }
 
             if (quoteKind != "test" ||

@@ -26,6 +26,15 @@ namespace QuickBooksServiceHost
             string suggestedName,
             string extension)
         {
+            return WorkstationDialogGate.Run(
+                () => SaveWithoutOverlap(content, suggestedName, extension));
+        }
+
+        private static WorkstationSaveResult SaveWithoutOverlap(
+            byte[] content,
+            string suggestedName,
+            string extension)
+        {
             WorkstationFileSave.ValidateContent(content);
             string normalizedExtension = WorkstationFileSave.NormalizeExtension(extension);
             string normalizedName = WorkstationFileSave.NormalizeSuggestedName(
@@ -115,6 +124,11 @@ namespace QuickBooksServiceHost
                 "Workstation Save As did not return a result.");
         }
         internal static WorkstationSaveResult ChooseFolder()
+        {
+            return WorkstationDialogGate.Run(ChooseFolderWithoutOverlap);
+        }
+
+        private static WorkstationSaveResult ChooseFolderWithoutOverlap()
         {
             WorkstationSaveResult result = null;
             Exception failure = null;

@@ -12,7 +12,9 @@ namespace QuickBooksServiceHost
             var handle = new IntPtr(1234);
 
             var owner = ForegroundWindowOwner.TryCreate(
-                handle, candidate => candidate == handle);
+                handle,
+                candidate => candidate == handle,
+                candidate => "msedge");
 
             Assert.IsNotNull(owner);
             Assert.AreEqual(handle, owner.Handle);
@@ -23,11 +25,14 @@ namespace QuickBooksServiceHost
         {
             bool validated = false;
 
-            var owner = ForegroundWindowOwner.TryCreate(IntPtr.Zero, candidate =>
-            {
-                validated = true;
-                return true;
-            });
+            var owner = ForegroundWindowOwner.TryCreate(
+                IntPtr.Zero,
+                candidate =>
+                {
+                    validated = true;
+                    return true;
+                },
+                candidate => "msedge");
 
             Assert.IsNull(owner);
             Assert.IsFalse(validated);
@@ -37,7 +42,16 @@ namespace QuickBooksServiceHost
         public void TryCreate_InvalidHandle_ReturnsNull()
         {
             var owner = ForegroundWindowOwner.TryCreate(
-                new IntPtr(1234), candidate => false);
+                new IntPtr(1234), candidate => false, candidate => "msedge");
+
+            Assert.IsNull(owner);
+        }
+
+        [Test]
+        public void TryCreate_ExcelWindow_ReturnsNull()
+        {
+            var owner = ForegroundWindowOwner.TryCreate(
+                new IntPtr(1234), candidate => true, candidate => "EXCEL");
 
             Assert.IsNull(owner);
         }

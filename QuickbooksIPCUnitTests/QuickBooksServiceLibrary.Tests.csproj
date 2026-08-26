@@ -89,6 +89,10 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="ForegroundWindowOwnerTests.cs" />
+    <Compile Include="WorkstationDialogGateTests.cs" />
+    <Compile Include="..\QuickBooksServiceHost\WorkstationDialogGate.cs">
+      <Link>WorkstationDialogGate.cs</Link>
+    </Compile>
     <Compile Include="..\QuickBooksServiceHost\ForegroundWindowOwner.cs">
       <Link>ForegroundWindowOwner.cs</Link>
     </Compile>

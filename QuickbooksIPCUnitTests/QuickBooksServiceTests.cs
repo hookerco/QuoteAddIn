@@ -1329,7 +1329,8 @@ namespace QuickBooksServiceLibrary.Tests
                         new QBCustomerCommercialTermsRecord
                         {
                             AccountNumber = "EX-1042",
-                            CreditTerms = "Net 30"
+                            CreditTerms = "Net 30",
+                            ShippingTerms = "UPS 12345"
                         }
                     }
                 });
@@ -1351,8 +1352,11 @@ namespace QuickBooksServiceLibrary.Tests
                 _service.GetCustomerCommercialTerms("EX-1042", true);
 
             Assert.AreEqual("Net 30", first.Data.CreditTerms);
+            Assert.AreEqual("UPS 12345", first.Data.ShippingTerms);
             Assert.AreEqual("Net 30", cached.Data.CreditTerms);
+            Assert.AreEqual("UPS 12345", cached.Data.ShippingTerms);
             Assert.AreEqual("Net 30", refreshed.Data.CreditTerms);
+            Assert.AreEqual("UPS 12345", refreshed.Data.ShippingTerms);
             query.Verify(value => value.SendRequest(), Times.Once);
         }
     }

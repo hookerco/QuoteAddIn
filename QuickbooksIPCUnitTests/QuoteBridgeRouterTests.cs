@@ -438,7 +438,8 @@ namespace QuickbooksIPCUnitTests
                     StatusMessage = "invented raw company detail",
                     Data = new QBCustomerCommercialTerms
                     {
-                        CreditTerms = " Net 30 "
+                        CreditTerms = " Net 30 ",
+                        ShippingTerms = " UPS 12345 "
                     }
                 };
 
@@ -446,7 +447,8 @@ namespace QuickbooksIPCUnitTests
                 "EX-1042", true, fetch);
 
             Assert.AreEqual(
-                "{\"schema_version\":1,\"credit_terms\":\"Net 30\"}",
+                "{\"schema_version\":1,\"credit_terms\":\"Net 30\"," +
+                "\"shipping_terms\":\"UPS 12345\"}",
                 json);
             StringAssert.DoesNotContain("company detail", json);
             StringAssert.DoesNotContain("EX-1042", json);

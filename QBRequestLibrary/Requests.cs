@@ -738,6 +738,8 @@ namespace QBRequestLibrary
             ICustomerQuery customers = _msgSetRequest.AppendCustomerQueryRq();
             customers.IncludeRetElementList.Add("AccountNumber");
             customers.IncludeRetElementList.Add("TermsRef");
+            customers.IncludeRetElementList.Add("DataExtRet");
+            customers.OwnerIDList.Add("0");
         }
 
         protected override QBStatusResponse<List<QBCustomerCommercialTermsRecord>> ConvertResponse(
@@ -778,7 +780,8 @@ namespace QBRequestLibrary
                         records.Add(new QBCustomerCommercialTermsRecord
                         {
                             AccountNumber = accountNumber.Trim(),
-                            CreditTerms = customer.TermsRef?.FullName?.GetValue()
+                            CreditTerms = customer.TermsRef?.FullName?.GetValue(),
+                            ShippingTerms = ShipAccount(customer)
                         });
                     }
                 }
@@ -790,6 +793,23 @@ namespace QBRequestLibrary
                 StatusMessage = statusMessage,
                 Data = statusCode == 0 ? records : null
             };
+        }
+
+        private static string ShipAccount(ICustomerRet customer)
+        {
+            IDataExtRetList fields = customer?.DataExtRetList;
+            for (int i = 0; fields != null && i < fields.Count; ++i)
+            {
+                IDataExtRet field = fields.GetAt(i);
+                if (string.Equals(
+                    field?.DataExtName?.GetValue(),
+                    "Ship Account #",
+                    StringComparison.OrdinalIgnoreCase))
+                {
+                    return field.DataExtValue?.GetValue();
+                }
+            }
+            return null;
         }
     }
 }

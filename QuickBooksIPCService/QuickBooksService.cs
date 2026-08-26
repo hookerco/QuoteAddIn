@@ -86,7 +86,8 @@ namespace QuickBooksIPCService
                 if (key.Length == 0) continue;
                 next[key] = new QBCustomerCommercialTerms
                 {
-                    CreditTerms = record.CreditTerms
+                    CreditTerms = record.CreditTerms,
+                    ShippingTerms = record.ShippingTerms
                 };
             }
             lock (_sync)
@@ -119,7 +120,8 @@ namespace QuickBooksIPCService
         {
             return new QBCustomerCommercialTerms
             {
-                CreditTerms = source.CreditTerms
+                CreditTerms = source.CreditTerms,
+                ShippingTerms = source.ShippingTerms
             };
         }
     }

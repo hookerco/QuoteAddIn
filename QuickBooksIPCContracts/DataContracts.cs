@@ -184,6 +184,9 @@ namespace QuickBooksIPCContracts
     {
         [DataMember]
         public string CreditTerms { get; set; }
+
+        [DataMember]
+        public string ShippingTerms { get; set; }
     }
 
     [DataContract]
@@ -194,6 +197,9 @@ namespace QuickBooksIPCContracts
 
         [DataMember]
         public string CreditTerms { get; set; }
+
+        [DataMember]
+        public string ShippingTerms { get; set; }
     }
 
     [DataContract]

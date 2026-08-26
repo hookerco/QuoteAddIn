@@ -473,7 +473,8 @@ namespace QuickBooksConnectorCore
                 return JsonSerializer.Serialize(new Dictionary<string, object>
                 {
                     { "schema_version", 1 },
-                    { "credit_terms", Clean(response.Data.CreditTerms) }
+                    { "credit_terms", Clean(response.Data.CreditTerms) },
+                    { "shipping_terms", Clean(response.Data.ShippingTerms) }
                 });
             }
             catch

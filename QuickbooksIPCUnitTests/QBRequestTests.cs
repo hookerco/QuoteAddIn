@@ -356,6 +356,15 @@ namespace QuickBooksServiceLibrary.Tests
             var customer = new Mock<ICustomerRet>();
             customer.SetupGet(value => value.AccountNumber).Returns(CreateString("EX-1042").Object);
             customer.SetupGet(value => value.TermsRef).Returns(CreateNamedRef("Net 30").Object);
+            var shipAccount = new Mock<IDataExtRet>();
+            shipAccount.SetupGet(value => value.DataExtName)
+                .Returns(CreateString("Ship Account #").Object);
+            shipAccount.SetupGet(value => value.DataExtValue)
+                .Returns(CreateString("UPS 12345").Object);
+            var customFields = new Mock<IDataExtRetList>();
+            customFields.SetupGet(value => value.Count).Returns(1);
+            customFields.Setup(value => value.GetAt(0)).Returns(shipAccount.Object);
+            customer.SetupGet(value => value.DataExtRetList).Returns(customFields.Object);
             var customers = new Mock<ICustomerRetList>();
             customers.SetupGet(value => value.Count).Returns(1);
             customers.Setup(value => value.GetAt(0)).Returns(customer.Object);
@@ -373,6 +382,24 @@ namespace QuickBooksServiceLibrary.Tests
             Assert.AreEqual(0, response.GetType().GetProperty("StatusCode").GetValue(response));
             Assert.AreEqual("EX-1042", record.GetType().GetProperty("AccountNumber").GetValue(record));
             Assert.AreEqual("Net 30", record.GetType().GetProperty("CreditTerms").GetValue(record));
+            Assert.AreEqual("UPS 12345", record.GetType().GetProperty("ShippingTerms").GetValue(record));
+        }
+
+        [Test]
+        public void CustomerCommercialTermsQueryRequest_RequestsPublicCustomerCustomFields()
+        {
+            var request = new TestableCustomerCommercialTermsQueryRequest();
+            var msgSetRequest = new Mock<IMsgSetRequest>();
+            var customerQuery = new Mock<ICustomerQuery> { DefaultValue = DefaultValue.Mock };
+            msgSetRequest.Setup(value => value.AppendCustomerQueryRq())
+                .Returns(customerQuery.Object);
+
+            request.BuildInto(msgSetRequest.Object);
+
+            Mock.Get(customerQuery.Object.IncludeRetElementList)
+                .Verify(value => value.Add("DataExtRet"), Times.Once);
+            Mock.Get(customerQuery.Object.OwnerIDList)
+                .Verify(value => value.Add("0"), Times.Once);
         }
 
         private static QBOrder CreateOrder(string quoteNumber)
@@ -748,6 +775,22 @@ namespace QuickBooksServiceLibrary.Tests
             public QBCustomer Convert(IMsgSetResponse responseSet)
             {
                 return ConvertResponse(responseSet);
+            }
+        }
+
+        private sealed class TestableCustomerCommercialTermsQueryRequest
+            : CustomerCommercialTermsQueryRequest
+        {
+            public TestableCustomerCommercialTermsQueryRequest()
+            {
+                GC.SuppressFinalize(this);
+                GC.SuppressFinalize(_connection);
+            }
+
+            public void BuildInto(IMsgSetRequest msgSetRequest)
+            {
+                _msgSetRequest = msgSetRequest;
+                BuildHelper();
             }
         }
     }

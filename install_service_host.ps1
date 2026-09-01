@@ -70,11 +70,12 @@ function Invoke-ServiceHostInstall {
         [Parameter(Mandatory=$true)][string]$CurrentUserDesktopPath,
         [scriptblock]$SetEnvironmentVariableAction = { param($name,$value) [Environment]::SetEnvironmentVariable($name,$value,[EnvironmentVariableTarget]::User) },
         [scriptblock]$CreateShortcutAction = {
-            param($shortcutPath,$targetPath,$workingDirectory)
+            param($shortcutPath,$targetPath,$workingDirectory,$arguments)
             $shell = New-Object -ComObject WScript.Shell
             $shortcut = $shell.CreateShortcut($shortcutPath)
             $shortcut.TargetPath = $targetPath
             $shortcut.WorkingDirectory = $workingDirectory
+            if (-not [string]::IsNullOrWhiteSpace([string]$arguments)) { $shortcut.Arguments = $arguments }
             $shortcut.Save()
         },
         [scriptblock]$GetProcessesAction = { @(Get-Process -Name QuickBooksServiceHost -ErrorAction SilentlyContinue) },
@@ -90,6 +91,10 @@ function Invoke-ServiceHostInstall {
     if (-not (Test-Path -LiteralPath $SourcePath -PathType Container)) { throw "Source path does not exist: $SourcePath" }
     if ([string]::IsNullOrWhiteSpace($InstallPath) -or [string]::IsNullOrWhiteSpace($StatePath) -or [string]::IsNullOrWhiteSpace($CurrentUserDesktopPath)) {
         throw 'Install, state, and current-user desktop paths are required.'
+    }
+    $utilityInstallerPath = Join-Path (Split-Path -Parent $SourcePath) 'Install-QBUtility.bat'
+    if (-not (Test-Path -LiteralPath $utilityInstallerPath -PathType Leaf)) {
+        throw "Quote / QuickBooks utility installer does not exist: $utilityInstallerPath"
     }
 
     $manifestPath = Join-Path $SourcePath 'release.manifest.json'
@@ -147,6 +152,8 @@ function Invoke-ServiceHostInstall {
         $previousPayload = Join-Path $previous 'Payload'
         $previousManager = Join-Path $previous 'Manager\service_host_manager.ps1'
         $previousManifest = Join-Path $previous 'release.manifest.json'
+        $hostShortcutPath = Join-Path $CurrentUserDesktopPath 'QuickBooksServiceHost.lnk'
+        $updaterShortcutPath = Join-Path $CurrentUserDesktopPath 'Update QB Utility.lnk'
 
         $mutation = {
             $previousPrepared = $false
@@ -191,7 +198,8 @@ function Invoke-ServiceHostInstall {
                 }
                 & $SetEnvironmentVariableAction 'QUOTE_MODULEV2_QB_CONNECTOR_CLI' $connectorPath
                 foreach ($key in @('QB_BRIDGE_TOKEN','QB_BRIDGE_ORIGIN','QB_BRIDGE_PORT')) { & $SetEnvironmentVariableAction $key $bridge[$key] }
-                & $CreateShortcutAction (Join-Path $CurrentUserDesktopPath 'QuickBooksServiceHost.lnk') $hostPath $InstallPath
+                & $CreateShortcutAction $hostShortcutPath $hostPath $InstallPath ''
+                & $CreateShortcutAction $updaterShortcutPath $utilityInstallerPath (Split-Path -Parent $utilityInstallerPath) ''
             }
             catch {
                 $failure = $_
@@ -213,7 +221,14 @@ function Invoke-ServiceHostInstall {
         if ([string]::IsNullOrWhiteSpace($bridge.QB_BRIDGE_TOKEN)) {
             Write-Warning 'QB_BRIDGE_TOKEN is blank - the QuickBooks bridge will reject all requests with 403 until settings are supplied and the host is started manually.'
         }
-        return [pscustomobject]@{ HostPath=$hostPath; ConnectorPath=$connectorPath; ManagerPath=$managerTarget; ShortcutPath=(Join-Path $CurrentUserDesktopPath 'QuickBooksServiceHost.lnk'); Phase='Installed' }
+        return [pscustomobject]@{
+            HostPath=$hostPath
+            ConnectorPath=$connectorPath
+            ManagerPath=$managerTarget
+            ShortcutPath=$hostShortcutPath
+            UpdaterShortcutPath=$updaterShortcutPath
+            Phase='Installed'
+        }
     }
     finally {
         if (Test-Path -LiteralPath $stageRoot) { & $RemovePathAction $stageRoot $true }
@@ -232,4 +247,5 @@ Write-Output "Target Path: $($result.HostPath)"
 Write-Output "Connector CLI Path: $($result.ConnectorPath)"
 Write-Output "Manager Path: $($result.ManagerPath)"
 Write-Output "Shortcut Path: $($result.ShortcutPath)"
+Write-Output "Updater Shortcut Path: $($result.UpdaterShortcutPath)"
 Write-Host 'Installation complete. Start the QuickBooks Service Host manually from the current-user shortcut when QuickBooks is running as this same normal user.'

@@ -32,6 +32,7 @@ function New-Fixture {
     $state = Join-Path $root 'LocalAppData\QuickBooksServiceHost'
     $desktop = Join-Path $root 'Desktop'
     New-Item -ItemType Directory -Force -Path $source, $desktop, (Join-Path $source 'nested') | Out-Null
+    [IO.File]::WriteAllText((Join-Path $root 'Install-QBUtility.bat'), '@echo off')
     [IO.File]::WriteAllText((Join-Path $source 'QuickBooksServiceHost.exe'), 'host')
     [IO.File]::WriteAllText((Join-Path $source 'QuickBooksConnectorCli.exe'), 'cli')
     [IO.File]::WriteAllText((Join-Path $source 'nested\runtime.dll'), 'runtime')
@@ -53,11 +54,14 @@ function New-Fixture {
 }
 
 function New-Actions($Fixture) {
-    $state = [pscustomobject]@{ Environment=@{}; Shortcut=$null; Processes=@(); Stops=0; Starts=0; Events=@() }
+    $state = [pscustomobject]@{ Environment=@{}; Shortcuts=@(); Processes=@(); Stops=0; Starts=0; Events=@() }
     [pscustomobject]@{
         State = $state
         SetEnvironment = { param($name,$value) $state.Environment[$name]=[string]$value }.GetNewClosure()
-        CreateShortcut = { param($path,$target,$working) $state.Shortcut=[pscustomobject]@{Path=$path;Target=$target;Working=$working} }.GetNewClosure()
+        CreateShortcut = {
+            param($path,$target,$working,$arguments)
+            $state.Shortcuts += [pscustomobject]@{Path=$path;Target=$target;Working=$working;Arguments=$arguments}
+        }.GetNewClosure()
         GetProcesses = { @($state.Processes) }.GetNewClosure()
         StopProcess = { param($process) $state.Stops++; $state.Processes=@($state.Processes | Where-Object Id -ne $process.Id) }.GetNewClosure()
         Delay = { param($milliseconds) }.GetNewClosure()
@@ -113,10 +117,27 @@ function Run-Scenario([string]$Name) {
                 Assert-Equal (Join-Path $fixture.Install 'QuickBooksConnectorCli.exe') $actions.State.Environment.QUOTE_MODULEV2_QB_CONNECTOR_CLI 'connector variable is user scoped through installer action'
                 Assert-Equal 'invented-token' $actions.State.Environment.QB_BRIDGE_TOKEN 'bridge token behavior is preserved'
                 Assert-Equal 'http://invented.invalid:8742' $actions.State.Environment.QB_BRIDGE_ORIGIN 'bridge origin behavior is preserved'
-                Assert-Equal (Join-Path $fixture.Desktop 'QuickBooksServiceHost.lnk') $actions.State.Shortcut.Path 'shortcut is current-user only'
+                $hostShortcut = @($actions.State.Shortcuts | Where-Object Path -eq (Join-Path $fixture.Desktop 'QuickBooksServiceHost.lnk'))
+                $updaterShortcut = @($actions.State.Shortcuts | Where-Object Path -eq (Join-Path $fixture.Desktop 'Update QB Utility.lnk'))
+                Assert-Equal 1 $hostShortcut.Count 'host shortcut is installed once for the current user'
+                Assert-Equal $fixture.Install $hostShortcut[0].Working 'host shortcut uses the installed runtime as its working directory'
+                Assert-Equal 1 $updaterShortcut.Count 'updater shortcut is installed once for the current user'
+                Assert-Equal (Join-Path $fixture.Root 'Install-QBUtility.bat') $updaterShortcut[0].Target 'updater shortcut launches the complete utility installer'
+                Assert-Equal $fixture.Root $updaterShortcut[0].Working 'updater shortcut uses the shared installer directory'
+                Assert-Equal '' $updaterShortcut[0].Arguments 'utility installer shortcut needs no extra arguments'
+                Assert-Equal (Join-Path $fixture.Desktop 'Update QB Utility.lnk') $result.UpdaterShortcutPath 'result reports the updater shortcut path'
                 Assert-Equal 0 $actions.State.Starts 'host is not launched'
                 Assert-Equal 0 @($actions.State.Processes).Count 'host remains stopped after installation'
                 Assert-Equal 'Local\QuickBooksServiceHostInstall' $actions.State.Events[0] 'installer uses a per-session mutex'
+            }
+            finally { Remove-Item -LiteralPath $fixture.Root -Recurse -Force -ErrorAction SilentlyContinue }
+
+            $fixture = New-Fixture
+            try {
+                Remove-Item -LiteralPath (Join-Path $fixture.Root 'Install-QBUtility.bat') -Force
+                $caught=$null;try{Invoke-Fixture $fixture (New-Actions $fixture)}catch{$caught=$_}
+                Assert-True ($caught.Exception.Message -match 'Install-QBUtility\.bat') 'missing utility installer fails before creating a broken updater shortcut'
+                Assert-True (-not (Test-Path -LiteralPath $fixture.Install)) 'missing utility installer does not mutate the runtime'
             }
             finally { Remove-Item -LiteralPath $fixture.Root -Recurse -Force -ErrorAction SilentlyContinue }
         }

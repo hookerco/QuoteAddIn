@@ -139,6 +139,7 @@ namespace QuickBooksIPCService
         private readonly Logger _logger;
         private readonly Func<string> _currentCompanyFileName;
         private readonly object _cacheRefreshSync = new object();
+        private bool _quickBooksDataReady = false;
         private bool _disposed = false;
 
         public QuickBooksService(IRequestFactory requestFactory)
@@ -950,10 +951,6 @@ namespace QuickBooksIPCService
                 }
 
                 _logger.LogInfo($"Updated cache in {(background ? "background" : "main thread")}: {elapsedSeconds} seconds");
-                if (initial)
-                {
-                    Console.WriteLine($"WCF Service is running... {elapsedSeconds} second start-up");
-                }
                 return true;
             }
             catch (Exception ex)
@@ -976,6 +973,7 @@ namespace QuickBooksIPCService
         {
             lock (_cacheRefreshSync)
             {
+                var refreshTimer = Stopwatch.StartNew();
                 _logger.LogInfo($"QuickBooks cache refresh started ({source}).");
                 bool itemsUpdated = UpdateCache(
                     background: source != "request",
@@ -984,17 +982,31 @@ namespace QuickBooksIPCService
                 bool termsUpdated = UpdateCommercialTermsCache();
                 bool customerTermsUpdated = UpdateCustomerCommercialTermsCache();
                 bool succeeded = itemsUpdated && termsUpdated && customerTermsUpdated;
+                refreshTimer.Stop();
+                double elapsedSeconds = (double)refreshTimer.ElapsedMilliseconds / 1000;
                 string message = succeeded
-                    ? "QuickBooks caches refreshed."
-                    : "One or more QuickBooks cache refreshes failed. See the service-host log.";
+                    ? $"QuickBooks caches refreshed in {elapsedSeconds:0.###} seconds."
+                    : $"One or more QuickBooks cache refreshes failed after {elapsedSeconds:0.###} seconds. See the service-host log.";
 
                 if (succeeded)
                 {
-                    _logger.LogInfo($"QuickBooks cache refresh completed ({source}).");
+                    _logger.LogInfo(
+                        $"QuickBooks cache refresh completed ({source}) in {elapsedSeconds:0.###} seconds.");
+                    if (!_quickBooksDataReady)
+                    {
+                        _quickBooksDataReady = true;
+                        Console.WriteLine();
+                        Console.WriteLine("==================================================");
+                        Console.WriteLine("  QUICKBOOKS DATA READY");
+                        Console.WriteLine($"  Cache refresh completed in {elapsedSeconds:0.###} seconds");
+                        Console.WriteLine("==================================================");
+                        Console.WriteLine();
+                    }
                 }
                 else
                 {
-                    _logger.LogError($"QuickBooks cache refresh completed with failures ({source}).");
+                    _logger.LogError(
+                        $"QuickBooks cache refresh completed with failures ({source}) after {elapsedSeconds:0.###} seconds.");
                 }
 
                 return new QBStatusResponse<string>

@@ -58,7 +58,8 @@ namespace QuickBooksServiceHost
                         shutdownEvent.Set();
                     };
 
-                    Console.WriteLine("Press R to refresh QuickBooks data, or Ctrl+C to stop.");
+                    Console.WriteLine("Service Host started. Loading QuickBooks data...");
+                    Console.WriteLine("Press R to retry the refresh, or Ctrl+C to stop.");
                     WaitForShutdownOrRefresh(shutdownEvent, service);
 
                     bridge?.Stop();

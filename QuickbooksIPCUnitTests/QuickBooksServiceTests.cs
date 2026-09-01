@@ -284,6 +284,8 @@ namespace QuickBooksServiceLibrary.Tests
             Assert.AreEqual(1, failed.StatusCode);
             Assert.AreEqual(0, retried.StatusCode);
             Assert.AreEqual("refreshed", retried.Data);
+            StringAssert.Contains("seconds", failed.StatusMessage);
+            StringAssert.Contains("seconds", retried.StatusMessage);
             StringAssert.Contains(
                 "Synthetic QBFC permission failure",
                 File.ReadAllText(_logPath));

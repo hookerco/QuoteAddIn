@@ -49,7 +49,7 @@ namespace QBRequestLibrary
             string fullMessage = errorMessage;
             if (ex != null)
             {
-                fullMessage += $"\nException: {ex.Message}\nStackTrace: {ex.StackTrace}";
+                fullMessage += $"\nException: {ex}";
             }
             Log("ERROR", fullMessage);
         }

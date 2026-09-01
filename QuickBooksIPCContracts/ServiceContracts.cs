@@ -45,6 +45,9 @@ namespace QuickBooksIPCContracts
         int InvalidateAllItemsCache();
 
         [OperationContract]
+        QBStatusResponse<string> RefreshQuickBooksCaches();
+
+        [OperationContract]
         List<QBStatusResponse<string>> AddNonInvItem(List<QBItem> item);
     }
 }

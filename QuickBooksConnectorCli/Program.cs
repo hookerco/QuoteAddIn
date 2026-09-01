@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Web.Script.Serialization;
 using QuickBooksConnectorCore;
+using QuickBooksIPCContracts;
 
 namespace QuickBooksConnectorCli
 {
@@ -19,7 +20,7 @@ namespace QuickBooksConnectorCli
             {
                 if (args.Length == 0)
                 {
-                    throw new CliUsageException("Operation is required. Supported operations: ping, submit-quote.");
+                    throw new CliUsageException("Operation is required. Supported operations: ping, refresh-cache, submit-quote.");
                 }
 
                 string operation = args[0].Trim().ToLowerInvariant();
@@ -28,11 +29,14 @@ namespace QuickBooksConnectorCli
                     case "ping":
                         return RunPing();
 
+                    case "refresh-cache":
+                        return RunRefreshCache();
+
                     case "submit-quote":
                         return RunSubmitQuote();
 
                     default:
-                        throw new CliUsageException($"Unsupported operation '{args[0]}'. Supported operations: ping, submit-quote.");
+                        throw new CliUsageException($"Unsupported operation '{args[0]}'. Supported operations: ping, refresh-cache, submit-quote.");
                 }
             }
             catch (CliUsageException ex)
@@ -81,6 +85,16 @@ namespace QuickBooksConnectorCli
             // Same parse -> SubmitQuote -> serialize pipeline the localhost bridge uses.
             Console.Out.WriteLine(SubmitQuoteHandler.Handle(input));
             return 0;
+        }
+
+        private static int RunRefreshCache()
+        {
+            using (var connection = new QuickBooksServiceConnection())
+            {
+                QBStatusResponse<string> result = connection.Client.RefreshQuickBooksCaches();
+                WriteJson(result);
+                return result.StatusCode == 0 ? 0 : 1;
+            }
         }
 
         private static void WriteJson(object value)

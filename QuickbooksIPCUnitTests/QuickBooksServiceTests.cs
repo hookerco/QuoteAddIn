@@ -238,6 +238,61 @@ namespace QuickBooksServiceLibrary.Tests
         }
 
         [Test]
+        public void RefreshQuickBooksCaches_LogsFailureAndCanBeRetried()
+        {
+            var itemResponse = new QBStatusResponse<List<QBItem>>
+            {
+                StatusCode = 0,
+                StatusMessage = "OK",
+                Data = new List<QBItem> { new QBItem { Number = "1-1000" } }
+            };
+            var items = new Mock<IAllItemNonInvQueryRequest>();
+            items.SetupSequence(value => value.SendRequest())
+                .Throws(new InvalidOperationException("Synthetic QBFC permission failure"))
+                .Returns(itemResponse);
+            _mockRequestFactory.Setup(value => value.CreateAllItemNonInvQueryRequest())
+                .Returns(items.Object);
+
+            var terms = new Mock<ICommercialTermsQueryRequest>();
+            terms.Setup(value => value.SendRequest()).Returns(
+                new QBStatusResponse<QBCommercialTermsCatalog>
+                {
+                    StatusCode = 0,
+                    Data = new QBCommercialTermsCatalog
+                    {
+                        CreditTerms = new List<string> { "Net 30" },
+                        ShippingMethods = new List<string> { "UPS" },
+                        RefreshedAtUtc = DateTime.UtcNow
+                    }
+                });
+            _mockRequestFactory.Setup(value => value.CreateCommercialTermsQueryRequest())
+                .Returns(terms.Object);
+
+            var customerTerms = new Mock<ICustomerCommercialTermsQueryRequest>();
+            customerTerms.Setup(value => value.SendRequest()).Returns(
+                new QBStatusResponse<List<QBCustomerCommercialTermsRecord>>
+                {
+                    StatusCode = 0,
+                    Data = new List<QBCustomerCommercialTermsRecord>()
+                });
+            _mockRequestFactory.Setup(value => value.CreateCustomerCommercialTermsQueryRequest())
+                .Returns(customerTerms.Object);
+
+            QBStatusResponse<string> failed = _service.RefreshQuickBooksCaches();
+            QBStatusResponse<string> retried = _service.RefreshQuickBooksCaches();
+
+            Assert.AreEqual(1, failed.StatusCode);
+            Assert.AreEqual(0, retried.StatusCode);
+            Assert.AreEqual("refreshed", retried.Data);
+            StringAssert.Contains(
+                "Synthetic QBFC permission failure",
+                File.ReadAllText(_logPath));
+            items.Verify(value => value.SendRequest(), Times.Exactly(2));
+            terms.Verify(value => value.SendRequest(), Times.Exactly(2));
+            customerTerms.Verify(value => value.SendRequest(), Times.Exactly(2));
+        }
+
+        [Test]
         public void AddNonInvItem_ShouldCreateAddItemNonInventoryRequestAndSend()
         {
             // Arrange

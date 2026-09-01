@@ -20,7 +20,8 @@ namespace QuickBooksServiceHost
         {
             string baseAddress = "net.pipe://localhost/QuickBooksService";
 
-            using (ServiceHost host = new ServiceHost(typeof(QuickBooksService), new Uri(baseAddress)))
+            using (var service = new QuickBooksService())
+            using (ServiceHost host = new ServiceHost(service, new Uri(baseAddress)))
             {
                 NetNamedPipeBinding binding = QuickBooksPipeBindingFactory.CreateServiceBinding();
                 host.AddServiceEndpoint(typeof(IQuickBooksService), binding, "");
@@ -57,8 +58,8 @@ namespace QuickBooksServiceHost
                         shutdownEvent.Set();
                     };
 
-
-                    shutdownEvent.WaitOne();
+                    Console.WriteLine("Press R to refresh QuickBooks data, or Ctrl+C to stop.");
+                    WaitForShutdownOrRefresh(shutdownEvent, service);
 
                     bridge?.Stop();
                     host.Close();
@@ -69,6 +70,35 @@ namespace QuickBooksServiceHost
                     //Console.WriteLine("Press enter to end the service");
                     //Console.ReadLine();
                     host.Abort();
+                }
+            }
+        }
+
+        private static void WaitForShutdownOrRefresh(
+            ManualResetEvent shutdownEvent,
+            QuickBooksService service)
+        {
+            while (!shutdownEvent.WaitOne(250))
+            {
+                try
+                {
+                    if (!Console.IsInputRedirected && Console.KeyAvailable &&
+                        Console.ReadKey(intercept: true).Key == ConsoleKey.R)
+                    {
+                        Console.WriteLine("Refreshing QuickBooks data...");
+                        var result = service.RefreshQuickBooksCaches();
+                        Console.WriteLine(result.StatusMessage);
+                    }
+                }
+                catch (InvalidOperationException)
+                {
+                    shutdownEvent.WaitOne();
+                    return;
+                }
+                catch (System.IO.IOException)
+                {
+                    shutdownEvent.WaitOne();
+                    return;
                 }
             }
         }

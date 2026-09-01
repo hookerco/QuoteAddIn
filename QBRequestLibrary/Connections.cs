@@ -95,10 +95,10 @@ namespace QBRequestLibrary
                 return true;
             }
 
-            catch (Exception)
+            catch (Exception ex)
             { // Cleanly close session and connection 
                 SafeClose();
-                throw new ConnectionException();
+                throw new ConnectionException("Could not begin QuickBooks session", ex);
             }
         }
 
@@ -141,6 +141,9 @@ namespace QBRequestLibrary
         public class ConnectionException : Exception
         {
             public ConnectionException(string message = "Could not begin session") : base(message) { }
+
+            public ConnectionException(string message, Exception innerException)
+                : base(message, innerException) { }
         }
     }
 }

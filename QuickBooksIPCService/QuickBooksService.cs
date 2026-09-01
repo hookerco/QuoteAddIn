@@ -127,7 +127,7 @@ namespace QuickBooksIPCService
     }
 
     [ServiceBehavior(InstanceContextMode = InstanceContextMode.Single)]
-    public class QuickBooksService : IQuickBooksService
+    public class QuickBooksService : IQuickBooksService, IDisposable
     {
         private readonly IRequestFactory _requestFactory;
         private static readonly Dictionary<string, QBStatusResponse<List<QBItem>>> _cache
@@ -138,6 +138,7 @@ namespace QuickBooksIPCService
             new CustomerCommercialTermsCache();
         private readonly Logger _logger;
         private readonly Func<string> _currentCompanyFileName;
+        private readonly object _cacheRefreshSync = new object();
         private bool _disposed = false;
 
         public QuickBooksService(IRequestFactory requestFactory)
@@ -204,11 +205,7 @@ namespace QuickBooksIPCService
         private void _initialize()
         {
             _logger.LogSessionStart();
-            Task.Run(() =>
-            {
-                UpdateCache(background: true, initial: true);
-                UpdateCommercialTermsCaches();
-            });
+            Task.Run(() => RefreshQuickBooksCaches("startup", initial: true));
             Task.Run(() => AutoUpdateCache(60));
         }
 
@@ -312,15 +309,21 @@ namespace QuickBooksIPCService
                     _requestFactory.CreateCommercialTermsQueryRequest();
                 QBStatusResponse<QBCommercialTermsCatalog> response = request?.SendRequest();
                 QBCommercialTermsCatalog catalog = response?.Data;
-                return catalog != null && _commercialTermsCache.TryReplace(
+                bool updated = catalog != null && _commercialTermsCache.TryReplace(
                     response.StatusCode,
                     catalog.CreditTerms,
                     catalog.ShippingMethods,
                     catalog.RefreshedAtUtc);
+                if (!updated)
+                {
+                    _logger.LogError(
+                        $"QuickBooks commercial terms refresh returned status {response?.StatusCode}: {response?.StatusMessage}");
+                }
+                return updated;
             }
-            catch
+            catch (Exception ex)
             {
-                _logger.LogError("QuickBooks commercial terms refresh failed.");
+                _logger.LogError("QuickBooks commercial terms refresh failed.", ex);
                 return false;
             }
         }
@@ -333,21 +336,21 @@ namespace QuickBooksIPCService
                     _requestFactory.CreateCustomerCommercialTermsQueryRequest();
                 QBStatusResponse<List<QBCustomerCommercialTermsRecord>> response =
                     request?.SendRequest();
-                return response != null && _customerCommercialTermsCache.TryReplaceAll(
+                bool updated = response != null && _customerCommercialTermsCache.TryReplaceAll(
                     response.StatusCode,
                     response.Data);
+                if (!updated)
+                {
+                    _logger.LogError(
+                        $"QuickBooks customer commercial terms refresh returned status {response?.StatusCode}: {response?.StatusMessage}");
+                }
+                return updated;
             }
-            catch
+            catch (Exception ex)
             {
-                _logger.LogError("QuickBooks customer commercial terms refresh failed.");
+                _logger.LogError("QuickBooks customer commercial terms refresh failed.", ex);
                 return false;
             }
-        }
-
-        private void UpdateCommercialTermsCaches()
-        {
-            UpdateCommercialTermsCache();
-            UpdateCustomerCommercialTermsCache();
         }
 
         public QBStatusResponse<string> AddOrder(QBOrder order)
@@ -902,38 +905,104 @@ namespace QuickBooksIPCService
             if (!_cacheValid)
             {
                 // Perform the query (this is the long-running part)
-                UpdateCache(background: false);
-                _logger.LogInfo("Updated cache in main thread");
+                if (!UpdateCache(background: false, source: "request"))
+                {
+                    return new QBStatusResponse<List<QBItem>>
+                    {
+                        StatusCode = 1,
+                        StatusMessage = "QuickBooks item cache refresh failed.",
+                        Data = null
+                    };
+                }
             }
 
             _logger.LogTransaction("Retrieved all items from cache");
             return _cache["AllItemInventory"];
         }
 
-        private void UpdateCache(bool background, bool initial = false)
+        private bool UpdateCache(bool background, bool initial = false, string source = null)
         {
-            if (initial)
+            try
             {
-                Console.WriteLine("Updating cache, service not ready");
+                if (initial)
+                {
+                    Console.WriteLine("Updating cache, service not ready");
+                }
+                var req = _requestFactory.CreateAllItemNonInvQueryRequest();
+
+                Stopwatch sw = new Stopwatch();
+                sw.Start();
+                var result = req.SendRequest();
+                sw.Stop();
+                var elapsedSeconds = (double)sw.ElapsedMilliseconds / 1000;
+
+                if (result == null || result.StatusCode != 0)
+                {
+                    _logger.LogError(
+                        $"QuickBooks item cache refresh returned status {result?.StatusCode}: {result?.StatusMessage}");
+                    return false;
+                }
+
+                lock (_cache)
+                {
+                    _cache["AllItemInventory"] = result;
+                    _cacheValid = true;
+                }
+
+                _logger.LogInfo($"Updated cache in {(background ? "background" : "main thread")}: {elapsedSeconds} seconds");
+                if (initial)
+                {
+                    Console.WriteLine($"WCF Service is running... {elapsedSeconds} second start-up");
+                }
+                return true;
             }
-            var req = _requestFactory.CreateAllItemNonInvQueryRequest();
-
-            Stopwatch sw = new Stopwatch();
-            sw.Start();
-            var result = req.SendRequest();
-            sw.Stop();
-            var elapsedSeconds = (double)sw.ElapsedMilliseconds / 1000;
-
-            lock (_cache)
+            catch (Exception ex)
             {
-                _cache["AllItemInventory"] = result;
-                _cacheValid = true;
+                string reason = string.IsNullOrWhiteSpace(source) ? string.Empty : $" ({source})";
+                _logger.LogError($"QuickBooks item cache refresh failed{reason}.", ex);
+                Console.Error.WriteLine($"QuickBooks item cache refresh failed{reason}: {ex.Message}");
+                return false;
             }
+        }
 
-            _logger.LogInfo($"Updated cache in {(background ? "background" : "main thread")}: {elapsedSeconds} seconds");
-            if (initial)
+        public QBStatusResponse<string> RefreshQuickBooksCaches()
+        {
+            return RefreshQuickBooksCaches("manual");
+        }
+
+        private QBStatusResponse<string> RefreshQuickBooksCaches(
+            string source,
+            bool initial = false)
+        {
+            lock (_cacheRefreshSync)
             {
-                Console.WriteLine($"WCF Service is running... {elapsedSeconds} second start-up");
+                _logger.LogInfo($"QuickBooks cache refresh started ({source}).");
+                bool itemsUpdated = UpdateCache(
+                    background: source != "request",
+                    initial: initial,
+                    source: source);
+                bool termsUpdated = UpdateCommercialTermsCache();
+                bool customerTermsUpdated = UpdateCustomerCommercialTermsCache();
+                bool succeeded = itemsUpdated && termsUpdated && customerTermsUpdated;
+                string message = succeeded
+                    ? "QuickBooks caches refreshed."
+                    : "One or more QuickBooks cache refreshes failed. See the service-host log.";
+
+                if (succeeded)
+                {
+                    _logger.LogInfo($"QuickBooks cache refresh completed ({source}).");
+                }
+                else
+                {
+                    _logger.LogError($"QuickBooks cache refresh completed with failures ({source}).");
+                }
+
+                return new QBStatusResponse<string>
+                {
+                    StatusCode = succeeded ? 0 : 1,
+                    StatusMessage = message,
+                    Data = succeeded ? "refreshed" : null
+                };
             }
         }
 
@@ -943,8 +1012,7 @@ namespace QuickBooksIPCService
             while (true)
             {
                 Thread.Sleep(ms_interval);
-                UpdateCache(background: true);
-                UpdateCommercialTermsCaches();
+                RefreshQuickBooksCaches("hourly");
             }
         }
 

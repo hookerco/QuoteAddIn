@@ -139,6 +139,7 @@ namespace QuickBooksIPCService
         private readonly Logger _logger;
         private readonly Func<string> _currentCompanyFileName;
         private readonly object _cacheRefreshSync = new object();
+        private bool _itemCacheReady = false;
         private bool _quickBooksDataReady = false;
         private bool _disposed = false;
 
@@ -951,6 +952,17 @@ namespace QuickBooksIPCService
                 }
 
                 _logger.LogInfo($"Updated cache in {(background ? "background" : "main thread")}: {elapsedSeconds} seconds");
+                if (!_itemCacheReady)
+                {
+                    _itemCacheReady = true;
+                    Console.WriteLine();
+                    Console.WriteLine("==================================================");
+                    Console.WriteLine("  QUICKBOOKS ITEM CACHE READY");
+                    Console.WriteLine($"  Items loaded in {elapsedSeconds:0.###} seconds");
+                    Console.WriteLine("  Loading customer terms in the background...");
+                    Console.WriteLine("==================================================");
+                    Console.WriteLine();
+                }
                 return true;
             }
             catch (Exception ex)
@@ -997,8 +1009,8 @@ namespace QuickBooksIPCService
                         _quickBooksDataReady = true;
                         Console.WriteLine();
                         Console.WriteLine("==================================================");
-                        Console.WriteLine("  QUICKBOOKS DATA READY");
-                        Console.WriteLine($"  Cache refresh completed in {elapsedSeconds:0.###} seconds");
+                        Console.WriteLine("  ALL QUICKBOOKS DATA READY");
+                        Console.WriteLine($"  Full refresh completed in {elapsedSeconds:0.###} seconds");
                         Console.WriteLine("==================================================");
                         Console.WriteLine();
                     }

@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet('static', 'manifest', 'install', 'rollback', 'all')]
+    [ValidateSet('static', 'qbfc', 'manifest', 'install', 'rollback', 'all')]
     [string]$Scenario = 'all'
 )
 
@@ -84,12 +84,36 @@ function Run-Scenario([string]$Name) {
     switch ($Name) {
         'static' {
             Assert-NotContains 'Register-ScheduledTask|New-ScheduledTask|Start-ScheduledTask|Unregister-ScheduledTask' 'ordinary installer must not contain scheduled-task operations'
-            Assert-NotContains 'Verb\s+RunAs|Test-IsAdministrator|EnvironmentVariableTarget\]::Machine|CommonDesktopDirectory|ProgramData|ProgramFiles' 'ordinary installer must be unelevated and current-user scoped'
-            Assert-NotContains 'Start-Process' 'ordinary installer must never launch the host'
+            Assert-NotContains 'Test-IsAdministrator|EnvironmentVariableTarget\]::Machine|CommonDesktopDirectory|ProgramData|ProgramFiles' 'ordinary installer must remain current-user scoped'
+            Assert-NotContains 'Start-Process\s+-FilePath\s+\$hostPath' 'ordinary installer must never launch the host'
+            Assert-Contains 'QBFC14_0installer\.exe' 'installer must include the bundled QBFC prerequisite'
+            Assert-Contains 'Start-Process[\s\S]*-Verb\s+RunAs' 'missing QBFC prerequisite must request administrator permission'
             Assert-Contains "EnvironmentVariableTarget\]::User" 'environment variables must be user-level'
             Assert-Contains "LocalApplicationData[\s\S]*Programs[\s\S]*QuickBooksServiceHost" 'runtime must default below LocalAppData Programs'
             Assert-Contains "LocalApplicationData[\s\S]*QuickBooksServiceHost" 'state must default below LocalAppData'
             Assert-Contains "GetFolderPath\('DesktopDirectory'\)" 'shortcut must use the current user desktop'
+        }
+        'qbfc' {
+            $root = Join-Path ([IO.Path]::GetTempPath()) ('qbfc-install-' + [guid]::NewGuid().ToString('N'))
+            $source = Join-Path $root 'service_host_installation'
+            New-Item -ItemType Directory -Force -Path $source | Out-Null
+            [IO.File]::WriteAllText((Join-Path $root 'QBFC14_0installer.exe'),'fixture')
+            try {
+                $state = [pscustomobject]@{ Registered=$false; Installs=0; Path='' }
+                $result = Ensure-QbfcPrerequisite -SourcePath $source `
+                    -TestRegisteredAction { $state.Registered }.GetNewClosure() `
+                    -InstallAction {
+                        param($path)
+                        $state.Installs++
+                        $state.Path=$path
+                        $state.Registered=$true
+                        return 0
+                    }.GetNewClosure()
+                Assert-Equal 'Installed' $result 'missing QBFC is installed'
+                Assert-Equal 1 $state.Installs 'QBFC installer runs once'
+                Assert-Equal (Join-Path $root 'QBFC14_0installer.exe') $state.Path 'bundled QBFC installer is used'
+            }
+            finally { Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue }
         }
         'manifest' {
             foreach ($unsafe in @('..\outside.dll','.\runtime.dll','C:\outside.dll','nested//runtime.dll','nested:stream')) {
@@ -185,5 +209,5 @@ function Run-Scenario([string]$Name) {
     }
 }
 
-$scenarios = if ($Scenario -eq 'all') { @('static','manifest','install','rollback') } else { @($Scenario) }
+$scenarios = if ($Scenario -eq 'all') { @('static','qbfc','manifest','install','rollback') } else { @($Scenario) }
 foreach ($name in $scenarios) { Run-Scenario $name; Write-Output "PASS: $name" }

@@ -2,6 +2,44 @@
 param([switch]$AsLibrary)
 
 $ErrorActionPreference = 'Stop'
+$qbfcClsid = '{56289251-36CB-4F57-BB42-6DFE988804A8}'
+
+function Test-QbfcRegistered {
+    foreach ($view in @([Microsoft.Win32.RegistryView]::Registry32,[Microsoft.Win32.RegistryView]::Registry64)) {
+        $root = [Microsoft.Win32.RegistryKey]::OpenBaseKey([Microsoft.Win32.RegistryHive]::ClassesRoot,$view)
+        try {
+            $key = $root.OpenSubKey("CLSID\$qbfcClsid")
+            if ($null -ne $key) { $key.Dispose(); return $true }
+        }
+        finally { $root.Dispose() }
+    }
+    return $false
+}
+
+function Ensure-QbfcPrerequisite {
+    param(
+        [Parameter(Mandatory=$true)][string]$SourcePath,
+        [scriptblock]$TestRegisteredAction={ Test-QbfcRegistered },
+        [scriptblock]$InstallAction={
+            param($installerPath)
+            (Start-Process -FilePath $installerPath -Verb RunAs -Wait -PassThru).ExitCode
+        }
+    )
+
+    if (& $TestRegisteredAction) { return 'AlreadyInstalled' }
+    $installerPath = Join-Path (Split-Path -Parent $SourcePath) 'QBFC14_0installer.exe'
+    if (-not (Test-Path -LiteralPath $installerPath -PathType Leaf)) {
+        throw "QuickBooks Foundation Classes are missing, and the installer was not found: $installerPath"
+    }
+
+    Write-Host 'QuickBooks Foundation Classes are missing. Starting the QBFC 14 installer...'
+    $exitCode = & $InstallAction $installerPath
+    if ($exitCode -notin @(0,1641,3010)) { throw "QBFC 14 installation failed with exit code $exitCode." }
+    if (-not (& $TestRegisteredAction)) {
+        throw 'QBFC 14 installation completed, but its COM class is still not registered. Restart Windows and run this installer again.'
+    }
+    return 'Installed'
+}
 
 function Test-SafeReleasePath {
     param([Parameter(Mandatory=$true)][string]$Path)
@@ -237,6 +275,8 @@ function Invoke-ServiceHostInstall {
 
 if ($AsLibrary) { return }
 
+$qbfcStatus = Ensure-QbfcPrerequisite -SourcePath $PSScriptRoot.Trim()
+Write-Output "QBFC 14 prerequisite: $qbfcStatus"
 $localAppData = [Environment]::GetFolderPath('LocalApplicationData')
 $destinationPath = Join-Path (Join-Path $localAppData 'Programs') 'QuickBooksServiceHost'
 $statePath = Join-Path $localAppData 'QuickBooksServiceHost'

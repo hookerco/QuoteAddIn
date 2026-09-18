@@ -1,5 +1,29 @@
 # QuickBooks Localhost Bridge — `QuoteAddIn` implementation brief
 
+## Submission diagnostics (2026-09-18)
+
+The current Service Host logs accepted browser `/submit-quote` attempts through
+`SubmitQuoteHandler.HandleWithLogging`, using the existing `QBRequestLibrary.Logger`.
+The historical implementation plan below is retained as provenance.
+
+Each attempt has a generated `diagnostic_id`, a start record, and a completion
+record with elapsed milliseconds. Completion distinguishes success, rejection
+(with numeric status code), missing response, timeout, and exception. Exceptions
+include the stage (parse, submit, or serialize), exception type, and HRESULT only.
+The new diagnostics exclude request payloads, customer/quote/transaction identifiers,
+QuickBooks response messages, and exception messages/stacks. A success means the
+service returned status zero; it is not an independent transaction read-back.
+
+Records use `QUOTEADDIN_LOG_PATH` when configured, otherwise the existing
+`Z:\COLTON TEST\QBUtility Beta Install\logs\<Windows username>.txt` file.
+Logging is best effort: an unavailable log must never fail or repeat a send.
+These records start after the bridge accepts the submission route; browser network
+failures and rejected authentication requests do not create submission records.
+
+Validation: Release Service Host build and 43 synthetic bridge tests passed.
+This change has not been deployed or tested against production QuickBooks.
+
+
 **Status:** ready to implement. The Python/webgui half is already built and merged
 (in the `quote_modulev2` repo). This brief is the **.NET half** — the only thing
 between today and "the centrally-hosted web quote module can send to QuickBooks."

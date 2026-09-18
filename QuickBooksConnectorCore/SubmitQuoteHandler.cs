@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Diagnostics;
 using System.Text.RegularExpressions;
 using System.Web.Script.Serialization;
 using QuickBooksIPCContracts;
@@ -37,16 +38,47 @@ namespace QuickBooksConnectorCore
         /// <paramref name="submit"/> seam lets callers (and tests) substitute the transport
         /// without re-implementing the parse/serialize contract.
         /// </summary>
-        public static string Handle(string json, Func<QBQuoteUploadRequest, QBStatusResponse<QBQuoteUploadResult>> submit)
+        public static string HandleWithLogging(string json, Action<string> log)
         {
-            if (submit == null)
-            {
-                throw new ArgumentNullException(nameof(submit));
-            }
+            return Handle(json, SubmitOverPipe, log);
+        }
 
-            QBQuoteUploadRequest request = ParseQuoteUploadRequest(json);
-            QBStatusResponse<QBQuoteUploadResult> response = submit(request);
-            return JsonSerializer.Serialize(ToJsonResponse(response));
+        public static string Handle(string json,
+            Func<QBQuoteUploadRequest, QBStatusResponse<QBQuoteUploadResult>> submit,
+            Action<string> log = null)
+        {
+            if (submit == null) throw new ArgumentNullException(nameof(submit));
+            string attempt = Guid.NewGuid().ToString("N");
+            var timer = Stopwatch.StartNew();
+            string stage = "parse";
+            WriteDiagnostic(log, $"QB submit started; diagnostic_id={attempt}.");
+            try
+            {
+                QBQuoteUploadRequest request = ParseQuoteUploadRequest(json);
+                stage = "submit";
+                QBStatusResponse<QBQuoteUploadResult> response = submit(request);
+                stage = "serialize";
+                string result = JsonSerializer.Serialize(ToJsonResponse(response));
+                string outcome = response == null ? "missing_response"
+                    : response.StatusCode == 0 ? "success" : "rejected";
+                string code = response == null ? "missing"
+                    : response.StatusCode.ToString(CultureInfo.InvariantCulture);
+                WriteDiagnostic(log, $"QB submit completed; diagnostic_id={attempt}; outcome={outcome}; status_code={code}; elapsed_ms={timer.ElapsedMilliseconds}.");
+                return result;
+            }
+            catch (Exception ex)
+            {
+                string outcome = ex is TimeoutException ? "timeout" : "exception";
+                WriteDiagnostic(log, $"QB submit completed; diagnostic_id={attempt}; outcome={outcome}; stage={stage}; exception_type={ex.GetType().Name}; hresult=0x{ex.HResult:X8}; elapsed_ms={timer.ElapsedMilliseconds}.");
+                throw;
+            }
+        }
+
+        private static void WriteDiagnostic(Action<string> log, string message)
+        {
+            // Diagnostics must neither alter a send nor trigger a retry.
+            try { log?.Invoke(message); }
+            catch { }
         }
 
         private static QBStatusResponse<QBQuoteUploadResult> SubmitOverPipe(QBQuoteUploadRequest request)

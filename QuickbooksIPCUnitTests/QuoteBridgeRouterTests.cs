@@ -471,6 +471,82 @@ namespace QuickbooksIPCUnitTests
             Assert.AreEqual("{\"QuoteNumber\":\"26-1042\"}", capturedBody);
         }
 
+        [TestCase(0, "success")]
+        [TestCase(3100, "rejected")]
+        public void SubmitDiagnostics_LogsCorrelatedOutcomeWithoutBusinessData(int code, string outcome)
+        {
+            var logs = new List<string>();
+            int calls = 0;
+            string payload = "{\"CustomerName\":\"SYNTH-PRIVATE-CUSTOMER\",\"QuoteNumber\":\"SYNTH-PRIVATE-QUOTE\"}";
+            string result = SubmitQuoteHandler.Handle(payload, _ => {
+                calls++;
+                return new QBStatusResponse<QBQuoteUploadResult> {
+                    StatusCode = code, StatusMessage = "SYNTH-PRIVATE-RESPONSE",
+                    Data = new QBQuoteUploadResult { TransactionId = "SYNTH-PRIVATE-TXN" }
+                };
+            }, logs.Add);
+            Assert.AreEqual(1, calls);
+            Assert.AreEqual(2, logs.Count);
+            StringAssert.Contains("QB submit started", logs[0]);
+            var id = System.Text.RegularExpressions.Regex.Match(logs[0], "diagnostic_id=([a-f0-9]{32})").Groups[1].Value;
+            Assert.AreEqual(32, id.Length);
+            StringAssert.Contains("diagnostic_id=" + id, logs[1]);
+            StringAssert.Contains("outcome=" + outcome, logs[1]);
+            StringAssert.Contains("status_code=" + code, logs[1]);
+            StringAssert.Contains("elapsed_ms=", logs[1]);
+            StringAssert.DoesNotContain("SYNTH-PRIVATE", string.Join("\n", logs));
+            StringAssert.Contains("SYNTH-PRIVATE-RESPONSE", result);
+        }
+
+        [Test]
+        public void SubmitDiagnostics_LogsMissingResponse()
+        {
+            var logs = new List<string>();
+            string result = SubmitQuoteHandler.Handle("{}", _ => null, logs.Add);
+            StringAssert.Contains("outcome=missing_response; status_code=missing", logs[1]);
+            StringAssert.Contains("\"StatusCode\":1", result);
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void SubmitDiagnostics_LogsTransportFailureWithoutExceptionText(bool timeout)
+        {
+            var logs = new List<string>();
+            Exception failure = timeout ? (Exception)new TimeoutException("SYNTH-PRIVATE")
+                : new InvalidOperationException("SYNTH-PRIVATE");
+            Exception actual = Assert.Catch(() => SubmitQuoteHandler.Handle("{}", _ => { throw failure; }, logs.Add));
+            Assert.AreSame(failure, actual);
+            Assert.AreEqual(2, logs.Count);
+            StringAssert.Contains("outcome=" + (timeout ? "timeout" : "exception"), logs[1]);
+            StringAssert.Contains("stage=submit", logs[1]);
+            StringAssert.Contains("hresult=0x", logs[1]);
+            StringAssert.DoesNotContain("SYNTH-PRIVATE", string.Join("\n", logs));
+        }
+
+        [Test]
+        public void SubmitDiagnostics_LogsParseFailureWithoutPayload()
+        {
+            var logs = new List<string>();
+            int calls = 0;
+            Assert.Throws<QuoteRequestParseException>(() => SubmitQuoteHandler.Handle(
+                "SYNTH-PRIVATE-BAD-JSON", _ => { calls++; return null; }, logs.Add));
+            Assert.AreEqual(0, calls);
+            StringAssert.Contains("stage=parse", logs[1]);
+            StringAssert.DoesNotContain("SYNTH-PRIVATE", string.Join("\n", logs));
+        }
+
+        [Test]
+        public void SubmitDiagnostics_LoggerFailureDoesNotChangeOrRepeatSend()
+        {
+            int calls = 0;
+            string result = SubmitQuoteHandler.Handle("{}", _ => {
+                calls++;
+                return new QBStatusResponse<QBQuoteUploadResult> { StatusCode = 0 };
+            }, _ => { throw new IOException("unavailable"); });
+            Assert.AreEqual(1, calls);
+            StringAssert.Contains("\"StatusCode\":0", result);
+        }
+
         [Test]
         public void SubmitQuote_RoutesThroughSharedHandler_OnRealContractPayload()
         {

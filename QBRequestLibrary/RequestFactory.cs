@@ -8,8 +8,13 @@ using System.Threading.Tasks;
 // QBRequestLibrary/RequestFactory.cs
 namespace QBRequestLibrary
 {
-    public class RequestFactory : IRequestFactory
+    public class RequestFactory : IRequestFactory, ICacheRefreshSessionFactory
     {
+        public ICacheRefreshSession OpenCacheRefreshSession()
+        {
+            return new CacheRefreshSession(new Connection());
+        }
+
         public ICustomerQueryRequest CreateCustomerQueryRequest(string accountNumber)
         {
             return new CustomerQueryRequest(accountNumber);

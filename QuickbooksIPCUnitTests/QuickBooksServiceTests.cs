@@ -1,4 +1,4 @@
-﻿// QuickBooksServiceLibrary.Tests/QuickBooksServiceTests.cs
+// QuickBooksServiceLibrary.Tests/QuickBooksServiceTests.cs
 using NUnit.Framework;
 using Moq;
 using QBRequestLibrary;
@@ -8,6 +8,7 @@ using QuickBooksIPCService;
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Threading;
 
 namespace QuickBooksServiceLibrary.Tests
 {
@@ -292,6 +293,90 @@ namespace QuickBooksServiceLibrary.Tests
             items.Verify(value => value.SendRequest(), Times.Exactly(2));
             terms.Verify(value => value.SendRequest(), Times.Exactly(2));
             customerTerms.Verify(value => value.SendRequest(), Times.Exactly(2));
+        }
+
+        [Test]
+        public void GetAllItems_ConcurrentCacheMissesShareOneQuickBooksRead()
+        {
+            using (var entered = new ManualResetEventSlim())
+            using (var release = new ManualResetEventSlim())
+            {
+                var expected = new QBStatusResponse<List<QBItem>> { Data = new List<QBItem>() };
+                var query = new Mock<IAllItemNonInvQueryRequest>();
+                query.Setup(value => value.SendRequest()).Returns(() =>
+                {
+                    entered.Set();
+                    if (!release.Wait(TimeSpan.FromSeconds(5))) throw new TimeoutException();
+                    return expected;
+                });
+                _mockRequestFactory.Setup(value => value.CreateAllItemNonInvQueryRequest()).Returns(query.Object);
+                QBStatusResponse<List<QBItem>> first = null, second = null;
+                var firstThread = new Thread(() => first = _service.GetAllItems());
+                var secondThread = new Thread(() => second = _service.GetAllItems());
+                firstThread.Start();
+                try
+                {
+                    Assert.IsTrue(entered.Wait(TimeSpan.FromSeconds(5)));
+                    secondThread.Start();
+                    Assert.IsTrue(SpinWait.SpinUntil(() =>
+                        (secondThread.ThreadState & ThreadState.WaitSleepJoin) != 0, TimeSpan.FromSeconds(5)));
+                }
+                finally
+                {
+                    release.Set();
+                    firstThread.Join(5000);
+                    if (secondThread.ThreadState != ThreadState.Unstarted) secondThread.Join(5000);
+                }
+                Assert.AreSame(expected, first);
+                Assert.AreSame(expected, second);
+                query.Verify(value => value.SendRequest(), Times.Once);
+            }
+        }
+
+        [Test]
+        public void GetAllItems_InvalidationDuringReadCannotPublishObsoleteSnapshot()
+        {
+            var query = new Mock<IAllItemNonInvQueryRequest>();
+            int reads = 0;
+            query.Setup(value => value.SendRequest()).Returns(() =>
+            {
+                if (++reads == 1) _service.InvalidateAllItemsCache();
+                return new QBStatusResponse<List<QBItem>>
+                {
+                    Data = new List<QBItem> { new QBItem { Number = reads == 1 ? "old" : "new" } }
+                };
+            });
+            _mockRequestFactory.Setup(value => value.CreateAllItemNonInvQueryRequest()).Returns(query.Object);
+            Assert.AreNotEqual(0, _service.GetAllItems().StatusCode);
+            Assert.AreEqual("new", _service.GetAllItems().Data[0].Number);
+            query.Verify(value => value.SendRequest(), Times.Exactly(2));
+        }
+
+        [Test]
+        public void RefreshQuickBooksCaches_UsesAndDisposesFactorySession()
+        {
+            var session = new Mock<ICacheRefreshSession>();
+            var items = new Mock<IAllItemNonInvQueryRequest>();
+            items.Setup(value => value.SendRequest()).Returns(new QBStatusResponse<List<QBItem>> { Data = new List<QBItem>() });
+            var terms = new Mock<ICommercialTermsQueryRequest>();
+            terms.Setup(value => value.SendRequest()).Returns(new QBStatusResponse<QBCommercialTermsCatalog>
+            {
+                Data = new QBCommercialTermsCatalog { CreditTerms = new List<string>(), ShippingMethods = new List<string>() }
+            });
+            var customers = new Mock<ICustomerCommercialTermsQueryRequest>();
+            customers.Setup(value => value.SendRequest()).Returns(new QBStatusResponse<List<QBCustomerCommercialTermsRecord>> { Data = new List<QBCustomerCommercialTermsRecord>() });
+            session.SetupGet(value => value.Items).Returns(items.Object);
+            session.SetupGet(value => value.Terms).Returns(terms.Object);
+            session.SetupGet(value => value.Customers).Returns(customers.Object);
+            var factory = new Mock<IRequestFactory>();
+            factory.As<ICacheRefreshSessionFactory>().Setup(value => value.OpenCacheRefreshSession()).Returns(session.Object);
+            using (var service = new QuickBooksService(factory.Object, new Logger(_logPath), initialize: false))
+                Assert.AreEqual(0, service.RefreshQuickBooksCaches().StatusCode);
+            items.Verify(value => value.SendRequest(), Times.Once);
+            terms.Verify(value => value.SendRequest(), Times.Once);
+            customers.Verify(value => value.SendRequest(), Times.Once);
+            session.Verify(value => value.Dispose(), Times.Once);
+            factory.Verify(value => value.CreateAllItemNonInvQueryRequest(), Times.Never);
         }
 
         [Test]
@@ -717,7 +802,7 @@ namespace QuickBooksServiceLibrary.Tests
 
             Assert.AreEqual(1, result.StatusCode);
             Assert.AreEqual(
-                "QuickBooks Estimate preflight is unavailable.",
+                "Could not check QuickBooks for an existing estimate. The quote was not sent. See the service-host log for details.",
                 result.StatusMessage);
             CollectionAssert.AreEqual(new[] { "preflight-A", "query-session-B" }, calls);
             _mockRequestFactory.Verify(value => value.CreateEstimateReferenceQueryRequest(
@@ -996,12 +1081,42 @@ namespace QuickBooksServiceLibrary.Tests
 
             Assert.AreEqual(1, result.StatusCode);
             Assert.AreEqual(
-                "QuickBooks Estimate preflight is unavailable.",
+                "Could not check QuickBooks for an existing estimate. The quote was not sent. See the service-host log for details.",
                 result.StatusMessage);
             StringAssert.DoesNotContain(privateDetail, result.StatusMessage);
             CollectionAssert.AreEqual(new[] { "estimate-query" }, calls);
             Assert.IsTrue(File.Exists(_logPath));
             StringAssert.DoesNotContain(privateDetail, File.ReadAllText(_logPath));
+            StringAssert.Contains("Exception=System.InvalidOperationException", File.ReadAllText(_logPath));
+            StringAssert.Contains("CauseHRESULT=0x", File.ReadAllText(_logPath));
+            AssertNoCustomerItemOrTransactionWrites();
+        }
+
+        [TestCase(500, false)]
+        [TestCase(3250, false)]
+        [TestCase(0, true)]
+        public void QuoteWriteSafety_EstimateLookupFailureLogsStatusAndBlocksWrites(
+            int statusCode, bool missingData)
+        {
+            QBQuoteUploadRequest request = QuoteRequest(QBQuoteTransactionType.Estimate, "normal");
+            var query = new Mock<IEstimateReferenceQueryRequest>();
+            query.Setup(value => value.SendRequest())
+                .Returns(new QBStatusResponse<List<QBEstimateReference>>
+                {
+                    StatusCode = statusCode,
+                    StatusMessage = "Synthetic private detail",
+                    Data = missingData ? null : new List<QBEstimateReference>()
+                });
+            _mockRequestFactory
+                .Setup(value => value.CreateEstimateReferenceQueryRequest(request.QuoteNumber))
+                .Returns(query.Object);
+
+            var result = _service.SubmitQuote(request);
+
+            Assert.AreNotEqual(0, result.StatusCode);
+            StringAssert.Contains("The quote was not sent", result.StatusMessage);
+            StringAssert.Contains("StatusCode=" + statusCode, File.ReadAllText(_logPath));
+            StringAssert.Contains("ResultCount=" + (missingData ? "missing" : "0"), File.ReadAllText(_logPath));
             AssertNoCustomerItemOrTransactionWrites();
         }
 

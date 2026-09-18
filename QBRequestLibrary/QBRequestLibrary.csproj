@@ -47,6 +47,8 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="Connections.cs" />
+    <Compile Include="CacheRefreshSession.cs" />
+    <Compile Include="CacheResponseReader.cs" />
     <Compile Include="Exceptions.cs" />
     <Compile Include="Interfaces.cs" />
     <Compile Include="IRequestFactory.cs" />

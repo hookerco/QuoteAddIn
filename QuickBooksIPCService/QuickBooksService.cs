@@ -130,15 +130,20 @@ namespace QuickBooksIPCService
     public class QuickBooksService : IQuickBooksService, IDisposable
     {
         private readonly IRequestFactory _requestFactory;
-        private static readonly Dictionary<string, QBStatusResponse<List<QBItem>>> _cache
+        private readonly Dictionary<string, QBStatusResponse<List<QBItem>>> _cache
             = new Dictionary<string, QBStatusResponse<List<QBItem>>>();
-        private bool _cacheValid = false;
+        private volatile bool _cacheValid = false;
         private readonly CommercialTermsCache _commercialTermsCache = new CommercialTermsCache();
         private readonly CustomerCommercialTermsCache _customerCommercialTermsCache =
             new CustomerCommercialTermsCache();
         private readonly Logger _logger;
         private readonly Func<string> _currentCompanyFileName;
         private readonly object _cacheRefreshSync = new object();
+        private readonly object _itemRefreshSync = new object();
+        private long _itemRefreshVersion;
+        private long _itemInvalidationVersion;
+        private long _fullRefreshVersion;
+        private QBStatusResponse<string> _lastRefreshResult;
         private bool _itemCacheReady = false;
         private bool _quickBooksDataReady = false;
         private bool _disposed = false;
@@ -305,10 +310,15 @@ namespace QuickBooksIPCService
 
         private bool UpdateCommercialTermsCache()
         {
+            return LoadCommercialTermsCache(null);
+        }
+
+        private bool LoadCommercialTermsCache(ICommercialTermsQueryRequest sharedRequest)
+        {
             try
             {
                 ICommercialTermsQueryRequest request =
-                    _requestFactory.CreateCommercialTermsQueryRequest();
+                    sharedRequest ?? _requestFactory.CreateCommercialTermsQueryRequest();
                 QBStatusResponse<QBCommercialTermsCatalog> response = request?.SendRequest();
                 QBCommercialTermsCatalog catalog = response?.Data;
                 bool updated = catalog != null && _commercialTermsCache.TryReplace(
@@ -332,10 +342,15 @@ namespace QuickBooksIPCService
 
         private bool UpdateCustomerCommercialTermsCache()
         {
+            return LoadCustomerCommercialTermsCache(null);
+        }
+
+        private bool LoadCustomerCommercialTermsCache(ICustomerCommercialTermsQueryRequest sharedRequest)
+        {
             try
             {
                 ICustomerCommercialTermsQueryRequest request =
-                    _requestFactory.CreateCustomerCommercialTermsQueryRequest();
+                    sharedRequest ?? _requestFactory.CreateCustomerCommercialTermsQueryRequest();
                 QBStatusResponse<List<QBCustomerCommercialTermsRecord>> response =
                     request?.SendRequest();
                 bool updated = response != null && _customerCommercialTermsCache.TryReplaceAll(
@@ -590,18 +605,25 @@ namespace QuickBooksIPCService
                         request.QuoteNumber,
                         approvedWriteFingerprint).SendRequest();
             }
-            catch
+            catch (Exception ex)
             {
-                _logger.LogError("QuickBooks Estimate preflight failed.");
-                return Failure("QuickBooks Estimate preflight is unavailable.");
+                // Record diagnostic codes without customer data or company-file paths.
+                Exception cause = ex.GetBaseException();
+                _logger.LogError(
+                    $"QuickBooks existing-estimate lookup failed. Exception={ex.GetType().FullName}; " +
+                    $"HRESULT=0x{ex.HResult:X8}; Cause={cause.GetType().FullName}; " +
+                    $"CauseHRESULT=0x{cause.HResult:X8}.");
+                return Failure("Could not check QuickBooks for an existing estimate. The quote was not sent. See the service-host log for details.");
             }
 
             if (references == null ||
                 references.StatusCode != 0 ||
                 references.Data == null)
             {
-                _logger.LogError("QuickBooks Estimate preflight failed.");
-                return Failure("QuickBooks Estimate preflight is unavailable.");
+                _logger.LogError(
+                    $"QuickBooks existing-estimate lookup failed. StatusCode={references?.StatusCode.ToString() ?? "missing"}; " +
+                    $"ResultCount={references?.Data?.Count.ToString() ?? "missing"}.");
+                return Failure("Could not check QuickBooks for an existing estimate. The quote was not sent. See the service-host log for details.");
             }
 
             if (references.Data.Count == 0)
@@ -919,58 +941,72 @@ namespace QuickBooksIPCService
             }
 
             _logger.LogTransaction("Retrieved all items from cache");
-            return _cache["AllItemInventory"];
+            lock (_cache) return _cache["AllItemInventory"];
         }
 
-        private bool UpdateCache(bool background, bool initial = false, string source = null)
+        private bool UpdateCache(bool background, bool initial = false, string source = null,
+            IAllItemNonInvQueryRequest sharedRequest = null)
         {
-            try
+            long observedRefresh = Interlocked.Read(ref _itemRefreshVersion);
+            lock (_itemRefreshSync)
             {
-                if (initial)
+                // Join a completed overlapping read, but do not suppress a later explicit refresh.
+                if (_cacheValid && (source == "request" || observedRefresh != _itemRefreshVersion))
+                    return true;
+                long invalidationVersion;
+                lock (_cache) invalidationVersion = _itemInvalidationVersion;
+                try
                 {
-                    Console.WriteLine("Updating cache, service not ready");
+                    if (initial)
+                    {
+                        Console.WriteLine("Updating cache, service not ready");
+                    }
+                    var req = sharedRequest ?? _requestFactory.CreateAllItemNonInvQueryRequest();
+
+                    Stopwatch sw = new Stopwatch();
+                    sw.Start();
+                    var result = req.SendRequest();
+                    sw.Stop();
+                    var elapsedSeconds = (double)sw.ElapsedMilliseconds / 1000;
+
+                    if (result == null || result.StatusCode != 0 || result.Data == null)
+                    {
+                        _logger.LogError(
+                            $"QuickBooks item cache refresh returned status {result?.StatusCode}: {result?.StatusMessage}");
+                        return false;
+                    }
+
+                    lock (_cache)
+                    {
+                        // A write during the read makes its result obsolete. The queued
+                        // post-write refresh will fetch a new snapshot after this read ends.
+                        if (invalidationVersion != _itemInvalidationVersion) return false;
+                        _cache["AllItemInventory"] = result;
+                        _cacheValid = true;
+                        Interlocked.Increment(ref _itemRefreshVersion);
+                    }
+
+                    _logger.LogInfo($"Updated cache in {(background ? "background" : "main thread")}: {elapsedSeconds} seconds");
+                    if (!_itemCacheReady)
+                    {
+                        _itemCacheReady = true;
+                        Console.WriteLine();
+                        Console.WriteLine("==================================================");
+                        Console.WriteLine("  QUICKBOOKS ITEM CACHE READY");
+                        Console.WriteLine($"  Items loaded in {elapsedSeconds:0.###} seconds");
+                        Console.WriteLine("  Loading customer terms in the background...");
+                        Console.WriteLine("==================================================");
+                        Console.WriteLine();
+                    }
+                    return true;
                 }
-                var req = _requestFactory.CreateAllItemNonInvQueryRequest();
-
-                Stopwatch sw = new Stopwatch();
-                sw.Start();
-                var result = req.SendRequest();
-                sw.Stop();
-                var elapsedSeconds = (double)sw.ElapsedMilliseconds / 1000;
-
-                if (result == null || result.StatusCode != 0)
+                catch (Exception ex)
                 {
-                    _logger.LogError(
-                        $"QuickBooks item cache refresh returned status {result?.StatusCode}: {result?.StatusMessage}");
+                    string reason = string.IsNullOrWhiteSpace(source) ? string.Empty : $" ({source})";
+                    _logger.LogError($"QuickBooks item cache refresh failed{reason}.", ex);
+                    Console.Error.WriteLine($"QuickBooks item cache refresh failed{reason}: {ex.Message}");
                     return false;
                 }
-
-                lock (_cache)
-                {
-                    _cache["AllItemInventory"] = result;
-                    _cacheValid = true;
-                }
-
-                _logger.LogInfo($"Updated cache in {(background ? "background" : "main thread")}: {elapsedSeconds} seconds");
-                if (!_itemCacheReady)
-                {
-                    _itemCacheReady = true;
-                    Console.WriteLine();
-                    Console.WriteLine("==================================================");
-                    Console.WriteLine("  QUICKBOOKS ITEM CACHE READY");
-                    Console.WriteLine($"  Items loaded in {elapsedSeconds:0.###} seconds");
-                    Console.WriteLine("  Loading customer terms in the background...");
-                    Console.WriteLine("==================================================");
-                    Console.WriteLine();
-                }
-                return true;
-            }
-            catch (Exception ex)
-            {
-                string reason = string.IsNullOrWhiteSpace(source) ? string.Empty : $" ({source})";
-                _logger.LogError($"QuickBooks item cache refresh failed{reason}.", ex);
-                Console.Error.WriteLine($"QuickBooks item cache refresh failed{reason}: {ex.Message}");
-                return false;
             }
         }
 
@@ -983,17 +1019,29 @@ namespace QuickBooksIPCService
             string source,
             bool initial = false)
         {
+            long observedRefresh = Interlocked.Read(ref _fullRefreshVersion);
             lock (_cacheRefreshSync)
             {
+                if (observedRefresh != _fullRefreshVersion) return _lastRefreshResult;
                 var refreshTimer = Stopwatch.StartNew();
                 _logger.LogInfo($"QuickBooks cache refresh started ({source}).");
-                bool itemsUpdated = UpdateCache(
-                    background: source != "request",
-                    initial: initial,
-                    source: source);
-                bool termsUpdated = UpdateCommercialTermsCache();
-                bool customerTermsUpdated = UpdateCustomerCommercialTermsCache();
-                bool succeeded = itemsUpdated && termsUpdated && customerTermsUpdated;
+                bool succeeded = false;
+                try
+                {
+                    using (var session = (_requestFactory as ICacheRefreshSessionFactory)?.OpenCacheRefreshSession())
+                    {
+                        bool itemsUpdated = UpdateCache(
+                            background: source != "request", initial: initial,
+                            source: source, sharedRequest: session?.Items);
+                        bool termsUpdated = LoadCommercialTermsCache(session?.Terms);
+                        bool customerTermsUpdated = LoadCustomerCommercialTermsCache(session?.Customers);
+                        succeeded = itemsUpdated && termsUpdated && customerTermsUpdated;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError($"QuickBooks cache session failed ({source}); HRESULT=0x{ex.GetBaseException().HResult:X8}.");
+                }
                 refreshTimer.Stop();
                 double elapsedSeconds = (double)refreshTimer.ElapsedMilliseconds / 1000;
                 string message = succeeded
@@ -1021,12 +1069,14 @@ namespace QuickBooksIPCService
                         $"QuickBooks cache refresh completed with failures ({source}) after {elapsedSeconds:0.###} seconds.");
                 }
 
-                return new QBStatusResponse<string>
+                _lastRefreshResult = new QBStatusResponse<string>
                 {
                     StatusCode = succeeded ? 0 : 1,
                     StatusMessage = message,
                     Data = succeeded ? "refreshed" : null
                 };
+                Interlocked.Increment(ref _fullRefreshVersion);
+                return _lastRefreshResult;
             }
         }
 
@@ -1042,7 +1092,11 @@ namespace QuickBooksIPCService
 
         public int InvalidateAllItemsCache()
         {
-            _cacheValid = false;
+            lock (_cache)
+            {
+                ++_itemInvalidationVersion;
+                _cacheValid = false;
+            }
             _logger.LogInfo("Invalidated cache");
             return 0;
         }

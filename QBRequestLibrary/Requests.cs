@@ -1,4 +1,4 @@
-﻿using Interop.QBFC14;
+using Interop.QBFC14;
 using QuickBooksIPCContracts;
 using System;
 using System.CodeDom;
@@ -28,6 +28,16 @@ namespace QBRequestLibrary
         protected const short QBSDKMajorVersion = 14;
         protected const short QBSDKMinorVersion = 0;
         private string _requiredCompanyFingerprint;
+        private bool _ownsConnection = true;
+        private long _buildMs, _queryMs, _convertMs;
+        protected virtual bool LogReadTimings => false;
+
+        internal void UseOpenConnection(Connection connection)
+        {
+            _connection = connection;
+            _ownsConnection = false;
+            _open = true;
+        }
 
         public virtual void Set(T1 value)
         {
@@ -126,34 +136,48 @@ namespace QBRequestLibrary
             {
                 throw new QBRequestLibraryRuntimeError("Connection Not Open");
             }
+            var timer = Stopwatch.StartNew();
             BuildRequest();
+            _buildMs = timer.ElapsedMilliseconds;
+            timer.Restart();
             IMsgSetResponse response = _connection.SessionManager.DoRequests(_msgSetRequest);
-            return ConvertResponse(response);
+            _queryMs = timer.ElapsedMilliseconds;
+            timer.Restart();
+            T2 result = ConvertResponse(response);
+            _convertMs = timer.ElapsedMilliseconds;
+            return result;
         }
 
         public virtual T2 SendRequest()
         {
-            T2 response;
-            Connect();
+            var timer = Stopwatch.StartNew();
+            long connectMs = 0;
+            _buildMs = _queryMs = _convertMs = 0;
             try
             {
+                if (_ownsConnection) Connect();
+                connectMs = timer.ElapsedMilliseconds;
                 VerifyRequiredCompanyFingerprint();
-                response = Send();
+                return Send();
             }
             catch (Exception e)
             {
-                Disconnect();
                 Logger.LogError(FailureLogMessage(e));
-                throw e;
+                throw;
             }
-            Disconnect();
-            return response;
-
-        }
-
-        ~Request()
-        {
-            Disconnect();
+            finally
+            {
+                var closeTimer = Stopwatch.StartNew();
+                try
+                {
+                    if (_ownsConnection && _open) Disconnect();
+                }
+                finally
+                {
+                    if (LogReadTimings)
+                        Logger.LogInfo($"QB read {GetType().Name}: connect_ms={connectMs}; build_ms={_buildMs}; query_ms={_queryMs}; convert_ms={_convertMs}; close_ms={closeTimer.ElapsedMilliseconds}; total_ms={timer.ElapsedMilliseconds}; shared_session={!_ownsConnection}.");
+                }
+            }
         }
     }
     public class CustomerQueryRequest : Request<string, QBCustomer>, ICustomerQueryRequest
@@ -408,6 +432,19 @@ namespace QBRequestLibrary
             bool numericScan = string.IsNullOrWhiteSpace(_value);
             var references = new List<QBEstimateReference>();
             IEstimateRetList estimates = response.Detail as IEstimateRetList;
+            // SDK 1 is no match; 500 is an object-not-found response. This query
+            // names exactly one RefNumber, so an empty 500 means that estimate
+            // is absent. Never accept 500 for an unfiltered scan or partial data.
+            if ((response.StatusCode == 1 || (response.StatusCode == 500 && !numericScan)) &&
+                (response.Detail == null || (estimates != null && estimates.Count == 0)))
+            {
+                return new QBStatusResponse<List<QBEstimateReference>>
+                {
+                    StatusCode = 0,
+                    StatusMessage = "No matching estimates found.",
+                    Data = references
+                };
+            }
             for (int index = 0; estimates != null && index < estimates.Count; index++)
             {
                 IEstimateRet estimate = estimates.GetAt(index);
@@ -488,6 +525,7 @@ namespace QBRequestLibrary
 
     public class AllItemNonInvQueryRequest : Request<object, QBStatusResponse<List<QBItem>>>, IAllItemNonInvQueryRequest
     {
+        protected override bool LogReadTimings => true;
 
         public AllItemNonInvQueryRequest()
         {
@@ -530,89 +568,14 @@ namespace QBRequestLibrary
 
         protected override QBStatusResponse<List<QBItem>> ConvertResponse(IMsgSetResponse responseSet)
         {
-            var retResponse = new QBStatusResponse<List<QBItem>>
-            {
-                Data = new List<QBItem>()
-            };
-
-            IResponseList responseList = responseSet?.ResponseList;
-            if (responseList == null || responseList.Count == 0)
-            {
-                throw new InvalidResponseException("No responses received.");
-            }
-
-            for (int i = 0; i < responseList.Count; ++i)
-            {
-                IResponse response = responseList.GetAt(i);
-                ENResponseType responseType = (ENResponseType)response.Type.GetValue();
-
-                switch (responseType)
-                {
-                    case ENResponseType.rtItemNonInventoryQueryRs:
-                        AppendNonInventoryResults(response.Detail as IItemNonInventoryRetList, retResponse.Data);
-                        break;
-
-                    case ENResponseType.rtItemServiceQueryRs:
-                        AppendServiceResults(response.Detail as IItemServiceRetList, retResponse.Data);
-                        break;
-
-                    default:
-                        // Other responses in the MsgSet are not expected.
-                        throw new QBRequestLibraryRuntimeError("Unexpected response type.");
-                }
-
-                // Preserve the first response status unless a later query reports an issue.
-                if (i == 0 || response.StatusCode != 0)
-                {
-                    retResponse.StatusCode = response.StatusCode;
-                    retResponse.StatusMessage = response.StatusMessage;
-                }
-            }
-
-            return retResponse;
-        }
-
-        private static void AppendNonInventoryResults(IItemNonInventoryRetList list, List<QBItem> dest)
-        {
-            if (list == null) return;
-
-            for (int i = 0; i < list.Count; ++i)
-            {
-                IItemNonInventoryRet itemRet = list.GetAt(i);
-                if (itemRet == null) continue;
-                dest.Add(MapItem(itemRet.Name, itemRet.ORSalesPurchase, itemRet.IsActive));
-            }
-        }
-
-        private static void AppendServiceResults(IItemServiceRetList list, List<QBItem> dest)
-        {
-            if (list == null) return;
-
-            for (int i = 0; i < list.Count; ++i)
-            {
-                IItemServiceRet itemRet = list.GetAt(i);
-                if (itemRet == null) continue;
-                dest.Add(MapItem(itemRet.Name, itemRet.ORSalesPurchase, itemRet.IsActive));
-            }
-        }
-
-        private static QBItem MapItem(IQBStringType name, IORSalesPurchase ors, IQBBoolType isActive)
-        {
-            return new QBItem
-            {
-                Number = name?.GetValue() ?? string.Empty,
-                Description = ors?.SalesOrPurchase?.Desc?.GetValue()
-                              ?? ors?.SalesAndPurchase?.SalesDesc?.GetValue()
-                              ?? string.Empty,
-                Active = isActive?.GetValue() ?? false,
-            };
+            return CacheResponseReader.Items(responseSet?.ToXMLString());
         }
     }
-
     public class CommercialTermsQueryRequest
         : Request<object, QBStatusResponse<QBCommercialTermsCatalog>>,
           ICommercialTermsQueryRequest
     {
+        protected override bool LogReadTimings => true;
         public CommercialTermsQueryRequest()
         {
             Set(null);
@@ -637,89 +600,16 @@ namespace QBRequestLibrary
             shipping.ORListQuery.ListFilter.ActiveStatus.SetValue(ENActiveStatus.asActiveOnly);
         }
 
-        protected override QBStatusResponse<QBCommercialTermsCatalog> ConvertResponse(
-            IMsgSetResponse responseSet)
+        protected override QBStatusResponse<QBCommercialTermsCatalog> ConvertResponse(IMsgSetResponse responseSet)
         {
-            var result = new QBStatusResponse<QBCommercialTermsCatalog>
-            {
-                Data = new QBCommercialTermsCatalog
-                {
-                    CreditTerms = new List<string>(),
-                    ShippingMethods = new List<string>(),
-                    RefreshedAtUtc = DateTime.UtcNow
-                }
-            };
-            IResponseList responses = responseSet?.ResponseList;
-            if (responses == null || responses.Count == 0)
-            {
-                throw new InvalidResponseException("No responses received.");
-            }
-
-            for (int i = 0; i < responses.Count; ++i)
-            {
-                IResponse response = responses.GetAt(i);
-                ENResponseType type = (ENResponseType)response.Type.GetValue();
-                if (type == ENResponseType.rtTermsQueryRs)
-                {
-                    AppendTermNames(response.Detail as IORTermsRetList, result.Data.CreditTerms);
-                }
-                else if (type == ENResponseType.rtShipMethodQueryRs)
-                {
-                    AppendShipMethodNames(
-                        response.Detail as IShipMethodRetList,
-                        result.Data.ShippingMethods);
-                }
-                else
-                {
-                    throw new QBRequestLibraryRuntimeError("Unexpected response type.");
-                }
-
-                if (i == 0 || response.StatusCode != 0)
-                {
-                    result.StatusCode = response.StatusCode;
-                    result.StatusMessage = response.StatusMessage;
-                }
-            }
-            return result;
-        }
-
-        private static void AppendTermNames(IORTermsRetList list, List<string> names)
-        {
-            if (list == null) return;
-            for (int i = 0; i < list.Count; ++i)
-            {
-                IORTermsRet term = list.GetAt(i);
-                if (term?.StandardTermsRet?.Name != null)
-                {
-                    names.Add(term.StandardTermsRet.Name.GetValue());
-                }
-                else if (term?.DateDrivenTermsRet?.Name != null)
-                {
-                    names.Add(term.DateDrivenTermsRet.Name.GetValue());
-                }
-            }
-        }
-
-        private static void AppendShipMethodNames(
-            IShipMethodRetList list,
-            List<string> names)
-        {
-            if (list == null) return;
-            for (int i = 0; i < list.Count; ++i)
-            {
-                IShipMethodRet method = list.GetAt(i);
-                if (method?.Name != null)
-                {
-                    names.Add(method.Name.GetValue());
-                }
-            }
+            return CacheResponseReader.Terms(responseSet?.ToXMLString());
         }
     }
-
     public class CustomerCommercialTermsQueryRequest
         : Request<object, QBStatusResponse<List<QBCustomerCommercialTermsRecord>>>,
           ICustomerCommercialTermsQueryRequest
     {
+        protected override bool LogReadTimings => true;
         public CustomerCommercialTermsQueryRequest()
         {
             Set(null);
@@ -742,74 +632,9 @@ namespace QBRequestLibrary
             customers.OwnerIDList.Add("0");
         }
 
-        protected override QBStatusResponse<List<QBCustomerCommercialTermsRecord>> ConvertResponse(
-            IMsgSetResponse responseSet)
+        protected override QBStatusResponse<List<QBCustomerCommercialTermsRecord>> ConvertResponse(IMsgSetResponse responseSet)
         {
-            IResponseList responses = responseSet?.ResponseList;
-            if (responses == null || responses.Count == 0)
-            {
-                throw new InvalidResponseException("No responses received.");
-            }
-
-            var records = new List<QBCustomerCommercialTermsRecord>();
-            int statusCode = 0;
-            string statusMessage = "OK";
-
-            for (int i = 0; i < responses.Count; ++i)
-            {
-                IResponse response = responses.GetAt(i);
-                if (response.StatusCode != 0)
-                {
-                    statusCode = response.StatusCode;
-                    statusMessage = response.StatusMessage;
-                    continue;
-                }
-
-                ENResponseType type = (ENResponseType)response.Type.GetValue();
-                if (type == ENResponseType.rtCustomerQueryRs)
-                {
-                    ICustomerRetList customers = response.Detail as ICustomerRetList;
-                    for (int j = 0; customers != null && j < customers.Count; ++j)
-                    {
-                        ICustomerRet customer = customers.GetAt(j);
-                        string accountNumber = customer?.AccountNumber?.GetValue();
-                        if (string.IsNullOrWhiteSpace(accountNumber))
-                        {
-                            continue;
-                        }
-                        records.Add(new QBCustomerCommercialTermsRecord
-                        {
-                            AccountNumber = accountNumber.Trim(),
-                            CreditTerms = customer.TermsRef?.FullName?.GetValue(),
-                            ShippingTerms = ShipAccount(customer)
-                        });
-                    }
-                }
-            }
-
-            return new QBStatusResponse<List<QBCustomerCommercialTermsRecord>>
-            {
-                StatusCode = statusCode,
-                StatusMessage = statusMessage,
-                Data = statusCode == 0 ? records : null
-            };
-        }
-
-        private static string ShipAccount(ICustomerRet customer)
-        {
-            IDataExtRetList fields = customer?.DataExtRetList;
-            for (int i = 0; fields != null && i < fields.Count; ++i)
-            {
-                IDataExtRet field = fields.GetAt(i);
-                if (string.Equals(
-                    field?.DataExtName?.GetValue(),
-                    "Ship Account #",
-                    StringComparison.OrdinalIgnoreCase))
-                {
-                    return field.DataExtValue?.GetValue();
-                }
-            }
-            return null;
+            return CacheResponseReader.Customers(responseSet?.ToXMLString());
         }
     }
 }

@@ -10,7 +10,7 @@ namespace QBRequestLibrary
 	 * <summary>Class <c>Connection</c> is a simplification of a QuickBooks connection and session</summary>
 	 * <remarks>***May add request and response abstractions in future***</remarks>
 	 */
-    public class Connection
+    public class Connection : IDisposable
     {
         private bool sessionBegun = false;
         private bool connectionOpen = false;
@@ -82,6 +82,7 @@ namespace QBRequestLibrary
 		 */
         public bool Open()
         {
+            if (sessionBegun) return true;
             internalManager = CreateSessionManager();
 
             try
@@ -112,28 +113,31 @@ namespace QBRequestLibrary
 		 */
         public void Close()
         {
-            internalManager.EndSession();
-            internalManager.CloseConnection();
+            SafeClose();
         }
 
         private void SafeClose()
         {
-            if (sessionBegun)
+            try
             {
-                internalManager.EndSession();
-                sessionBegun = false;
+                if (sessionBegun)
+                {
+                    sessionBegun = false;
+                    internalManager.EndSession();
+                }
             }
-            if (connectionOpen)
+            finally
             {
-                internalManager.CloseConnection();
-                connectionOpen = false;
+                if (connectionOpen)
+                {
+                    connectionOpen = false;
+                    internalManager.CloseConnection();
+                }
             }
         }
 
-        /**
-		 * <summary>Destructor. Calls <see cref="Close"/>.</summary>
-		 */
-        ~Connection()
+        // QBFC sessions must close on their owning thread, not the GC finalizer thread.
+        public void Dispose()
         {
             Close();
         }

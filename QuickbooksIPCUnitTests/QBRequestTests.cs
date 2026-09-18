@@ -148,17 +148,12 @@ namespace QuickBooksServiceLibrary.Tests
         [Test]
         public void AllItemNonInvQueryRequest_WhenServiceQueryFails_ReturnsFailureStatus()
         {
-            var request = CreateRequestWithoutConnectingOrLogging();
-            var responseSet = CreateResponseSet(
-                CreateResponse(ENResponseType.rtItemNonInventoryQueryRs, 0, "Status OK"),
-                CreateResponse(ENResponseType.rtItemServiceQueryRs, 3250, "Service query failed"));
-
-            var result = request.Convert(responseSet);
-
+            var result = ParseCache<QBStatusResponse<List<QBItem>>>("AllItemNonInvQueryRequest",
+                "<ItemNonInventoryQueryRs statusCode='0' statusMessage='OK'/><ItemServiceQueryRs statusCode='3250' statusMessage='Service query failed'/>");
             Assert.AreEqual(3250, result.StatusCode);
             Assert.AreEqual("Service query failed", result.StatusMessage);
+            Assert.IsNull(result.Data);
         }
-
         [Test]
         public void QuoteIdentity_SalesOrderRequest_LetsQuickBooksAssignNextRefNumber()
         {
@@ -205,6 +200,57 @@ namespace QuickBooksServiceLibrary.Tests
             includeRetElements.Verify(value => value.Add("RefNumber"), Times.Once);
             includeRetElements.Verify(value => value.Add(It.IsAny<string>()), Times.Exactly(2));
             refNumbers.Verify(value => value.Add("120050"), Times.Once);
+        }
+
+        [TestCase("120050", 1)]
+        [TestCase(null, 1)]
+        [TestCase("120050", 500)]
+        public void QuoteIdentity_EstimateNoMatchIsSuccessfulEmptyResult(string reference, int statusCode)
+        {
+            var request = new TestableEstimateReferenceQueryRequest(reference);
+            var result = request.Convert(CreateResponseSet(
+                CreateResponse(ENResponseType.rtEstimateQueryRs, statusCode, "No match")));
+
+            Assert.AreEqual(0, result.StatusCode);
+            Assert.IsNotNull(result.Data);
+            Assert.IsEmpty(result.Data);
+        }
+
+        [TestCase(3250)]
+        [TestCase(-1)]
+        public void QuoteIdentity_EstimateLookupErrorsRemainFailures(int statusCode)
+        {
+            var request = new TestableEstimateReferenceQueryRequest("120050");
+            var result = request.Convert(CreateResponseSet(
+                CreateResponse(ENResponseType.rtEstimateQueryRs, statusCode, "Query failed")));
+
+            Assert.AreEqual(statusCode, result.StatusCode);
+            Assert.AreEqual("Query failed", result.StatusMessage);
+        }
+
+        [Test]
+        public void QuoteIdentity_EstimateScanObjectNotFoundRemainsFailure()
+        {
+            var request = new TestableEstimateReferenceQueryRequest(null);
+            var result = request.Convert(CreateResponseSet(
+                CreateResponse(ENResponseType.rtEstimateQueryRs, 500, "Object not found")));
+
+            Assert.AreEqual(500, result.StatusCode);
+        }
+
+        [TestCase(1)]
+        [TestCase(500)]
+        public void QuoteIdentity_EstimateNoMatchWithReturnedEstimateRemainsFailure(int statusCode)
+        {
+            var request = new TestableEstimateReferenceQueryRequest("120050");
+            var estimates = new Mock<IEstimateRetList>();
+            estimates.SetupGet(value => value.Count).Returns(1);
+            estimates.Setup(value => value.GetAt(0)).Returns(CreateEstimate("120050", "TXN-1"));
+            var result = request.Convert(CreateResponseSet(
+                CreateResponse(ENResponseType.rtEstimateQueryRs, statusCode, "No match", estimates.Object)));
+
+            Assert.AreEqual(statusCode, result.StatusCode);
+            Assert.AreEqual(1, result.Data.Count);
         }
 
         [Test]
@@ -306,85 +352,136 @@ namespace QuickBooksServiceLibrary.Tests
         [Test]
         public void CommercialTermsQueryRequest_ReturnsOnlyTermAndShipMethodNames()
         {
-            Type requestType = typeof(RequestFactory).Assembly.GetType(
-                "QBRequestLibrary.CommercialTermsQueryRequest");
-            Assert.IsNotNull(requestType, "CommercialTermsQueryRequest must exist");
-            object request = FormatterServices.GetUninitializedObject(requestType);
-            GC.SuppressFinalize(request);
-
-            var standardTerms = new Mock<IStandardTermsRet>();
-            standardTerms.SetupGet(value => value.Name).Returns(CreateString("Net 30").Object);
-            var termChoice = new Mock<IORTermsRet>();
-            termChoice.SetupGet(value => value.StandardTermsRet).Returns(standardTerms.Object);
-            var terms = new Mock<IORTermsRetList>();
-            terms.SetupGet(value => value.Count).Returns(1);
-            terms.Setup(value => value.GetAt(0)).Returns(termChoice.Object);
-
-            var shipMethod = new Mock<IShipMethodRet>();
-            shipMethod.SetupGet(value => value.Name).Returns(CreateString("UPS Ground").Object);
-            var shipMethods = new Mock<IShipMethodRetList>();
-            shipMethods.SetupGet(value => value.Count).Returns(1);
-            shipMethods.Setup(value => value.GetAt(0)).Returns(shipMethod.Object);
-
-            IMsgSetResponse responseSet = CreateResponseSet(
-                CreateResponse(ENResponseType.rtTermsQueryRs, 0, "Status OK", terms.Object),
-                CreateResponse(ENResponseType.rtShipMethodQueryRs, 0, "Status OK", shipMethods.Object));
-            var convert = requestType.GetMethod(
-                "ConvertResponse",
-                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
-            object result = convert.Invoke(request, new object[] { responseSet });
-
-            Assert.AreEqual(0, result.GetType().GetProperty("StatusCode").GetValue(result));
-            object catalog = result.GetType().GetProperty("Data").GetValue(result);
-            CollectionAssert.AreEqual(
-                new[] { "Net 30" },
-                (IEnumerable<string>)catalog.GetType().GetProperty("CreditTerms").GetValue(catalog));
-            CollectionAssert.AreEqual(
-                new[] { "UPS Ground" },
-                (IEnumerable<string>)catalog.GetType().GetProperty("ShippingMethods").GetValue(catalog));
+            var result = ParseCache<QBStatusResponse<QBCommercialTermsCatalog>>("CommercialTermsQueryRequest",
+                "<TermsQueryRs statusCode='0'><StandardTermsRet><Name>Net 30</Name></StandardTermsRet><DateDrivenTermsRet><Name>Due 15th</Name></DateDrivenTermsRet></TermsQueryRs><ShipMethodQueryRs statusCode='0'><ShipMethodRet><Name>UPS Ground</Name></ShipMethodRet></ShipMethodQueryRs>");
+            Assert.AreEqual(0, result.StatusCode);
+            CollectionAssert.AreEqual(new[] { "Net 30", "Due 15th" }, result.Data.CreditTerms);
+            CollectionAssert.AreEqual(new[] { "UPS Ground" }, result.Data.ShippingMethods);
         }
-
         [Test]
         public void CustomerCommercialTermsQueryRequest_ReturnsAllAccountTermsForCache()
         {
-            Type requestType = typeof(RequestFactory).Assembly.GetType(
-                "QBRequestLibrary.CustomerCommercialTermsQueryRequest");
-            Assert.IsNotNull(requestType, "CustomerCommercialTermsQueryRequest must exist");
-
-            object request = FormatterServices.GetUninitializedObject(requestType);
-            GC.SuppressFinalize(request);
-            var customer = new Mock<ICustomerRet>();
-            customer.SetupGet(value => value.AccountNumber).Returns(CreateString("EX-1042").Object);
-            customer.SetupGet(value => value.TermsRef).Returns(CreateNamedRef("Net 30").Object);
-            var shipAccount = new Mock<IDataExtRet>();
-            shipAccount.SetupGet(value => value.DataExtName)
-                .Returns(CreateString("Ship Account #").Object);
-            shipAccount.SetupGet(value => value.DataExtValue)
-                .Returns(CreateString("UPS 12345").Object);
-            var customFields = new Mock<IDataExtRetList>();
-            customFields.SetupGet(value => value.Count).Returns(1);
-            customFields.Setup(value => value.GetAt(0)).Returns(shipAccount.Object);
-            customer.SetupGet(value => value.DataExtRetList).Returns(customFields.Object);
-            var customers = new Mock<ICustomerRetList>();
-            customers.SetupGet(value => value.Count).Returns(1);
-            customers.Setup(value => value.GetAt(0)).Returns(customer.Object);
-
-            IMsgSetResponse responseSet = CreateResponseSet(
-                CreateResponse(ENResponseType.rtCustomerQueryRs, 0, "Status OK", customers.Object));
-            var convert = requestType.GetMethod(
-                "ConvertResponse",
-                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
-
-            object response = convert.Invoke(request, new object[] { responseSet });
-            object data = response.GetType().GetProperty("Data").GetValue(response);
-            object record = ((System.Collections.IList)data)[0];
-
-            Assert.AreEqual(0, response.GetType().GetProperty("StatusCode").GetValue(response));
-            Assert.AreEqual("EX-1042", record.GetType().GetProperty("AccountNumber").GetValue(record));
-            Assert.AreEqual("Net 30", record.GetType().GetProperty("CreditTerms").GetValue(record));
-            Assert.AreEqual("UPS 12345", record.GetType().GetProperty("ShippingTerms").GetValue(record));
+            var result = ParseCache<QBStatusResponse<List<QBCustomerCommercialTermsRecord>>>("CustomerCommercialTermsQueryRequest",
+                "<CustomerQueryRs statusCode='0'><CustomerRet><AccountNumber> EX-1042 </AccountNumber><TermsRef><FullName>Net 30</FullName></TermsRef><DataExtRet><DataExtName>Ship Account #</DataExtName><DataExtValue>UPS 12345</DataExtValue></DataExtRet></CustomerRet><CustomerRet><AccountNumber> </AccountNumber></CustomerRet></CustomerQueryRs>");
+            Assert.AreEqual(0, result.StatusCode);
+            Assert.AreEqual(1, result.Data.Count);
+            Assert.AreEqual("EX-1042", result.Data[0].AccountNumber);
+            Assert.AreEqual("Net 30", result.Data[0].CreditTerms);
+            Assert.AreEqual("UPS 12345", result.Data[0].ShippingTerms);
         }
 
+        private static T ParseCache<T>(string requestName, string responses)
+        {
+            Type type = typeof(RequestFactory).Assembly.GetType("QBRequestLibrary." + requestName);
+            object request = FormatterServices.GetUninitializedObject(type);
+            var response = new Mock<IMsgSetResponse>(MockBehavior.Strict);
+            response.Setup(value => value.ToXMLString()).Returns("<QBXML><QBXMLMsgsRs>" + responses + "</QBXMLMsgsRs></QBXML>");
+            return (T)type.GetMethod("ConvertResponse", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)
+                .Invoke(request, new object[] { response.Object });
+        }
+
+        [Test]
+        public void CacheXml_ItemsPreserveDescriptionsActivityAndEmptyFields()
+        {
+            var result = ParseCache<QBStatusResponse<List<QBItem>>>("AllItemNonInvQueryRequest",
+                "<ItemNonInventoryQueryRs statusCode='0'><ItemNonInventoryRet><Name>A&amp;B</Name><IsActive>true</IsActive><SalesOrPurchase><Desc>First &lt;part&gt;</Desc></SalesOrPurchase></ItemNonInventoryRet><ItemNonInventoryRet><Name>Inactive</Name><IsActive>false</IsActive><SalesAndPurchase><SalesDesc>Sales description</SalesDesc></SalesAndPurchase></ItemNonInventoryRet></ItemNonInventoryQueryRs><ItemServiceQueryRs statusCode='0'><ItemServiceRet><Name>Service</Name></ItemServiceRet></ItemServiceQueryRs>");
+            Assert.AreEqual(3, result.Data.Count);
+            Assert.AreEqual("A&B", result.Data[0].Number);
+            Assert.AreEqual("First <part>", result.Data[0].Description);
+            Assert.IsTrue(result.Data[0].Active);
+            Assert.AreEqual("Sales description", result.Data[1].Description);
+            Assert.IsFalse(result.Data[1].Active);
+            Assert.AreEqual(string.Empty, result.Data[2].Description);
+            Assert.IsFalse(result.Data[2].Active);
+        }
+
+        [TestCase("<ItemNonInventoryQueryRs statusCode='0'/>")]
+        [TestCase("<ItemNonInventoryQueryRs statusCode='0'/><ItemNonInventoryQueryRs statusCode='0'/>")]
+        [TestCase("<ItemNonInventoryQueryRs/><ItemServiceQueryRs statusCode='0'/>")]
+        [TestCase("<ItemNonInventoryQueryRs statusCode='garbage'/><ItemServiceQueryRs statusCode='0'/>")]
+        public void CacheXml_RejectsIncompleteOrMalformedStatus(string responses)
+        {
+            var error = Assert.Throws<System.Reflection.TargetInvocationException>(() =>
+                ParseCache<QBStatusResponse<List<QBItem>>>("AllItemNonInvQueryRequest", responses));
+            Assert.IsInstanceOf<InvalidResponseException>(error.InnerException);
+        }
+
+        [Test]
+        public void CacheXml_EmptyListsAreSuccessfulAndErrorsNeverPublishPartialData()
+        {
+            var empty = ParseCache<QBStatusResponse<List<QBItem>>>("AllItemNonInvQueryRequest",
+                "<ItemNonInventoryQueryRs statusCode='1'/><ItemServiceQueryRs statusCode='1'/>");
+            Assert.AreEqual(0, empty.StatusCode);
+            Assert.IsEmpty(empty.Data);
+            var failed = ParseCache<QBStatusResponse<List<QBItem>>>("AllItemNonInvQueryRequest",
+                "<ItemNonInventoryQueryRs statusCode='3250'/><ItemServiceQueryRs statusCode='0'><ItemServiceRet><Name>Partial</Name></ItemServiceRet></ItemServiceQueryRs>");
+            Assert.AreEqual(3250, failed.StatusCode);
+            Assert.IsNull(failed.Data);
+        }
+
+        [Test]
+        public void CacheXml_CustomersPreserveMissingTermsAndFirstMatchingCustomField()
+        {
+            var result = ParseCache<QBStatusResponse<List<QBCustomerCommercialTermsRecord>>>("CustomerCommercialTermsQueryRequest",
+                "<CustomerQueryRs statusCode='0'><CustomerRet><AccountNumber>A</AccountNumber><DataExtRet><DataExtName>Unrelated</DataExtName><DataExtValue>Ignore</DataExtValue></DataExtRet><DataExtRet><DataExtName>ship account #</DataExtName><DataExtValue>First</DataExtValue></DataExtRet><DataExtRet><DataExtName>Ship Account #</DataExtName><DataExtValue>Second</DataExtValue></DataExtRet></CustomerRet><CustomerRet><AccountNumber>B</AccountNumber></CustomerRet></CustomerQueryRs>");
+            Assert.AreEqual("First", result.Data[0].ShippingTerms);
+            Assert.IsNull(result.Data[0].CreditTerms);
+            Assert.IsNull(result.Data[1].ShippingTerms);
+            Assert.IsNull(result.Data[1].CreditTerms);
+        }
+
+        [Test]
+        public void Connection_CloseIsSafeBeforeOpenAndAfterFailedBeginSession()
+        {
+            var manager = new Mock<IQBSessionManager>();
+            manager.Setup(value => value.BeginSession("", ENOpenMode.omDontCare))
+                .Throws(new InvalidOperationException("Synthetic failure"));
+            var connection = new TestableConnection(manager.Object);
+            Assert.DoesNotThrow(() => connection.Close());
+            Assert.Throws<Connection.ConnectionException>(() => connection.Open());
+            Assert.DoesNotThrow(() => connection.Dispose());
+            manager.Verify(value => value.EndSession(), Times.Never);
+            manager.Verify(value => value.CloseConnection(), Times.Once);
+        }
+
+        [Test]
+        public void CacheSession_ReadsUseOneConnectionAndCloseExactlyOnce()
+        {
+            var manager = new Mock<IQBSessionManager>();
+            manager.Setup(value => value.GetCurrentCompanyFileName()).Returns(@"C:\Synthetic\Test.qbw");
+            var connection = new TestableConnection(manager.Object);
+            using (var session = new CacheRefreshSession(connection))
+            {
+                foreach (object request in new object[] { session.Items, session.Terms, session.Customers })
+                    Assert.AreSame(connection, request.GetType().GetField("_connection",
+                        System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic).GetValue(request));
+                var read = new SharedReadProbe();
+                typeof(Request<object, int>).GetMethod("UseOpenConnection",
+                    System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)
+                    .Invoke(read, new object[] { connection });
+                Assert.AreEqual(7, read.SendRequest());
+                read.Fail = true;
+                Assert.Throws<InvalidOperationException>(() => read.SendRequest());
+                manager.Verify(value => value.EndSession(), Times.Never);
+            }
+            connection.Close();
+            manager.Verify(value => value.OpenConnection("", "Proto-CAM QB Library"), Times.Once);
+            manager.Verify(value => value.BeginSession("", ENOpenMode.omDontCare), Times.Once);
+            manager.Verify(value => value.EndSession(), Times.Once);
+            manager.Verify(value => value.CloseConnection(), Times.Once);
+        }
+
+        private sealed class SharedReadProbe : Request<object, int>
+        {
+            public bool Fail;
+            protected override void BuildHelper() { }
+            protected override int ConvertResponse(IMsgSetResponse response) => 7;
+            protected override int Send()
+            {
+                if (Fail) throw new InvalidOperationException("Synthetic read failure");
+                return 7;
+            }
+        }
         [Test]
         public void CustomerCommercialTermsQueryRequest_RequestsPublicCustomerCustomFields()
         {

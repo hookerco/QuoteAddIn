@@ -5,6 +5,15 @@ $ErrorActionPreference = 'Stop'
 $qbfcClsid = '{56289251-36CB-4F57-BB42-6DFE988804A8}'
 $installerScriptPath = $PSCommandPath
 
+function Set-CompanyIntranetSite {
+    param([scriptblock]$WriteZoneAction = {
+        param($path,$protocol,$zone)
+        New-Item -Path $path -Force | Out-Null
+        New-ItemProperty -Path $path -Name $protocol -PropertyType DWord -Value $zone -Force | Out-Null
+    })
+    & $WriteZoneAction 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings\ZoneMap\Domains\proto-cam.local\act' 'https' 1
+}
+
 function Resolve-ServiceHostBridgeOrigin {
     param([string]$Origin)
     if ($Origin.TrimEnd('/') -iin @('http://APPSRV01:8742',
@@ -130,6 +139,7 @@ function Invoke-ServiceHostInstall {
         [Parameter(Mandatory=$true)][string]$StatePath,
         [Parameter(Mandatory=$true)][string]$CurrentUserDesktopPath,
         [scriptblock]$SetEnvironmentVariableAction = { param($name,$value) [Environment]::SetEnvironmentVariable($name,$value,[EnvironmentVariableTarget]::User) },
+        [scriptblock]$ConfigureIntranetAction = { Set-CompanyIntranetSite },
         [scriptblock]$CreateShortcutAction = {
             param($shortcutPath,$targetPath,$workingDirectory,$arguments)
             $shell = New-Object -ComObject WScript.Shell
@@ -269,6 +279,10 @@ function Invoke-ServiceHostInstall {
                 $launchArguments = '-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "' + $launcherPath + '" -LaunchInstalledHost "' + $hostPath + '"'
                 & $CreateShortcutAction $hostShortcutPath $powershellPath $InstallPath $launchArguments
                 & $CreateShortcutAction $updaterShortcutPath $utilityInstallerPath (Split-Path -Parent $utilityInstallerPath) ''
+                if ($bridge.QB_BRIDGE_ORIGIN -eq 'https://act.proto-cam.local:8743') {
+                    & $ConfigureIntranetAction
+                    Write-Host 'Company HTTPS hostname added to your Local Intranet sites. Save browser work, restart Edge using edge://restart, then reopen Quote Workbench. Company browser policies may override this setting.'
+                }
             }
             catch {
                 $failure = $_

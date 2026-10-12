@@ -54,10 +54,11 @@ function New-Fixture {
 }
 
 function New-Actions($Fixture) {
-    $state = [pscustomobject]@{ Environment=@{}; Shortcuts=@(); Processes=@(); Stops=0; Starts=0; Events=@() }
+    $state = [pscustomobject]@{ Environment=@{}; Shortcuts=@(); Processes=@(); Stops=0; Starts=0; Events=@(); IntranetCalls=0 }
     [pscustomobject]@{
         State = $state
         SetEnvironment = { param($name,$value) $state.Environment[$name]=[string]$value }.GetNewClosure()
+        ConfigureIntranet = { $state.IntranetCalls++ }.GetNewClosure()
         CreateShortcut = {
             param($path,$target,$working,$arguments)
             $state.Shortcuts += [pscustomobject]@{Path=$path;Target=$target;Working=$working;Arguments=$arguments}
@@ -74,7 +75,7 @@ function New-Actions($Fixture) {
 
 function Invoke-Fixture($Fixture,$Actions) {
     Invoke-ServiceHostInstall -SourcePath $Fixture.Source -InstallPath $Fixture.Install -StatePath $Fixture.State `
-        -CurrentUserDesktopPath $Fixture.Desktop -SetEnvironmentVariableAction $Actions.SetEnvironment `
+        -CurrentUserDesktopPath $Fixture.Desktop -SetEnvironmentVariableAction $Actions.SetEnvironment -ConfigureIntranetAction $Actions.ConfigureIntranet `
         -CreateShortcutAction $Actions.CreateShortcut -GetProcessesAction $Actions.GetProcesses `
         -StopProcessAction $Actions.StopProcess -DelayAction $Actions.Delay -MovePathAction $Actions.Move `
         -CopyFileAction $Actions.Copy -RemovePathAction $Actions.Remove -MutexAction $Actions.Mutex
@@ -129,6 +130,11 @@ function Run-Scenario([string]$Name) {
             Assert-True ($caught.Exception.Message -match 'Duplicate') 'case-insensitive duplicate manifest entries are rejected'
         }
         'install' {
+            $zoneWrite=@{}
+            Set-CompanyIntranetSite -WriteZoneAction { param($path,$protocol,$zone) $zoneWrite.Path=$path; $zoneWrite.Protocol=$protocol; $zoneWrite.Zone=$zone }
+            Assert-Equal 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings\ZoneMap\Domains\proto-cam.local\act' $zoneWrite.Path 'only the specific current-user hostname is configured'
+            Assert-Equal 'https' $zoneWrite.Protocol 'only HTTPS is configured'
+            Assert-Equal 1 $zoneWrite.Zone 'hostname uses Local Intranet zone'
             foreach ($legacy in @('http://APPSRV01:8742','http://PC-VS-APPFS01:8742/',
                 'http://pc-vs-appfs01.proto-cam.local:8742','http://act.proto-cam.local:8742')) {
                 Assert-Equal 'https://act.proto-cam.local:8743' (Resolve-ServiceHostBridgeOrigin $legacy) 'known company origins migrate'
@@ -154,6 +160,7 @@ function Run-Scenario([string]$Name) {
                 Assert-Equal (Join-Path $fixture.Install 'QuickBooksConnectorCli.exe') $actions.State.Environment.QUOTE_MODULEV2_QB_CONNECTOR_CLI 'connector variable is user scoped through installer action'
                 Assert-Equal 'invented-token' $actions.State.Environment.QB_BRIDGE_TOKEN 'bridge token behavior is preserved'
                 Assert-Equal 'http://invented.invalid:8742' $actions.State.Environment.QB_BRIDGE_ORIGIN 'bridge origin behavior is preserved'
+                Assert-Equal 0 $actions.State.IntranetCalls 'custom origins do not change company intranet settings'
                 $hostShortcut = @($actions.State.Shortcuts | Where-Object Path -eq (Join-Path $fixture.Desktop 'QuickBooksServiceHost.lnk'))
                 $updaterShortcut = @($actions.State.Shortcuts | Where-Object Path -eq (Join-Path $fixture.Desktop 'Update QB Utility.lnk'))
                 Assert-Equal 1 $hostShortcut.Count 'host shortcut is installed once for the current user'
@@ -176,6 +183,9 @@ function Run-Scenario([string]$Name) {
                 Invoke-Fixture $fixture $actions | Out-Null
                 Assert-Equal 'https://act.proto-cam.local:8743' $actions.State.Environment.QB_BRIDGE_ORIGIN 'update replaces old user origin'
                 Assert-Equal 'invented-token' $actions.State.Environment.QB_BRIDGE_TOKEN 'migration retains package token'
+                Assert-Equal 1 $actions.State.IntranetCalls 'company updater configures the current user intranet entry'
+                Invoke-Fixture $fixture $actions | Out-Null
+                Assert-Equal 2 $actions.State.IntranetCalls 'repeated updates reapply the same intranet setting safely'
             }
             finally { Remove-Item -LiteralPath $fixture.Root -Recurse -Force -ErrorAction SilentlyContinue }
 

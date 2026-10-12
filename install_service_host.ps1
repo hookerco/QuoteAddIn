@@ -1,8 +1,31 @@
 [CmdletBinding()]
-param([switch]$AsLibrary)
+param([switch]$AsLibrary, [string]$LaunchInstalledHost)
 
 $ErrorActionPreference = 'Stop'
 $qbfcClsid = '{56289251-36CB-4F57-BB42-6DFE988804A8}'
+$installerScriptPath = $PSCommandPath
+
+function Resolve-ServiceHostBridgeOrigin {
+    param([string]$Origin)
+    if ($Origin.TrimEnd('/') -iin @('http://APPSRV01:8742',
+        'http://pc-vs-appfs01:8742', 'http://pc-vs-appfs01.proto-cam.local:8742',
+        'http://act.proto-cam.local:8742')) {
+        return 'https://act.proto-cam.local:8743'
+    }
+    return $Origin
+}
+
+function Start-CurrentUserBridge {
+    param([string]$HostPath,
+        [scriptblock]$ReadUserSetting = { param($name) [Environment]::GetEnvironmentVariable($name,'User') },
+        [scriptblock]$SetProcessSetting = { param($name,$value) [Environment]::SetEnvironmentVariable($name,$value,'Process') },
+        [scriptblock]$StartAction = { param($path) Start-Process -FilePath $path -WorkingDirectory (Split-Path $path) -WindowStyle Hidden })
+    foreach ($name in @('QB_BRIDGE_ORIGIN','QB_BRIDGE_TOKEN','QB_BRIDGE_PORT','QUOTE_MODULEV2_QB_CONNECTOR_CLI')) {
+        $value = & $ReadUserSetting $name
+        if ($null -ne $value) { & $SetProcessSetting $name $value }
+    }
+    & $StartAction $HostPath
+}
 
 function Test-QbfcRegistered {
     foreach ($view in @([Microsoft.Win32.RegistryView]::Registry32,[Microsoft.Win32.RegistryView]::Registry64)) {
@@ -126,6 +149,7 @@ function Invoke-ServiceHostInstall {
         [scriptblock]$MutexAction = { param($name,$action) Invoke-WithInstallerMutex -Name $name -Action $action }
     )
 
+    $launcherSource = $installerScriptPath
     if (-not (Test-Path -LiteralPath $SourcePath -PathType Container)) { throw "Source path does not exist: $SourcePath" }
     if ([string]::IsNullOrWhiteSpace($InstallPath) -or [string]::IsNullOrWhiteSpace($StatePath) -or [string]::IsNullOrWhiteSpace($CurrentUserDesktopPath)) {
         throw 'Install, state, and current-user desktop paths are required.'
@@ -173,7 +197,7 @@ function Invoke-ServiceHostInstall {
         }
         [IO.File]::WriteAllBytes($stageManifest,$manifestBytesBefore)
 
-        $bridge = @{ QB_BRIDGE_TOKEN=''; QB_BRIDGE_ORIGIN='http://APPSRV01:8742'; QB_BRIDGE_PORT='8788' }
+        $bridge = @{ QB_BRIDGE_TOKEN=''; QB_BRIDGE_ORIGIN='https://act.proto-cam.local:8743'; QB_BRIDGE_PORT='8788' }
         $bridgeSettingsPath = Join-Path $SourcePath 'bridge.settings.psd1'
         if (Test-Path -LiteralPath $bridgeSettingsPath -PathType Leaf) {
             $loaded = Import-PowerShellDataFile -LiteralPath $bridgeSettingsPath
@@ -181,6 +205,8 @@ function Invoke-ServiceHostInstall {
                 if ($loaded.ContainsKey($key) -and -not [string]::IsNullOrWhiteSpace([string]$loaded[$key])) { $bridge[$key]=[string]$loaded[$key] }
             }
         } else { Write-Warning 'bridge.settings.psd1 was not found next to the installer; using defaults (blank token).' }
+        # Migrate only known company addresses; preserve intentionally custom origins.
+        $bridge.QB_BRIDGE_ORIGIN = Resolve-ServiceHostBridgeOrigin $bridge.QB_BRIDGE_ORIGIN
 
         $hostPath = Join-Path $InstallPath 'QuickBooksServiceHost.exe'
         $connectorPath = Join-Path $InstallPath 'QuickBooksConnectorCli.exe'
@@ -236,7 +262,12 @@ function Invoke-ServiceHostInstall {
                 }
                 & $SetEnvironmentVariableAction 'QUOTE_MODULEV2_QB_CONNECTOR_CLI' $connectorPath
                 foreach ($key in @('QB_BRIDGE_TOKEN','QB_BRIDGE_ORIGIN','QB_BRIDGE_PORT')) { & $SetEnvironmentVariableAction $key $bridge[$key] }
-                & $CreateShortcutAction $hostShortcutPath $hostPath $InstallPath ''
+                # Refresh user settings on launch even when Explorer inherited the old origin.
+                $launcherPath = Join-Path $StatePath 'launch_service_host.ps1'
+                & $CopyFileAction $launcherSource $launcherPath
+                $powershellPath = Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe'
+                $launchArguments = '-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "' + $launcherPath + '" -LaunchInstalledHost "' + $hostPath + '"'
+                & $CreateShortcutAction $hostShortcutPath $powershellPath $InstallPath $launchArguments
                 & $CreateShortcutAction $updaterShortcutPath $utilityInstallerPath (Split-Path -Parent $utilityInstallerPath) ''
             }
             catch {
@@ -274,6 +305,7 @@ function Invoke-ServiceHostInstall {
 }
 
 if ($AsLibrary) { return }
+if ($LaunchInstalledHost) { Start-CurrentUserBridge -HostPath $LaunchInstalledHost; return }
 
 $qbfcStatus = Ensure-QbfcPrerequisite -SourcePath $PSScriptRoot.Trim()
 Write-Output "QBFC 14 prerequisite: $qbfcStatus"

@@ -129,6 +129,19 @@ function Run-Scenario([string]$Name) {
             Assert-True ($caught.Exception.Message -match 'Duplicate') 'case-insensitive duplicate manifest entries are rejected'
         }
         'install' {
+            foreach ($legacy in @('http://APPSRV01:8742','http://PC-VS-APPFS01:8742/',
+                'http://pc-vs-appfs01.proto-cam.local:8742','http://act.proto-cam.local:8742')) {
+                Assert-Equal 'https://act.proto-cam.local:8743' (Resolve-ServiceHostBridgeOrigin $legacy) 'known company origins migrate'
+            }
+            Assert-Equal 'https://custom.invalid:9999' (Resolve-ServiceHostBridgeOrigin 'https://custom.invalid:9999') 'custom origin preserved'
+            $launchState = @{ Settings=@{}; Path='' }
+            Start-CurrentUserBridge -HostPath 'C:\invented\host.exe' `
+                -ReadUserSetting { param($name) if($name -eq 'QB_BRIDGE_ORIGIN'){'https://act.proto-cam.local:8743'}elseif($name -eq 'QB_BRIDGE_TOKEN'){'invented-kept-token'} } `
+                -SetProcessSetting { param($name,$value) $launchState.Settings[$name]=$value } `
+                -StartAction { param($path) $launchState.Path=$path }
+            Assert-Equal 'https://act.proto-cam.local:8743' $launchState.Settings.QB_BRIDGE_ORIGIN 'launcher refreshes origin before starting'
+            Assert-Equal 'invented-kept-token' $launchState.Settings.QB_BRIDGE_TOKEN 'launcher preserves current user token'
+            Assert-Equal 'C:\invented\host.exe' $launchState.Path 'launcher starts selected host'
             $fixture = New-Fixture
             try {
                 $actions = New-Actions $fixture
@@ -144,6 +157,9 @@ function Run-Scenario([string]$Name) {
                 $hostShortcut = @($actions.State.Shortcuts | Where-Object Path -eq (Join-Path $fixture.Desktop 'QuickBooksServiceHost.lnk'))
                 $updaterShortcut = @($actions.State.Shortcuts | Where-Object Path -eq (Join-Path $fixture.Desktop 'Update QB Utility.lnk'))
                 Assert-Equal 1 $hostShortcut.Count 'host shortcut is installed once for the current user'
+                Assert-True ($hostShortcut[0].Target -like '*powershell.exe') 'shortcut refreshes settings through local launcher'
+                Assert-True ($hostShortcut[0].Arguments -match 'LaunchInstalledHost') 'shortcut selects launch mode'
+                Assert-True (Test-Path (Join-Path $fixture.State 'launch_service_host.ps1')) 'local launcher is installed'
                 Assert-Equal $fixture.Install $hostShortcut[0].Working 'host shortcut uses the installed runtime as its working directory'
                 Assert-Equal 1 $updaterShortcut.Count 'updater shortcut is installed once for the current user'
                 Assert-Equal (Join-Path $fixture.Root 'Install-QBUtility.bat') $updaterShortcut[0].Target 'updater shortcut launches the complete utility installer'
@@ -153,6 +169,13 @@ function Run-Scenario([string]$Name) {
                 Assert-Equal 0 $actions.State.Starts 'host is not launched'
                 Assert-Equal 0 @($actions.State.Processes).Count 'host remains stopped after installation'
                 Assert-Equal 'Local\QuickBooksServiceHostInstall' $actions.State.Events[0] 'installer uses a per-session mutex'
+                $settings=Join-Path $fixture.Source 'bridge.settings.psd1'
+                $oldSettings=[IO.File]::ReadAllText($settings)
+                [IO.File]::WriteAllText($settings,$oldSettings.Replace('http://invented.invalid:8742','http://pc-vs-appfs01:8742'))
+                $actions=New-Actions $fixture
+                Invoke-Fixture $fixture $actions | Out-Null
+                Assert-Equal 'https://act.proto-cam.local:8743' $actions.State.Environment.QB_BRIDGE_ORIGIN 'update replaces old user origin'
+                Assert-Equal 'invented-token' $actions.State.Environment.QB_BRIDGE_TOKEN 'migration retains package token'
             }
             finally { Remove-Item -LiteralPath $fixture.Root -Recurse -Force -ErrorAction SilentlyContinue }
 

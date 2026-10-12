@@ -14,6 +14,6 @@
 # The bridge rejects every request with 403 until QB_BRIDGE_TOKEN is non-empty.
 @{
     QB_BRIDGE_TOKEN  = ''
-    QB_BRIDGE_ORIGIN = 'http://APPSRV01:8742'
+    QB_BRIDGE_ORIGIN = 'https://act.proto-cam.local:8743'
     QB_BRIDGE_PORT   = '8788'
 }

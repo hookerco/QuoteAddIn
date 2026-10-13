@@ -138,6 +138,7 @@ namespace QuickBooksIPCService
             new CustomerCommercialTermsCache();
         private readonly Logger _logger;
         private readonly Func<string> _currentCompanyFileName;
+        private readonly Func<string, string> _discountSetting;
         private readonly object _cacheRefreshSync = new object();
         private readonly object _itemRefreshSync = new object();
         private long _itemRefreshVersion;
@@ -162,10 +163,12 @@ namespace QuickBooksIPCService
             IRequestFactory requestFactory,
             Logger logger,
             Func<string> currentCompanyFileName,
-            bool initialize = true)
+            bool initialize = true,
+            Func<string, string> discountSetting = null)
         {
             _requestFactory = requestFactory ?? throw new ArgumentNullException(nameof(requestFactory));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+            _discountSetting = discountSetting ?? Environment.GetEnvironmentVariable;
             _currentCompanyFileName = currentCompanyFileName ??
                 throw new ArgumentNullException(nameof(currentCompanyFileName));
             if (initialize)
@@ -462,6 +465,13 @@ namespace QuickBooksIPCService
             return _requestFactory.CreateEstimateReferenceQueryRequest(reference).SendRequest();
         }
 
+        public QBStatusResponse<QBQuoteUploadResult> SubmitDiscountedQuote(QBQuoteUploadRequest request)
+        {
+            if (request == null || request.DiscountAmount <= 0)
+                return Failure("Discounted quotes require a positive discount amount.");
+            return SubmitQuote(request);
+        }
+
         public QBStatusResponse<QBQuoteUploadResult> SubmitQuote(QBQuoteUploadRequest request)
         {
             string validationError = ValidateQuoteUploadRequest(request);
@@ -477,6 +487,35 @@ namespace QuickBooksIPCService
             if (preflight != null)
             {
                 return preflight;
+            }
+
+            QBQuoteDiscount discount = null;
+            if (request.DiscountAmount > 0)
+            {
+                string discountItem = _discountSetting("QB_QUOTE_DISCOUNT_ITEM")?.Trim();
+                string subtotalItem = _discountSetting("QB_QUOTE_SUBTOTAL_ITEM")?.Trim();
+                if (string.IsNullOrWhiteSpace(discountItem) || string.IsNullOrWhiteSpace(subtotalItem))
+                    return Failure("Configure QB_QUOTE_DISCOUNT_ITEM and QB_QUOTE_SUBTOTAL_ITEM on the workstation before sending discounted quotes.");
+                try
+                {
+                    // Bind item identities and all subsequent writes to the same company.
+                    if (approvedWriteFingerprint == null)
+                        approvedWriteFingerprint = FingerprintCompanyFileName(_currentCompanyFileName());
+                    var response = _requestFactory.CreateQuoteDiscountItemsQueryRequest(
+                        discountItem, subtotalItem, approvedWriteFingerprint).SendRequest();
+                    if (response == null || response.StatusCode != 0 || response.Data == null ||
+                        string.IsNullOrWhiteSpace(response.Data.DiscountItemListId) ||
+                        string.IsNullOrWhiteSpace(response.Data.SubtotalItemListId))
+                        return Failure("The configured QuickBooks Discount or Subtotal item is missing, inactive, or the wrong type.");
+                    discount = response.Data;
+                    discount.Amount = request.DiscountAmount;
+                    discount.Description = string.IsNullOrWhiteSpace(request.DiscountDescription)
+                        ? "Quote discount" : request.DiscountDescription;
+                }
+                catch
+                {
+                    return Failure("Could not validate the QuickBooks discount items. The quote was not sent.");
+                }
             }
 
             QBCustomer customer = ResolveQuoteUploadCustomer(request);
@@ -527,6 +566,7 @@ namespace QuickBooksIPCService
             }
 
             QBOrder order = BuildOrder(request, customer, resolution.ResolvedLines);
+            order.Discount = discount;
             QBQuoteUploadResult result = new QBQuoteUploadResult
             {
                 TransactionType = request.TransactionType,
@@ -774,6 +814,25 @@ namespace QuickBooksIPCService
                 {
                     return $"Quote upload line {i + 1} has an invalid rate";
                 }
+            }
+
+            if (request.DiscountAmount < 0 || decimal.Round(request.DiscountAmount, 2) != request.DiscountAmount)
+                return "Discount amount must be nonnegative and expressed in cents.";
+            if (request.DiscountDescription != null && request.DiscountDescription.Length > 4095)
+                return "Discount description must be at most 4095 characters.";
+            if (request.DiscountAmount > 0)
+            {
+                decimal subtotal = 0;
+                try
+                {
+                    foreach (var line in request.Lines)
+                    {
+                        if (line.Rate < 0) return "Discounted quote lines cannot have negative rates.";
+                        subtotal += decimal.Round((decimal)line.Rate * line.Quantity, 2, MidpointRounding.AwayFromZero);
+                    }
+                }
+                catch (OverflowException) { return "Discounted quote subtotal is too large."; }
+                if (request.DiscountAmount > subtotal) return "Discount cannot exceed the quote subtotal.";
             }
 
             if (request.Customer == null && string.IsNullOrWhiteSpace(request.CustomerAccountNumber))

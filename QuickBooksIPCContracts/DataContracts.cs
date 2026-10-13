@@ -30,6 +30,9 @@ namespace QuickBooksIPCContracts
     public class QBOrder
     {
         [DataMember]
+        public QBQuoteDiscount Discount { get; set; }
+
+        [DataMember]
         public string QuoteNumber { get; set; }
 
         [DataMember]
@@ -89,8 +92,20 @@ namespace QuickBooksIPCContracts
     }
 
     [DataContract]
+    public sealed class QBQuoteDiscount
+    {
+        [DataMember] public decimal Amount { get; set; }
+        [DataMember] public string Description { get; set; }
+        [DataMember] public string DiscountItemListId { get; set; }
+        [DataMember] public string SubtotalItemListId { get; set; }
+    }
+
+    [DataContract]
     public class QBQuoteUploadRequest
     {
+        [DataMember] public decimal DiscountAmount { get; set; }
+        [DataMember] public string DiscountDescription { get; set; }
+
         [DataMember]
         public string QuoteKind { get; set; }
 

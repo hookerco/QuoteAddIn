@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param([switch]$AsLibrary, [string]$LaunchInstalledHost)
 
 $ErrorActionPreference = 'Stop'
@@ -29,7 +29,7 @@ function Start-CurrentUserBridge {
         [scriptblock]$ReadUserSetting = { param($name) [Environment]::GetEnvironmentVariable($name,'User') },
         [scriptblock]$SetProcessSetting = { param($name,$value) [Environment]::SetEnvironmentVariable($name,$value,'Process') },
         [scriptblock]$StartAction = { param($path) Start-Process -FilePath $path -WorkingDirectory (Split-Path $path) -WindowStyle Hidden })
-    foreach ($name in @('QB_BRIDGE_ORIGIN','QB_BRIDGE_TOKEN','QB_BRIDGE_PORT','QUOTE_MODULEV2_QB_CONNECTOR_CLI')) {
+    foreach ($name in @('QB_BRIDGE_ORIGIN','QB_BRIDGE_TOKEN','QB_BRIDGE_PORT','QB_QUOTE_SUBTOTAL_ITEM','QB_QUOTE_DISCOUNT_ITEM','QUOTE_MODULEV2_QB_CONNECTOR_CLI')) {
         $value = & $ReadUserSetting $name
         if ($null -ne $value) { & $SetProcessSetting $name $value }
     }
@@ -207,7 +207,7 @@ function Invoke-ServiceHostInstall {
         }
         [IO.File]::WriteAllBytes($stageManifest,$manifestBytesBefore)
 
-        $bridge = @{ QB_BRIDGE_TOKEN=''; QB_BRIDGE_ORIGIN='https://act.proto-cam.local:8743'; QB_BRIDGE_PORT='8788' }
+        $bridge = @{ QB_BRIDGE_TOKEN=''; QB_BRIDGE_ORIGIN='https://act.proto-cam.local:8743'; QB_BRIDGE_PORT='8788'; QB_QUOTE_SUBTOTAL_ITEM=''; QB_QUOTE_DISCOUNT_ITEM='' }
         $bridgeSettingsPath = Join-Path $SourcePath 'bridge.settings.psd1'
         if (Test-Path -LiteralPath $bridgeSettingsPath -PathType Leaf) {
             $loaded = Import-PowerShellDataFile -LiteralPath $bridgeSettingsPath
@@ -271,7 +271,7 @@ function Invoke-ServiceHostInstall {
                     }
                 }
                 & $SetEnvironmentVariableAction 'QUOTE_MODULEV2_QB_CONNECTOR_CLI' $connectorPath
-                foreach ($key in @('QB_BRIDGE_TOKEN','QB_BRIDGE_ORIGIN','QB_BRIDGE_PORT')) { & $SetEnvironmentVariableAction $key $bridge[$key] }
+                foreach ($key in @('QB_BRIDGE_TOKEN','QB_BRIDGE_ORIGIN','QB_BRIDGE_PORT','QB_QUOTE_SUBTOTAL_ITEM','QB_QUOTE_DISCOUNT_ITEM')) { & $SetEnvironmentVariableAction $key $bridge[$key] }
                 # Refresh user settings on launch even when Explorer inherited the old origin.
                 $launcherPath = Join-Path $StatePath 'launch_service_host.ps1'
                 & $CopyFileAction $launcherSource $launcherPath

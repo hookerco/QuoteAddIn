@@ -13,7 +13,7 @@ using System.Threading;
 namespace QuickBooksServiceLibrary.Tests
 {
     [TestFixture]
-    public class QuickBooksServiceTests
+    public partial class QuickBooksServiceTests
     {
         private Mock<IRequestFactory> _mockRequestFactory;
         private QuickBooksService _service;

@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [ValidateSet('static', 'qbfc', 'manifest', 'install', 'rollback', 'all')]
     [string]$Scenario = 'all'
@@ -37,7 +37,7 @@ function New-Fixture {
     [IO.File]::WriteAllText((Join-Path $source 'QuickBooksConnectorCli.exe'), 'cli')
     [IO.File]::WriteAllText((Join-Path $source 'nested\runtime.dll'), 'runtime')
     [IO.File]::WriteAllText((Join-Path $source 'service_host_manager.ps1'), '# manager')
-    [IO.File]::WriteAllText((Join-Path $source 'bridge.settings.psd1'), "@{`nQB_BRIDGE_TOKEN='invented-token'`nQB_BRIDGE_ORIGIN='http://invented.invalid:8742'`nQB_BRIDGE_PORT='8788'`n}")
+    [IO.File]::WriteAllText((Join-Path $source 'bridge.settings.psd1'), "@{`nQB_BRIDGE_TOKEN='invented-token'`nQB_BRIDGE_ORIGIN='http://invented.invalid:8742'`nQB_BRIDGE_PORT='8788'`nQB_QUOTE_SUBTOTAL_ITEM='Invented Subtotal'`nQB_QUOTE_DISCOUNT_ITEM='Invented Discount'`n}")
     $files = foreach ($relative in @('QuickBooksServiceHost.exe', 'QuickBooksConnectorCli.exe', 'nested/runtime.dll')) {
         $path = Join-Path $source $relative
         [pscustomobject]@{ path = $relative; length = [long](Get-Item $path).Length; sha256 = (Get-FileHash $path -Algorithm SHA256).Hash }
@@ -142,10 +142,12 @@ function Run-Scenario([string]$Name) {
             Assert-Equal 'https://custom.invalid:9999' (Resolve-ServiceHostBridgeOrigin 'https://custom.invalid:9999') 'custom origin preserved'
             $launchState = @{ Settings=@{}; Path='' }
             Start-CurrentUserBridge -HostPath 'C:\invented\host.exe' `
-                -ReadUserSetting { param($name) if($name -eq 'QB_BRIDGE_ORIGIN'){'https://act.proto-cam.local:8743'}elseif($name -eq 'QB_BRIDGE_TOKEN'){'invented-kept-token'} } `
+                -ReadUserSetting { param($name) if($name -eq 'QB_BRIDGE_ORIGIN'){'https://act.proto-cam.local:8743'}elseif($name -eq 'QB_BRIDGE_TOKEN'){'invented-kept-token'}elseif($name -eq 'QB_QUOTE_SUBTOTAL_ITEM'){'Invented Subtotal'}elseif($name -eq 'QB_QUOTE_DISCOUNT_ITEM'){'Invented Discount'} } `
                 -SetProcessSetting { param($name,$value) $launchState.Settings[$name]=$value } `
                 -StartAction { param($path) $launchState.Path=$path }
             Assert-Equal 'https://act.proto-cam.local:8743' $launchState.Settings.QB_BRIDGE_ORIGIN 'launcher refreshes origin before starting'
+            Assert-Equal 'Invented Subtotal' $launchState.Settings.QB_QUOTE_SUBTOTAL_ITEM 'launcher refreshes subtotal mapping'
+            Assert-Equal 'Invented Discount' $launchState.Settings.QB_QUOTE_DISCOUNT_ITEM 'launcher refreshes discount mapping'
             Assert-Equal 'invented-kept-token' $launchState.Settings.QB_BRIDGE_TOKEN 'launcher preserves current user token'
             Assert-Equal 'C:\invented\host.exe' $launchState.Path 'launcher starts selected host'
             $fixture = New-Fixture
@@ -158,6 +160,8 @@ function Run-Scenario([string]$Name) {
                 Assert-Equal '# manager' ([IO.File]::ReadAllText((Join-Path $fixture.State 'Manager\service_host_manager.ps1'))) 'manager package is preserved'
                 Assert-Equal 'invented-release' ((Get-Content -Raw (Join-Path $fixture.State 'release.manifest.json') | ConvertFrom-Json).release_id) 'manifest is installed'
                 Assert-Equal (Join-Path $fixture.Install 'QuickBooksConnectorCli.exe') $actions.State.Environment.QUOTE_MODULEV2_QB_CONNECTOR_CLI 'connector variable is user scoped through installer action'
+                Assert-Equal 'Invented Subtotal' $actions.State.Environment.QB_QUOTE_SUBTOTAL_ITEM 'subtotal mapping persists for user'
+                Assert-Equal 'Invented Discount' $actions.State.Environment.QB_QUOTE_DISCOUNT_ITEM 'discount mapping persists for user'
                 Assert-Equal 'invented-token' $actions.State.Environment.QB_BRIDGE_TOKEN 'bridge token behavior is preserved'
                 Assert-Equal 'http://invented.invalid:8742' $actions.State.Environment.QB_BRIDGE_ORIGIN 'bridge origin behavior is preserved'
                 Assert-Equal 0 $actions.State.IntranetCalls 'custom origins do not change company intranet settings'

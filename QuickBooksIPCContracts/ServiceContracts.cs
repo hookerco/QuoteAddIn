@@ -18,6 +18,10 @@ namespace QuickBooksIPCContracts
         [OperationContract]
         QBStatusResponse<QBQuoteUploadResult> SubmitQuote(QBQuoteUploadRequest request);
 
+        // A distinct operation makes an older service reject, not ignore, discounts.
+        [OperationContract]
+        QBStatusResponse<QBQuoteUploadResult> SubmitDiscountedQuote(QBQuoteUploadRequest request);
+
         [OperationContract]
         QBStatusResponse<List<QBEstimateReference>> GetEstimateReferences();
 

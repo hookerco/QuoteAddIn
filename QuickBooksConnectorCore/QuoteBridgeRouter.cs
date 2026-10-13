@@ -215,10 +215,13 @@ namespace QuickBooksConnectorCore
                 }
             }
 
-            if (path == "/submit-quote" && string.Equals(method, "POST", StringComparison.OrdinalIgnoreCase))
+            if ((path == "/submit-quote" || path == "/submit-discounted-quote") && string.Equals(method, "POST", StringComparison.OrdinalIgnoreCase))
             {
                 try
                 {
+                    if (path == "/submit-discounted-quote" &&
+                        SubmitQuoteHandler.ParseQuoteUploadRequest(body).DiscountAmount <= 0)
+                        throw new QuoteRequestParseException("A discounted quote requires a positive DiscountAmount.");
                     string connResponseJson = _submitHandler(body);
                     return Json(200, headers, "{\"response\":" + connResponseJson + "}");
                 }

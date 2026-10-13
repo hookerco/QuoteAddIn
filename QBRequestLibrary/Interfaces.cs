@@ -8,6 +8,9 @@ using System.Threading.Tasks;
 // QBRequestLibrary/Interfaces.cs
 namespace QBRequestLibrary
 {
+    public interface IQuoteDiscountItemsQueryRequest
+        : IRequest<string[], QBStatusResponse<QBQuoteDiscount>> { }
+
     public interface ICustomerQueryRequest : IRequest<string, QBCustomer> { }
 
     public interface ICustomerAccountNumberQueryRequest : IRequest<string, QBCustomer> { }

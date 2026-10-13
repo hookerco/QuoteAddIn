@@ -32,6 +32,9 @@ namespace QuickBooksConnectorCli
                     case "refresh-cache":
                         return RunRefreshCache();
 
+                    case "submit-discounted-quote":
+                        return RunSubmitQuote(requireDiscount: true);
+
                     case "submit-quote":
                         return RunSubmitQuote();
 
@@ -74,7 +77,7 @@ namespace QuickBooksConnectorCli
             return 0;
         }
 
-        private static int RunSubmitQuote()
+        private static int RunSubmitQuote(bool requireDiscount = false)
         {
             string input = Console.In.ReadToEnd();
             if (string.IsNullOrWhiteSpace(input))
@@ -82,6 +85,8 @@ namespace QuickBooksConnectorCli
                 throw new CliUsageException("submit-quote requires a QBQuoteUploadRequest JSON payload on stdin.");
             }
 
+            if (requireDiscount && SubmitQuoteHandler.ParseQuoteUploadRequest(input).DiscountAmount <= 0)
+                throw new QuoteRequestParseException("A discounted quote requires a positive DiscountAmount.");
             // Same parse -> SubmitQuote -> serialize pipeline the localhost bridge uses.
             Console.Out.WriteLine(SubmitQuoteHandler.Handle(input));
             return 0;

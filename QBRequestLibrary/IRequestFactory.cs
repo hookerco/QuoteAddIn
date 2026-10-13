@@ -9,6 +9,8 @@ namespace QBRequestLibrary
 {
     public interface IRequestFactory
     {
+        IQuoteDiscountItemsQueryRequest CreateQuoteDiscountItemsQueryRequest(
+            string discountItem, string subtotalItem, string companyFingerprint);
         ICustomerQueryRequest CreateCustomerQueryRequest(string accountNumber);
         ICustomerAccountNumberQueryRequest CreateCustomerAccountNumberQueryRequest(string accountNumber);
         ISalesOrderRequest CreateSalesOrderRequest(QBOrder order);

@@ -10,6 +10,12 @@ namespace QBRequestLibrary
 {
     public class RequestFactory : IRequestFactory, ICacheRefreshSessionFactory
     {
+        public IQuoteDiscountItemsQueryRequest CreateQuoteDiscountItemsQueryRequest(
+            string discountItem, string subtotalItem, string companyFingerprint)
+        {
+            return new QuoteDiscountItemsQueryRequest(discountItem, subtotalItem, companyFingerprint);
+        }
+
         public ICacheRefreshSession OpenCacheRefreshSession()
         {
             return new CacheRefreshSession(new Connection());

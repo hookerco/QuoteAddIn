@@ -286,6 +286,7 @@ namespace QBRequestLibrary
                 SalesOrderLineAdd.Quantity.SetValue(item.Quantity);
                 SalesOrderLineAdd.ORRatePriceLevel.Rate.SetValue(item.Rate);
             }
+            QuoteDiscountLines.Append(SalesOrderAddRq, _value.Discount);
         }
 
         protected override QBStatusResponse<QBTransactionIdentity> ConvertResponse(IMsgSetResponse responseSet)
@@ -348,6 +349,7 @@ namespace QBRequestLibrary
                 EstimateLineAdd.Quantity.SetValue(item.Quantity);
                 EstimateLineAdd.ORRate.Rate.SetValue(item.Rate);
             }
+            QuoteDiscountLines.Append(EstimateAddRq, _value.Discount);
         }
 
         protected override QBStatusResponse<QBTransactionIdentity> ConvertResponse(IMsgSetResponse responseSet)

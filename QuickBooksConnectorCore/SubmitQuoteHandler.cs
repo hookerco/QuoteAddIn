@@ -85,7 +85,9 @@ namespace QuickBooksConnectorCore
         {
             using (var connection = new QuickBooksServiceConnection())
             {
-                return connection.Client.SubmitQuote(request);
+                return request.DiscountAmount > 0
+                    ? connection.Client.SubmitDiscountedQuote(request)
+                    : connection.Client.SubmitQuote(request);
             }
         }
 
@@ -109,6 +111,8 @@ namespace QuickBooksConnectorCore
             var root = AsDictionary(raw, "request");
             var request = new QBQuoteUploadRequest
             {
+                DiscountAmount = GetDiscountAmount(root),
+                DiscountDescription = GetString(root, "DiscountDescription", "discount_description"),
                 QuoteKind = GetString(root, "QuoteKind", "quoteKind", "quote_kind"),
                 ApprovedTestCompanyFingerprints = ParseStrings(
                     GetValue(
@@ -133,6 +137,18 @@ namespace QuickBooksConnectorCore
             };
 
             return request;
+        }
+
+        private static decimal GetDiscountAmount(Dictionary<string, object> root)
+        {
+            object value = GetValue(root, "DiscountAmount", "discount_amount");
+            if (value == null) return 0m;
+            decimal amount;
+            if (value is bool || !decimal.TryParse(Convert.ToString(value, CultureInfo.InvariantCulture),
+                NumberStyles.AllowLeadingSign | NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out amount) ||
+                amount < 0 || decimal.Round(amount, 2) != amount)
+                throw new QuoteRequestParseException("DiscountAmount must be a nonnegative decimal amount in cents.");
+            return amount;
         }
 
         private static QBCustomer ParseCustomer(object value)

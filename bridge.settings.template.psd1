@@ -1,4 +1,4 @@
-# QuickBooks localhost bridge settings (TEMPLATE).
+﻿# QuickBooks localhost bridge settings (TEMPLATE).
 #
 # deploy_servicehost.ps1 copies this to the install share as "bridge.settings.psd1"
 # IF one is not already there. The real, secret-bearing bridge.settings.psd1 lives
@@ -16,4 +16,7 @@
     QB_BRIDGE_TOKEN  = ''
     QB_BRIDGE_ORIGIN = 'https://act.proto-cam.local:8743'
     QB_BRIDGE_PORT   = '8788'
+    # Exact native QuickBooks item names; configure before discounted sends.
+    QB_QUOTE_SUBTOTAL_ITEM = ''
+    QB_QUOTE_DISCOUNT_ITEM = ''
 }

@@ -28,7 +28,7 @@ function Start-CurrentUserBridge {
     param([string]$HostPath,
         [scriptblock]$ReadUserSetting = { param($name) [Environment]::GetEnvironmentVariable($name,'User') },
         [scriptblock]$SetProcessSetting = { param($name,$value) [Environment]::SetEnvironmentVariable($name,$value,'Process') },
-        [scriptblock]$StartAction = { param($path) Start-Process -FilePath $path -WorkingDirectory (Split-Path $path) -WindowStyle Hidden })
+        [scriptblock]$StartAction = { param($path) Start-Process -FilePath $path -WorkingDirectory (Split-Path $path) -WindowStyle Normal })
     foreach ($name in @('QB_BRIDGE_ORIGIN','QB_BRIDGE_TOKEN','QB_BRIDGE_PORT','QB_QUOTE_SUBTOTAL_ITEM','QB_QUOTE_DISCOUNT_ITEM','QUOTE_MODULEV2_QB_CONNECTOR_CLI')) {
         $value = & $ReadUserSetting $name
         if ($null -ne $value) { & $SetProcessSetting $name $value }

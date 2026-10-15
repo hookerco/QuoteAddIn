@@ -150,6 +150,9 @@ function Run-Scenario([string]$Name) {
             Assert-Equal 'Invented Discount' $launchState.Settings.QB_QUOTE_DISCOUNT_ITEM 'launcher refreshes discount mapping'
             Assert-Equal 'invented-kept-token' $launchState.Settings.QB_BRIDGE_TOKEN 'launcher preserves current user token'
             Assert-Equal 'C:\invented\host.exe' $launchState.Path 'launcher starts selected host'
+            $defaultStart = ((Get-Command Start-CurrentUserBridge).ScriptBlock.Ast.Body.ParamBlock.Parameters |
+                Where-Object { $_.Name.VariablePath.UserPath -eq 'StartAction' }).DefaultValue.Extent.Text
+            Assert-True ($defaultStart -match '-WindowStyle Normal') 'desktop shortcut shows the host console window'
             $fixture = New-Fixture
             try {
                 $actions = New-Actions $fixture

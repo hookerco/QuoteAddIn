@@ -1,4 +1,4 @@
-﻿// QuickBooksServiceHost/Program.cs
+// QuickBooksServiceHost/Program.cs
 using System;
 using System.Configuration;
 using System.ServiceModel;
@@ -18,6 +18,18 @@ namespace QuickBooksServiceHost
     {
         static void Main(string[] args)
         {
+            if (args.Length == 1 && args[0] == "--opportunity-sync-only")
+            {
+                using (var watcher = OpportunityWatcher.Start())
+                using (var done = new ManualResetEvent(false))
+                {
+                    if (watcher == null) { Environment.ExitCode = 2; return; }
+                    Console.CancelKeyPress += (sender, e) => { e.Cancel = true; done.Set(); };
+                    done.WaitOne();
+                }
+                return;
+            }
+
             string baseAddress = "net.pipe://localhost/QuickBooksService";
 
             using (var service = new QuickBooksService())
@@ -60,7 +72,8 @@ namespace QuickBooksServiceHost
 
                     Console.WriteLine("Service Host started. Loading QuickBooks data...");
                     Console.WriteLine("Press R to retry the refresh, or Ctrl+C to stop.");
-                    WaitForShutdownOrRefresh(shutdownEvent, service);
+                    using (var watcher = OpportunityWatcher.Start())
+                        WaitForShutdownOrRefresh(shutdownEvent, service);
 
                     bridge?.Stop();
                     host.Close();

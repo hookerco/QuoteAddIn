@@ -311,6 +311,6 @@ Enable the watcher on one workstation that opens the intended company file. The 
 | `QB_OPPORTUNITY_SINCE` | Earliest conversion date to check, formatted YYYY-MM-DD using the company file clock. |
 | `QUOTE_MODULEV2_QB_CONVERSION_TOKEN` | Shared secret configured on the Workbench conversion endpoint. |
 
-The host checks every 15 seconds and opens a fresh QuickBooks session for each scan. It retries while the company is unavailable and catches up from the configured date after a host restart. Each order must carry one distinct Workbench ID. Workbench records the order receipt so repeat scans are safe.
+The host scans QuickBooks at startup and every five minutes. It checks Workbench for page refresh requests every 15 seconds and opens a fresh QuickBooks session for each scan. Workbench timestamps successful scans, including scans with no conversions. It retries while the company is unavailable and catches up from the configured date after a host restart. Each order must carry one distinct Workbench ID. Workbench records the order receipt so repeat scans are safe.
 
 For an isolated sample-company test, run `QuickBooksServiceHost.exe --opportunity-sync-only` with the same settings. This runs the same watcher without opening the workstation bridge or refreshing the quote caches.

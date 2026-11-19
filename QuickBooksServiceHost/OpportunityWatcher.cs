@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Diagnostics;
+using System.Web.Script.Serialization;
 using System.IO;
 using System.Linq;
 using System.Net.Http;
@@ -18,6 +20,7 @@ namespace QuickBooksServiceHost
     {
         private readonly string company;
         private readonly Uri endpoint;
+        private readonly Uri checkEndpoint;
         private readonly DateTime since;
         private readonly HttpClient http;
         private readonly CancellationTokenSource stop = new CancellationTokenSource();
@@ -50,6 +53,7 @@ namespace QuickBooksServiceHost
         {
             company = file;
             endpoint = new Uri(uri, "/api/opportunities/quickbooks-conversion");
+            checkEndpoint = new Uri(uri, "/api/opportunities/quickbooks-check");
             since = date;
             http = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false });
             http.Timeout = TimeSpan.FromSeconds(20);
@@ -69,12 +73,30 @@ namespace QuickBooksServiceHost
         private void Run()
         {
             DateTime cursor = since;
+            var elapsed = new Stopwatch();
+            var serializer = new JavaScriptSerializer();
             do
             {
                 try
                 {
-                    DateTime latest = Scan(cursor);
-                    cursor = latest > since ? latest.AddDays(-1) : since;
+                    using (var response = http.GetAsync(checkEndpoint, stop.Token).GetAwaiter().GetResult())
+                    {
+                        response.EnsureSuccessStatusCode();
+                        var state = serializer.Deserialize<Dictionary<string, object>>(
+                            response.Content.ReadAsStringAsync().GetAwaiter().GetResult());
+                        long requested = Convert.ToInt64(state["requested"]);
+                        bool pending = requested > Convert.ToInt64(state["completed"]);
+                        if (elapsed.IsRunning && elapsed.Elapsed < TimeSpan.FromMinutes(5) && !pending)
+                            continue;
+                        DateTime latest = Scan(cursor);
+                        using (var content = new StringContent(serializer.Serialize(new { completed = requested }),
+                                                               Encoding.UTF8, "application/json"))
+                        using (var receipt = http.PostAsync(checkEndpoint, content, stop.Token).GetAwaiter().GetResult())
+                            receipt.EnsureSuccessStatusCode();
+                        elapsed.Restart();
+                        Console.WriteLine("Opportunity sync: completed " + (pending ? "requested" : "scheduled") + " check.");
+                        cursor = latest > since ? latest.AddDays(-1) : since;
+                    }
                     Status("connected");
                 }
                 catch (COMException) { Status("waiting for QuickBooks"); }

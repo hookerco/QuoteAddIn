@@ -45,7 +45,26 @@ namespace QuickBooksServiceHost
                 Console.Error.WriteLine("Opportunity sync disabled. Verify the company, Workbench URL, start date and token.");
                 return null;
             }
-            return new OpportunityWatcher(Path.GetFullPath(file), uri, token, date);
+            return new OpportunityWatcher(CompanyPath(file), uri, token, date);
+        }
+
+        [DllImport("mpr.dll", CharSet = CharSet.Unicode)]
+        private static extern int WNetGetConnection(string drive, StringBuilder remote, ref int length);
+
+        private static string CompanyPath(string path)
+        {
+            string full = Path.GetFullPath(path);
+            if (full.StartsWith(@"\\", StringComparison.Ordinal)) return full;
+            string root = Path.GetPathRoot(full);
+            int length = 512;
+            var remote = new StringBuilder(length);
+            int result = WNetGetConnection(root.Substring(0, 2), remote, ref length);
+            if (result == 234)
+            {
+                remote = new StringBuilder(length);
+                result = WNetGetConnection(root.Substring(0, 2), remote, ref length);
+            }
+            return result == 0 ? Path.Combine(remote.ToString(), full.Substring(root.Length)) : full;
         }
 
         private OpportunityWatcher(string file, Uri uri, string token, DateTime date)
@@ -117,7 +136,7 @@ namespace QuickBooksServiceHost
                 rp.OpenConnection2("", "Workbench sample conversion test", 1);
                 opened = true;
                 ticket = rp.BeginSession("", 2);
-                if (!string.Equals((string)rp.GetCurrentCompanyFileName(ticket), company,
+                if (!string.Equals(CompanyPath((string)rp.GetCurrentCompanyFileName(ticket)), company,
                                    StringComparison.OrdinalIgnoreCase))
                     throw new InvalidOperationException("Configured company is not open.");
                 string iterator = null;

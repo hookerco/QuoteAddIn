@@ -7,6 +7,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Runtime.Serialization;
+using System.Threading;
 
 namespace QuickBooksServiceLibrary.Tests
 {
@@ -44,12 +45,12 @@ namespace QuickBooksServiceLibrary.Tests
             sessionManager.Setup(value => value.GetCurrentCompanyFileName())
                 .Callback(() => calls.Add("identity"))
                 .Returns(@"C:\Synthetic\Test Company.qbw");
-            var connection = new TestableConnection(sessionManager.Object);
-
-            Assert.IsTrue(connection.Open());
-
-            CollectionAssert.AreEqual(new[] { "open", "begin", "identity" }, calls);
-            Assert.AreEqual(@"C:\Synthetic\Test Company.qbw", connection.CurrentCompanyFileName);
+            using (var connection = new TestableConnection(sessionManager.Object))
+            {
+                Assert.IsTrue(connection.Open());
+                CollectionAssert.AreEqual(new[] { "open", "begin", "identity" }, calls);
+                Assert.AreEqual(@"C:\Synthetic\Test Company.qbw", connection.CurrentCompanyFileName);
+            }
         }
 
         [TestCase("item")]
@@ -442,6 +443,40 @@ namespace QuickBooksServiceLibrary.Tests
             Assert.DoesNotThrow(() => connection.Dispose());
             manager.Verify(value => value.EndSession(), Times.Never);
             manager.Verify(value => value.CloseConnection(), Times.Once);
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void CacheSession_ExcludesWatcherUntilNativeCloseFinishes(bool closeFails)
+        {
+            var manager = new Mock<IQBSessionManager>();
+            manager.Setup(value => value.GetCurrentCompanyFileName()).Returns(@"C:\Synthetic\Example.qbw");
+            manager.Setup(value => value.CloseConnection()).Callback(() =>
+            {
+                AssertGateOccupied();
+                if (closeFails) throw new InvalidOperationException("Synthetic close failure");
+            });
+            var session = new CacheRefreshSession(new TestableConnection(manager.Object));
+            try
+            {
+                AssertGateOccupied();
+            }
+            finally
+            {
+                if (closeFails) Assert.Throws<InvalidOperationException>(() => session.Dispose());
+                else session.Dispose();
+            }
+            using (var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(2)))
+            using (QuickBooksSessionGate.Enter(timeout.Token)) { }
+        }
+
+        private static void AssertGateOccupied()
+        {
+            using (var timeout = new CancellationTokenSource(TimeSpan.FromMilliseconds(100)))
+                Assert.Throws<OperationCanceledException>(() =>
+                {
+                    using (QuickBooksSessionGate.Enter(timeout.Token)) { }
+                });
         }
 
         [Test]

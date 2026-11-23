@@ -12,6 +12,7 @@ using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Xml.Linq;
+using QBRequestLibrary;
 
 namespace QuickBooksServiceHost
 {
@@ -145,6 +146,12 @@ namespace QuickBooksServiceHost
         }
 
         private T InCompanySession<T>(Func<object, string, T> read)
+        {
+            using (QuickBooksSessionGate.Enter(stop.Token))
+                return ReadCurrentCompany(read);
+        }
+
+        private T ReadCurrentCompany<T>(Func<object, string, T> read)
         {
             dynamic rp = Activator.CreateInstance(Type.GetTypeFromProgID("QBXMLRP2.RequestProcessor", true));
             string ticket = null;

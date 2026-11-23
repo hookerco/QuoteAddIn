@@ -15,6 +15,7 @@ namespace QBRequestLibrary
         private bool sessionBegun = false;
         private bool connectionOpen = false;
         private IQBSessionManager internalManager;
+        private QuickBooksSessionGate sessionGate;
         private ENOpenMode userMode = ENOpenMode.omDontCare;
 
         /**
@@ -83,10 +84,11 @@ namespace QBRequestLibrary
         public bool Open()
         {
             if (sessionBegun) return true;
-            internalManager = CreateSessionManager();
+            sessionGate = QuickBooksSessionGate.Enter();
 
             try
             {
+                internalManager = CreateSessionManager();
                 internalManager.OpenConnection("", "Proto-CAM QB Library");
                 connectionOpen = true;
                 internalManager.BeginSession(File, userMode);
@@ -128,10 +130,18 @@ namespace QBRequestLibrary
             }
             finally
             {
-                if (connectionOpen)
+                try
                 {
-                    connectionOpen = false;
-                    internalManager.CloseConnection();
+                    if (connectionOpen)
+                    {
+                        connectionOpen = false;
+                        internalManager.CloseConnection();
+                    }
+                }
+                finally
+                {
+                    sessionGate?.Dispose();
+                    sessionGate = null;
                 }
             }
         }

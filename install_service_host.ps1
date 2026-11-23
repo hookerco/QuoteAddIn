@@ -33,7 +33,8 @@ function Get-OpportunityInstallSettings {
         QB_OPPORTUNITY_SINCE = $null
         QUOTE_MODULEV2_QB_CONVERSION_TOKEN = $null
     }
-    if (!$ComputerName -or $ComputerName -ine ([string]$Settings.QB_OPPORTUNITY_COMPUTER).Trim()) {
+    $selection = ([string]$Settings.QB_OPPORTUNITY_COMPUTER).Trim()
+    if (!$ComputerName -or ($selection -ne '*' -and $ComputerName -ine $selection)) {
         return $values
     }
     $file = [string]$Settings.QB_OPPORTUNITY_COMPANY

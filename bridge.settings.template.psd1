@@ -19,7 +19,7 @@
     # Exact native QuickBooks item names; configure before discounted sends.
     QB_QUOTE_SUBTOTAL_ITEM = ''
     QB_QUOTE_DISCOUNT_ITEM = ''
-    # Set once on the share. Only the named PC installs the watcher settings.
+    # Set once on the share. Use a PC name or * for all participating QuickBooks seats.
     QB_OPPORTUNITY_COMPUTER = ''
     QB_OPPORTUNITY_COMPANY = ''     # Full .QBW path as seen by that workstation.
     QB_OPPORTUNITY_SINCE = ''       # YYYY-MM-DD in the QuickBooks company clock.

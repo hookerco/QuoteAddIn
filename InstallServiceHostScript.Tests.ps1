@@ -212,6 +212,10 @@ function Run-Scenario([string]$Name) {
                 Assert-Equal $site.QB_BRIDGE_ORIGIN $actions.State.Environment.QB_OPPORTUNITY_WORKBENCH 'watcher uses shared origin'
                 Assert-Equal 'invented-conversion-secret' $actions.State.Environment.QUOTE_MODULEV2_QB_CONVERSION_TOKEN 'designated seat receives conversion token'
                 Assert-Equal $site.QB_OPPORTUNITY_SINCE $actions.State.Environment.QB_OPPORTUNITY_SINCE 'installer sets the scan date'
+                $site.QB_OPPORTUNITY_COMPUTER='*'
+                & $saveSite
+                Invoke-Fixture $fixture $actions | Out-Null
+                Assert-Equal $site.QB_OPPORTUNITY_COMPANY $actions.State.Environment.QB_OPPORTUNITY_COMPANY 'all-seat mode installs the same pinned company'
                 $site.QB_OPPORTUNITY_COMPUTER='INVENTED-OTHER'
                 $site.QB_OPPORTUNITY_TOKEN_FILE=Join-Path $fixture.Root 'does-not-exist'
                 & $saveSite

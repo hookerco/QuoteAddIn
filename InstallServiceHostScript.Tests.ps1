@@ -1,4 +1,4 @@
-﻿[CmdletBinding()]
+[CmdletBinding()]
 param(
     [ValidateSet('static', 'qbfc', 'manifest', 'install', 'rollback', 'all')]
     [string]$Scenario = 'all'
@@ -75,7 +75,7 @@ function New-Actions($Fixture) {
 
 function Invoke-Fixture($Fixture,$Actions) {
     Invoke-ServiceHostInstall -SourcePath $Fixture.Source -InstallPath $Fixture.Install -StatePath $Fixture.State `
-        -CurrentUserDesktopPath $Fixture.Desktop -SetEnvironmentVariableAction $Actions.SetEnvironment -ConfigureIntranetAction $Actions.ConfigureIntranet `
+        -CurrentUserDesktopPath $Fixture.Desktop -ReadEnvironmentVariableAction { param($name) $Actions.State.Environment[$name] } -SetEnvironmentVariableAction $Actions.SetEnvironment -ConfigureIntranetAction $Actions.ConfigureIntranet `
         -CreateShortcutAction $Actions.CreateShortcut -GetProcessesAction $Actions.GetProcesses `
         -StopProcessAction $Actions.StopProcess -DelayAction $Actions.Delay -MovePathAction $Actions.Move `
         -CopyFileAction $Actions.Copy -RemovePathAction $Actions.Remove -MutexAction $Actions.Mutex
@@ -193,6 +193,31 @@ function Run-Scenario([string]$Name) {
                 Assert-Equal 1 $actions.State.IntranetCalls 'company updater configures the current user intranet entry'
                 Invoke-Fixture $fixture $actions | Out-Null
                 Assert-Equal 2 $actions.State.IntranetCalls 'repeated updates reapply the same intranet setting safely'
+                $tokenFile = Join-Path $fixture.Root 'sample-token.txt'
+                [IO.File]::WriteAllText($tokenFile,'invented-conversion-secret')
+                $site = @{
+                    QB_BRIDGE_ORIGIN='https://example.invalid:8743'
+                    QB_OPPORTUNITY_COMPUTER=$env:COMPUTERNAME
+                    QB_OPPORTUNITY_COMPANY='C:\Invented\Sales.qbw'
+                    QB_OPPORTUNITY_SINCE='2026-11-23'
+                    QB_OPPORTUNITY_TOKEN_FILE=$tokenFile
+                }
+                $saveSite = {
+                    $lines = @($site.GetEnumerator() | ForEach-Object { $_.Key + "='" + $_.Value.Replace("'","''") + "'" })
+                    [IO.File]::WriteAllText($settings,"@{" + [Environment]::NewLine + ($lines -join [Environment]::NewLine) + [Environment]::NewLine + "}")
+                }
+                & $saveSite
+                Invoke-Fixture $fixture $actions | Out-Null
+                Assert-Equal $site.QB_OPPORTUNITY_COMPANY $actions.State.Environment.QB_OPPORTUNITY_COMPANY 'designated seat enables the watcher'
+                Assert-Equal $site.QB_BRIDGE_ORIGIN $actions.State.Environment.QB_OPPORTUNITY_WORKBENCH 'watcher uses shared origin'
+                Assert-Equal 'invented-conversion-secret' $actions.State.Environment.QUOTE_MODULEV2_QB_CONVERSION_TOKEN 'designated seat receives conversion token'
+                Assert-Equal $site.QB_OPPORTUNITY_SINCE $actions.State.Environment.QB_OPPORTUNITY_SINCE 'installer sets the scan date'
+                $site.QB_OPPORTUNITY_COMPUTER='INVENTED-OTHER'
+                $site.QB_OPPORTUNITY_TOKEN_FILE=Join-Path $fixture.Root 'does-not-exist'
+                & $saveSite
+                Invoke-Fixture $fixture $actions | Out-Null
+                Assert-Equal '' $actions.State.Environment.QB_OPPORTUNITY_COMPANY 'reassigned seat clears company'
+                Assert-Equal '' $actions.State.Environment.QUOTE_MODULEV2_QB_CONVERSION_TOKEN 'ordinary seat skips secret file and clears old token'
             }
             finally { Remove-Item -LiteralPath $fixture.Root -Recurse -Force -ErrorAction SilentlyContinue }
 

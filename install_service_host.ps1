@@ -1,4 +1,4 @@
-﻿[CmdletBinding()]
+[CmdletBinding()]
 param([switch]$AsLibrary, [string]$LaunchInstalledHost)
 
 $ErrorActionPreference = 'Stop'
@@ -24,6 +24,40 @@ function Resolve-ServiceHostBridgeOrigin {
     return $Origin
 }
 
+function Get-OpportunityInstallSettings {
+    param([hashtable]$Settings, [string]$ComputerName, [string]$Origin)
+    if (!$Settings -or !$Settings.ContainsKey('QB_OPPORTUNITY_COMPUTER')) { return }
+    $values = @{
+        QB_OPPORTUNITY_COMPANY = $null
+        QB_OPPORTUNITY_WORKBENCH = $null
+        QB_OPPORTUNITY_SINCE = $null
+        QUOTE_MODULEV2_QB_CONVERSION_TOKEN = $null
+    }
+    if (!$ComputerName -or $ComputerName -ine ([string]$Settings.QB_OPPORTUNITY_COMPUTER).Trim()) {
+        return $values
+    }
+    $file = [string]$Settings.QB_OPPORTUNITY_COMPANY
+    $start = [string]$Settings.QB_OPPORTUNITY_SINCE
+    $date = [datetime]::MinValue
+    $uri = $null
+    if ($file -notmatch '^(?:[A-Za-z]:\\|\\\\[^\\]+\\[^\\]+\\).+\.qbw$' -or
+        ![uri]::TryCreate($Origin,[UriKind]::Absolute,[ref]$uri) -or
+        !($uri.Scheme -eq 'https' -or ($uri.IsLoopback -and $uri.Scheme -eq 'http')) -or $uri.UserInfo -or
+        ![datetime]::TryParseExact($start,'yyyy-MM-dd',[cultureinfo]::InvariantCulture,
+            [Globalization.DateTimeStyles]::None,[ref]$date) -or $date.Year -lt 1900) {
+        throw 'Invalid opportunity watcher company path, Workbench origin, or start date.'
+    }
+    $tokenPath = [string]$Settings.QB_OPPORTUNITY_TOKEN_FILE
+    if (!$tokenPath -or ![IO.Path]::IsPathRooted($tokenPath)) { throw 'Configure the opportunity token file path.' }
+    $token = [IO.File]::ReadAllText($tokenPath).Trim()
+    if (!$token -or $token -match '\s') { throw 'The opportunity token file must contain one nonblank token.' }
+    $values.QB_OPPORTUNITY_COMPANY = $file
+    $values.QB_OPPORTUNITY_WORKBENCH = $Origin
+    $values.QB_OPPORTUNITY_SINCE = $start
+    $values.QUOTE_MODULEV2_QB_CONVERSION_TOKEN = $token
+    return $values
+}
+
 function Start-CurrentUserBridge {
     param([string]$HostPath,
         [scriptblock]$ReadUserSetting = { param($name) [Environment]::GetEnvironmentVariable($name,'User') },
@@ -32,6 +66,10 @@ function Start-CurrentUserBridge {
     foreach ($name in @('QB_BRIDGE_ORIGIN','QB_BRIDGE_TOKEN','QB_BRIDGE_PORT','QB_QUOTE_SUBTOTAL_ITEM','QB_QUOTE_DISCOUNT_ITEM','QUOTE_MODULEV2_QB_CONNECTOR_CLI')) {
         $value = & $ReadUserSetting $name
         if ($null -ne $value) { & $SetProcessSetting $name $value }
+    }
+    # Clear stale inherited watcher settings on a reassigned workstation.
+    foreach ($name in @('QB_OPPORTUNITY_COMPANY','QB_OPPORTUNITY_WORKBENCH','QB_OPPORTUNITY_SINCE','QUOTE_MODULEV2_QB_CONVERSION_TOKEN')) {
+        & $SetProcessSetting $name (& $ReadUserSetting $name)
     }
     & $StartAction $HostPath
 }
@@ -139,6 +177,7 @@ function Invoke-ServiceHostInstall {
         [Parameter(Mandatory=$true)][string]$StatePath,
         [Parameter(Mandatory=$true)][string]$CurrentUserDesktopPath,
         [scriptblock]$SetEnvironmentVariableAction = { param($name,$value) [Environment]::SetEnvironmentVariable($name,$value,[EnvironmentVariableTarget]::User) },
+        [scriptblock]$ReadEnvironmentVariableAction = { param($name) [Environment]::GetEnvironmentVariable($name,'User') },
         [scriptblock]$ConfigureIntranetAction = { Set-CompanyIntranetSite },
         [scriptblock]$CreateShortcutAction = {
             param($shortcutPath,$targetPath,$workingDirectory,$arguments)
@@ -208,6 +247,7 @@ function Invoke-ServiceHostInstall {
         [IO.File]::WriteAllBytes($stageManifest,$manifestBytesBefore)
 
         $bridge = @{ QB_BRIDGE_TOKEN=''; QB_BRIDGE_ORIGIN='https://act.proto-cam.local:8743'; QB_BRIDGE_PORT='8788'; QB_QUOTE_SUBTOTAL_ITEM=''; QB_QUOTE_DISCOUNT_ITEM='' }
+        $loaded = @{}
         $bridgeSettingsPath = Join-Path $SourcePath 'bridge.settings.psd1'
         if (Test-Path -LiteralPath $bridgeSettingsPath -PathType Leaf) {
             $loaded = Import-PowerShellDataFile -LiteralPath $bridgeSettingsPath
@@ -218,6 +258,7 @@ function Invoke-ServiceHostInstall {
         # Migrate only known company addresses; preserve intentionally custom origins.
         $bridge.QB_BRIDGE_ORIGIN = Resolve-ServiceHostBridgeOrigin $bridge.QB_BRIDGE_ORIGIN
 
+        $watcher = Get-OpportunityInstallSettings $loaded $env:COMPUTERNAME $bridge.QB_BRIDGE_ORIGIN
         $hostPath = Join-Path $InstallPath 'QuickBooksServiceHost.exe'
         $connectorPath = Join-Path $InstallPath 'QuickBooksConnectorCli.exe'
         $managerTarget = Join-Path $StatePath 'Manager\service_host_manager.ps1'
@@ -230,6 +271,7 @@ function Invoke-ServiceHostInstall {
         $updaterShortcutPath = Join-Path $CurrentUserDesktopPath 'Update QB Utility.lnk'
 
         $mutation = {
+            $previousWatcher = @{}
             $previousPrepared = $false
             $currentMoved = $false
             $candidatePromoted = $false
@@ -283,10 +325,28 @@ function Invoke-ServiceHostInstall {
                     & $ConfigureIntranetAction
                     Write-Host 'Company HTTPS hostname added to your Local Intranet sites. Save browser work, restart Edge using edge://restart, then reopen Quote Workbench. Company browser policies may override this setting.'
                 }
+                if ($null -ne $watcher) {
+                    foreach ($name in $watcher.Keys) { $previousWatcher[$name] = & $ReadEnvironmentVariableAction $name }
+                    # Enable last so a partially configured seat cannot scan.
+                    & $SetEnvironmentVariableAction 'QB_OPPORTUNITY_COMPANY' $null
+                    foreach ($name in @('QB_OPPORTUNITY_WORKBENCH','QB_OPPORTUNITY_SINCE','QUOTE_MODULEV2_QB_CONVERSION_TOKEN')) {
+                        & $SetEnvironmentVariableAction $name $watcher[$name]
+                    }
+                    if ($watcher.QB_OPPORTUNITY_COMPANY) {
+                        & $SetEnvironmentVariableAction 'QB_OPPORTUNITY_COMPANY' $watcher.QB_OPPORTUNITY_COMPANY
+                    }
+                }
             }
             catch {
                 $failure = $_
                 try {
+                    if ($previousWatcher.Count) {
+                        & $SetEnvironmentVariableAction 'QB_OPPORTUNITY_COMPANY' $null
+                        foreach ($name in $previousWatcher.Keys) {
+                            if ($name -ne 'QB_OPPORTUNITY_COMPANY') { & $SetEnvironmentVariableAction $name $previousWatcher[$name] }
+                        }
+                        & $SetEnvironmentVariableAction 'QB_OPPORTUNITY_COMPANY' $previousWatcher.QB_OPPORTUNITY_COMPANY
+                    }
                     if ($candidatePromoted -and (Test-Path -LiteralPath $InstallPath)) { & $RemovePathAction $InstallPath $true }
                     if ($currentMoved -and (Test-Path -LiteralPath $previousPayload)) { & $MovePathAction $previousPayload $InstallPath }
                     if ($previousPrepared) {

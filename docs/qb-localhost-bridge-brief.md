@@ -302,14 +302,9 @@ a missing token cannot. The CLI and bridge share one `SubmitQuote` code path.
 
 ## Workbench opportunity sync
 
-Enable the watcher on one workstation that opens the intended company file. The Service Host reads these environment variables at startup.
+Configure the existing install share's `service_host_installation\bridge.settings.psd1` once. The publisher preserves this file across releases. For an existing share, add the four `QB_OPPORTUNITY_*` entries from `bridge.settings.template.psd1`. Name one computer, supply the company file's full path and the start date, and point to a restricted file containing the same token configured in the Workbench server's `QUOTE_MODULEV2_QB_CONVERSION_TOKEN`. Grant the designated QuickBooks user read access to that file. The workstation URL comes from `QB_BRIDGE_ORIGIN`.
 
-| Variable | Value |
-| --- | --- |
-| `QB_OPPORTUNITY_COMPANY` | Full path reported by QuickBooks for the company file. An unset value disables the watcher. |
-| `QB_OPPORTUNITY_WORKBENCH` | Workbench base URL. Use HTTPS for a remote server or HTTP on loopback. |
-| `QB_OPPORTUNITY_SINCE` | Earliest conversion date to check, formatted YYYY-MM-DD using the company file clock. |
-| `QUOTE_MODULEV2_QB_CONVERSION_TOKEN` | Shared secret configured on the Workbench conversion endpoint. |
+Everyone runs the usual `Install-QBUtility.bat` or **Update QB Utility** shortcut. The designated PC reads the token and installs the watcher settings for the current user. Other PCs skip the token file and disable the watcher. To reassign it, change the computer name on the share and run the updater on the old and new PCs. Run the installer under the Windows account used for QuickBooks. Older settings files without the computer-name key preserve existing manual configurations.
 
 The host scans QuickBooks at startup and every five minutes. It checks Workbench for page refresh requests every 15 seconds and opens a fresh QuickBooks session for each scan. Workbench timestamps successful scans, including scans with no conversions. It retries while the company is unavailable and catches up from the configured date after a host restart. Each order must carry one distinct Workbench ID. Workbench records the order receipt so repeat scans are safe.
 

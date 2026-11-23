@@ -1,4 +1,4 @@
-﻿# QuickBooks localhost bridge settings (TEMPLATE).
+# QuickBooks localhost bridge settings (TEMPLATE).
 #
 # deploy_servicehost.ps1 copies this to the install share as "bridge.settings.psd1"
 # IF one is not already there. The real, secret-bearing bridge.settings.psd1 lives
@@ -19,4 +19,9 @@
     # Exact native QuickBooks item names; configure before discounted sends.
     QB_QUOTE_SUBTOTAL_ITEM = ''
     QB_QUOTE_DISCOUNT_ITEM = ''
+    # Set once on the share. Only the named PC installs the watcher settings.
+    QB_OPPORTUNITY_COMPUTER = ''
+    QB_OPPORTUNITY_COMPANY = ''     # Full .QBW path as seen by that workstation.
+    QB_OPPORTUNITY_SINCE = ''       # YYYY-MM-DD in the QuickBooks company clock.
+    QB_OPPORTUNITY_TOKEN_FILE = ''  # Restricted file containing the Workbench conversion token.
 }

@@ -133,7 +133,7 @@ namespace QuickBooksServiceHost
             bool opened = false;
             try
             {
-                rp.OpenConnection2("", "Workbench sample conversion test", 1);
+                rp.OpenConnection2("", "Quote Workbench Opportunity Sync", 1);
                 opened = true;
                 ticket = rp.BeginSession("", 2);
                 if (!string.Equals(CompanyPath((string)rp.GetCurrentCompanyFileName(ticket)), company,

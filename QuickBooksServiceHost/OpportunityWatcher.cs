@@ -102,11 +102,29 @@ namespace QuickBooksServiceHost
                         response.EnsureSuccessStatusCode();
                         var state = serializer.Deserialize<Dictionary<string, object>>(
                             response.Content.ReadAsStringAsync().GetAwaiter().GetResult());
+                        object lookup;
+                        if (state.TryGetValue("document_lookup", out lookup) && lookup is Dictionary<string, object>)
+                        {
+                            try
+                            {
+                                var task = (Dictionary<string, object>)lookup;
+                                var matches = InCompanySession((rp, ticket) => FindDocuments(rp, ticket, task));
+                                using (var content = new StringContent(serializer.Serialize(new { ticket = task["ticket"], matches }),
+                                                                       Encoding.UTF8, "application/json"))
+                                using (var result = http.PostAsync(new Uri(endpoint, "/api/opportunities/document-results"),
+                                                                   content, stop.Token).GetAwaiter().GetResult())
+                                    result.EnsureSuccessStatusCode();
+                            }
+                            catch (Exception) when (!stop.IsCancellationRequested)
+                            {
+                                Status("document lookup pending");
+                            }
+                        }
                         long requested = Convert.ToInt64(state["requested"]);
                         bool pending = requested > Convert.ToInt64(state["completed"]);
                         if (elapsed.IsRunning && elapsed.Elapsed < TimeSpan.FromMinutes(5) && !pending)
                             continue;
-                        DateTime latest = Scan(cursor);
+                        DateTime latest = InCompanySession((rp, ticket) => Scan(rp, ticket, cursor));
                         using (var content = new StringContent(serializer.Serialize(new { completed = requested }),
                                                                Encoding.UTF8, "application/json"))
                         using (var receipt = http.PostAsync(checkEndpoint, content, stop.Token).GetAwaiter().GetResult())
@@ -126,7 +144,7 @@ namespace QuickBooksServiceHost
             } while (!stop.Token.WaitHandle.WaitOne(TimeSpan.FromSeconds(15)));
         }
 
-        private DateTime Scan(DateTime from)
+        private T InCompanySession<T>(Func<object, string, T> read)
         {
             dynamic rp = Activator.CreateInstance(Type.GetTypeFromProgID("QBXMLRP2.RequestProcessor", true));
             string ticket = null;
@@ -139,35 +157,7 @@ namespace QuickBooksServiceHost
                 if (!string.Equals(CompanyPath((string)rp.GetCurrentCompanyFileName(ticket)), company,
                                    StringComparison.OrdinalIgnoreCase))
                     throw new InvalidOperationException("Configured company is not open.");
-                string iterator = null;
-                DateTime latest = from;
-                do
-                {
-                    stop.Token.ThrowIfCancellationRequested();
-                    var query = new XElement("SalesOrderQueryRq",
-                        new XAttribute("iterator", iterator == null ? "Start" : "Continue"),
-                        iterator == null ? null : new XAttribute("iteratorID", iterator),
-                        new XElement("MaxReturned", 100),
-                        iterator == null ? new XElement("ModifiedDateRangeFilter",
-                            new XElement("FromModifiedDate", from.ToString("yyyy-MM-dd'T'00:00:00", CultureInfo.InvariantCulture))) : null,
-                        new XElement("IncludeLineItems", "true"));
-                    string request = "<?xml version=\"1.0\"?><?qbxml version=\"13.0\"?>" +
-                        new XElement("QBXML", new XElement("QBXMLMsgsRq", new XAttribute("onError", "stopOnError"), query));
-                    var response = XDocument.Parse((string)rp.ProcessRequest(ticket, request))
-                        .Descendants("SalesOrderQueryRs").Single();
-                    string code = (string)response.Attribute("statusCode");
-                    if (code != "0" && code != "1") throw new InvalidDataException("Order query failed.");
-                    foreach (var order in response.Elements("SalesOrderRet"))
-                    {
-                        var modified = DateTimeOffset.Parse((string)order.Element("TimeModified"), CultureInfo.InvariantCulture).Date;
-                        if (modified > latest) latest = modified;
-                        Notify(order);
-                    }
-                    if (((int?)response.Attribute("iteratorRemainingCount") ?? 0) == 0) break;
-                    iterator = (string)response.Attribute("iteratorID");
-                    if (string.IsNullOrWhiteSpace(iterator)) throw new InvalidDataException("Missing iterator.");
-                } while (true);
-                return latest;
+                return read((object)rp, ticket);
             }
             finally
             {
@@ -180,6 +170,64 @@ namespace QuickBooksServiceHost
             }
         }
 
+        private object[] FindDocuments(dynamic rp, string ticket, Dictionary<string, object> task)
+        {
+            string type = (string)task["kind"] == "estimate" ? "Estimate" : "SalesOrder";
+            var query = new XElement(type + "QueryRq", new XElement("RefNumber", (string)task["reference"]),
+                new[] { "TxnID", "TxnDate", "RefNumber", "CustomerRef" }.Select(n => new XElement("IncludeRetElement", n)));
+            string request = "<?xml version=\"1.0\"?><?qbxml version=\"13.0\"?>" +
+                new XElement("QBXML", new XElement("QBXMLMsgsRq", new XAttribute("onError", "stopOnError"), query));
+            var response = XDocument.Parse((string)rp.ProcessRequest(ticket, request)).Descendants(type + "QueryRs").Single();
+            string code = (string)response.Attribute("statusCode");
+            if (code != "0" && code != "1") throw new InvalidDataException("Document lookup failed.");
+            return response.Elements(type + "Ret").Select(doc => (object)new {
+                key = TransactionKey(doc.Element("TxnID").Value),
+                reference = doc.Element("RefNumber").Value,
+                date = doc.Element("TxnDate").Value,
+                customer = (string)doc.Element("CustomerRef")?.Element("FullName") ?? ""
+            }).ToArray();
+        }
+
+        private DateTime Scan(dynamic rp, string ticket, DateTime from)
+        {
+            string iterator = null;
+            DateTime latest = from;
+            do
+            {
+                stop.Token.ThrowIfCancellationRequested();
+                var query = new XElement("SalesOrderQueryRq",
+                    new XAttribute("iterator", iterator == null ? "Start" : "Continue"),
+                    iterator == null ? null : new XAttribute("iteratorID", iterator),
+                    new XElement("MaxReturned", 100),
+                    iterator == null ? new XElement("ModifiedDateRangeFilter",
+                        new XElement("FromModifiedDate", from.ToString("yyyy-MM-dd'T'00:00:00", CultureInfo.InvariantCulture))) : null,
+                    new XElement("IncludeLineItems", "true"));
+                string request = "<?xml version=\"1.0\"?><?qbxml version=\"13.0\"?>" +
+                    new XElement("QBXML", new XElement("QBXMLMsgsRq", new XAttribute("onError", "stopOnError"), query));
+                var response = XDocument.Parse((string)rp.ProcessRequest(ticket, request))
+                    .Descendants("SalesOrderQueryRs").Single();
+                string code = (string)response.Attribute("statusCode");
+                if (code != "0" && code != "1") throw new InvalidDataException("Order query failed.");
+                foreach (var order in response.Elements("SalesOrderRet"))
+                {
+                    var modified = DateTimeOffset.Parse((string)order.Element("TimeModified"), CultureInfo.InvariantCulture).Date;
+                    if (modified > latest) latest = modified;
+                    Notify(order);
+                }
+                if (((int?)response.Attribute("iteratorRemainingCount") ?? 0) == 0) break;
+                iterator = (string)response.Attribute("iteratorID");
+                if (string.IsNullOrWhiteSpace(iterator)) throw new InvalidDataException("Missing iterator.");
+            } while (true);
+            return latest;
+        }
+
+        private string TransactionKey(string txn)
+        {
+            using (var hash = SHA256.Create())
+                return BitConverter.ToString(hash.ComputeHash(Encoding.UTF8.GetBytes(
+                    company.ToUpperInvariant() + "|" + txn))).Replace("-", "").ToLowerInvariant();
+        }
+
         private void Notify(XElement order)
         {
             var ids = new HashSet<string>();
@@ -187,10 +235,7 @@ namespace QuickBooksServiceHost
                 foreach (Match match in Marker.Matches(field.Value)) ids.Add(match.Value);
             string txn = (string)order.Element("TxnID");
             if (ids.Count != 1 || string.IsNullOrEmpty(txn)) return;
-            string key;
-            using (var hash = SHA256.Create())
-                key = BitConverter.ToString(hash.ComputeHash(Encoding.UTF8.GetBytes(
-                    company.ToUpperInvariant() + "|" + txn))).Replace("-", "").ToLowerInvariant();
+            string key = TransactionKey(txn);
             string json = "{\"marker\":\"" + ids.Single() + "\",\"order_key\":\"" + key + "\"}";
             using (var content = new StringContent(json, Encoding.UTF8, "application/json"))
             using (var response = http.PostAsync(endpoint, content, stop.Token).GetAwaiter().GetResult())

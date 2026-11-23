@@ -50,7 +50,12 @@ function Get-OpportunityInstallSettings {
     }
     $tokenPath = [string]$Settings.QB_OPPORTUNITY_TOKEN_FILE
     if (!$tokenPath -or ![IO.Path]::IsPathRooted($tokenPath)) { throw 'Configure the opportunity token file path.' }
-    $token = [IO.File]::ReadAllText($tokenPath).Trim()
+    try { $token = [IO.File]::ReadAllText($tokenPath).Trim() }
+    catch [UnauthorizedAccessException] {
+        if ($selection -ne '*') { throw }
+        Write-Host 'Opportunity sync is disabled for this account.'
+        return $values
+    }
     if (!$token -or $token -match '\s') { throw 'The opportunity token file must contain one nonblank token.' }
     $values.QB_OPPORTUNITY_COMPANY = $file
     $values.QB_OPPORTUNITY_WORKBENCH = $Origin
